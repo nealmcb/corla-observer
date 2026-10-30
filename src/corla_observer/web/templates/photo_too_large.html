@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% block title %}Photo too large{% endblock %}
+{% block main %}
+<h1>Photo too large</h1>
+<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ message }}</p>
+<p>Phones take photos larger than the check needs. With JavaScript on, this page's form shrinks a large photo before sending it; without it, send a smaller photo (most phones can share or export a photo at a reduced size, or take one at a lower resolution).</p>
+<p><a href="{{ back }}">Back to the check</a></p>
+{% endblock %}

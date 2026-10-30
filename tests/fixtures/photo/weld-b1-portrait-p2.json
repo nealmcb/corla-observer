@@ -1,0 +1,10 @@
+{
+ "made_by": "tests/photoimages.py: make_photo_fixtures: render_sheets(realistic_extract(), board 1, portrait-1, 200 dpi), sheet 3 (page 2); on_background, blurred(0.7), reduced(0.75); JPEG quality 70",
+ "qr_box": [
+  1176,
+  129,
+  1322,
+  274
+ ],
+ "qr_box_is": "the QR code's 33 modules and 2 modules of quiet zone around them, for pasting a QR code made with border=2 over it"
+}

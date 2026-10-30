@@ -1,0 +1,144 @@
+{% extends "base.html" %}
+{% block title %}Check a printed page{% endblock %}
+{% block head %}<script src="{{ static('photoshrink.js') }}" integrity="{{ integrity['photoshrink.js'] }}" defer></script>{% endblock %}
+{% block header %}{% if who.link %}
+<header class="obs-bar obs-bar-static">
+  <span class="obs-who">{{ who.link.name }} &middot; {{ who.link.county }} &middot; board {{ who.link.board }}</span>
+  <a class="button secondary small" href="{{ who.action[:-6] }}">Back to your {{ 'observation' if who.via == 'observer' else 'reader' }} page</a>
+</header>
+{% else %}{{ super() }}{% endif %}{% endblock %}
+{% macro proofs(commitments) %}
+{% if commitments %}
+<ul class="proofs">
+{% for c in commitments %}
+  <li><strong>{{ c.sums_name }}</strong> <span class="muted">(evidence version {{ c.version }}, recorded {{ c.time|local }}; lists the {{ c.covers|join(' and the ') }})</span>
+    <ul>
+      <li>{% if c.ots == 'bitcoin' %}<span class="badge badge-ok"><span aria-hidden="true">&#10003;</span> Bitcoin</span> OpenTimestamps proof{% if c.bitcoin_block is not none %} in Bitcoin block {{ c.bitcoin_block }}{% else %} in a Bitcoin block{% endif %}
+          {% elif c.ots == 'pending' %}<span class="badge badge-warning"><span aria-hidden="true">&#8987;</span> pending</span> OpenTimestamps proof not yet in a Bitcoin block
+          {% else %}<span class="badge badge-info">none</span> no OpenTimestamps proof{% endif %}</li>
+      <li>{% if c.rekor_log_index is not none %}<span class="badge badge-ok"><span aria-hidden="true">&#10003;</span> Sigstore</span> Rekor log entry {{ c.rekor_log_index }} (<a href="https://search.sigstore.dev/?logIndex={{ c.rekor_log_index }}" rel="noreferrer">search.sigstore.dev</a>)
+          {% elif c.sigstore == 'done' %}<span class="badge badge-ok">Sigstore</span> signed with a key
+          {% else %}<span class="badge badge-info">none</span> no Sigstore signature{% endif %}</li>
+      <li>{% if c.commit %}git commit <code class="hash">{{ c.commit[:12] }}</code>{% if c.pushed %}, pushed{% else %}, not pushed{% endif %}{% else %}no git commit{% endif %}</li>
+    </ul>
+  </li>
+{% endfor %}
+</ul>
+{% else %}
+<p class="notice"><span aria-hidden="true">&#9650;</span> Not yet committed: no published, timestamped commitment covers this page's index or extract yet, so a check shows only that a page matches this tool's own copy.</p>
+{% endif %}
+{% endmacro %}
+{% macro where(loc) %}
+<dl>
+  <dt>County</dt><dd>{{ loc.extract.county }}</dd>
+  <dt>Page</dt><dd>board {{ loc.board }}, page {{ loc.page }} of {{ loc.pages }}{% if loc.layout == 'two-up' %} (two-up){% endif %}</dd>
+  <dt>Page hash</dt><dd><code class="hash full">{{ loc.sha256 }}</code></dd>
+  <dt>Extract</dt><dd><code class="hash full">{{ loc.extract.sha256 }}</code> {% if loc.extract.latest %}<span class="badge badge-ok">latest</span>{% else %}<span class="badge badge-warning"><span aria-hidden="true">&#9650;</span> superseded</span>{% endif %}{% if loc.extract.purpose == 'practice' %} <span class="badge badge-info">practice</span>{% endif %}</dd>
+</dl>
+{% endmacro %}
+{% block main %}
+<h1>Check a printed page</h1>
+<p>Photograph or scan one printed extract page, or its provenance sheet, or take a screenshot or photo of an observer's screen showing a ballot, and the check reads its QR code and its text and compares every imprinted ID and choice with the extract as committed.{% if who.via == 'observer' %} At the end of the day, photograph each of your marked paper pages here, one photo per page: each is checked and kept for your coordinator.{% endif %} {% if who.via == 'observer' or who.via == 'reader' %}You can check pages of {{ who.link.county }}'s extracts. {% endif %}<a href="#how">How it works</a>.</p>
+{% if error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
+
+{% if result %}
+{% set style = verdict_style[result.verdict] %}
+{% set counts = result.counts() %}
+<section class="verdict verdict-{{ style[0] }}" aria-label="Verdict">
+  {% if result.location %}<p class="verdict-page"><strong>{{ result.location.label }}</strong></p>
+  {% elif result.screen %}<p class="verdict-page"><strong>{{ result.screen.label }}</strong></p>
+  {% elif result.extract_sha256 %}<p class="verdict-page"><strong>{{ result.county }} · {% if result.kind == 'provenance' %}provenance sheet · {% endif %}extract {{ result.extract_sha256[:8] }}</strong></p>{% endif %}
+  <p class="verdict-word"><span class="verdict-icon" aria-hidden="true">{{ style[1] }}</span> {{ result.verdict }}</p>
+  <p class="verdict-located">Located {{ result.located_text() }}.</p>
+  {% if result.lines %}
+  <p class="verdict-counts">{{ counts.matched }} line{{ '' if counts.matched == 1 else 's' }} matched, {{ counts.differs }} differ{{ 's' if counts.differs == 1 else '' }}, {{ counts.unread }} unread{% if counts.marked %}, {{ counts.marked }} box{{ '' if counts.marked == 1 else 'es' }} marked{% endif %}.</p>
+  {% if counts.unread %}<p class="muted">Unread means the photo did not show a line clearly enough to tell: it is counted neither as matching nor as differing. Check those lines by eye (listed below), or take a sharper, squarer photo.</p>{% endif %}
+  {% endif %}
+  {% if result.reasons %}<ul>{% for r in result.reasons %}<li>{{ r }}</li>{% endfor %}</ul>{% endif %}
+  {% if result.notes %}<ul>{% for n in result.notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+  {% if result.commitment_status == 'committed' %}<p class="verdict-commitment"><span class="badge badge-ok"><span aria-hidden="true">&#10003;</span> committed</span> {{ result.commitment_text() }}.</p>
+  {% elif result.commitment_status == 'not_committed' %}<p class="verdict-commitment"><span class="badge badge-warning"><span aria-hidden="true">&#9650;</span> not yet committed</span> {{ result.commitment_text() }}.</p>{% endif %}
+  <p class="meta">Recorded as event {{ event_seq }}{% if who.photos %}; the photo is kept, without its metadata, as <code class="hash">{{ result.photo_sha256[:12] }}</code>{% else %}; the photo is not kept{% endif %}.</p>
+</section>
+{% if result.location %}<div class="card">{{ where(result.location) }}</div>{% elif result.extract_sha256 %}<div class="card"><dl><dt>County</dt><dd>{{ result.county }}</dd><dt>Extract</dt><dd><code class="hash full">{{ result.extract_sha256 }}</code></dd></dl></div>{% endif %}
+{% if result.location or result.kind in ('provenance', 'screen') %}
+<h2>The commitment</h2>
+{{ proofs(result.commitments) }}
+{% endif %}
+{% if photo_url and not rows %}<figure class="check-photo check-photo-alone"><img src="{{ photo_url }}" alt="The photo checked"><figcaption class="meta">The photo checked</figcaption></figure>{% endif %}
+{% if rows %}
+<h2>Line by line</h2>
+<p class="muted">Matched: what is printed is what was committed. Unread: the photo did not show it clearly enough; it is not counted as matched. Differs: the printed line contradicts the committed page. {% if result.counts().marked %}Marked: a hand-made mark in the box.{% endif %}</p>
+<div class="check-compare">
+  {% if photo_url %}<figure class="check-photo"><img src="{{ photo_url }}" alt="The photo checked"><figcaption class="meta">The photo checked</figcaption></figure>{% endif %}
+  <table class="check-lines">
+    <thead><tr><th scope="col">Result</th><th scope="col">Committed, as printed</th><th scope="col">Read from the photo</th></tr></thead>
+    <tbody>
+    {% for expected, line in rows %}
+      {% set kind = (line.kind if line else expected.kind) %}
+      <tr class="line-{{ kind }}{% if line %} status-{{ line.status }}{% endif %}">
+        <td>{% if line %}{% set ls = line_style[line.status] %}<span class="badge badge-{{ ls[0] }}"><span aria-hidden="true">{{ ls[1] }}</span> {{ ls[2] }}</span>{% if line.marked %} <span class="badge badge-info"><span aria-hidden="true">&#9998;</span> marked</span>{% endif %}{% endif %}</td>
+        <td class="mono">{% if expected %}{{ expected.text }}{% elif line and line.expected %}{{ line.expected }}{% else %}<span class="muted">(not on the committed page)</span>{% endif %}</td>
+        <td class="mono">{% if line and line.status != 'matched' %}{% if line.read %}read: &ldquo;{{ line.read }}&rdquo;{% else %}<span class="muted">read: nothing found</span>{% endif %}{% if line.detail %} <span class="muted">({{ line.detail }})</span>{% endif %}
+          {% if crops and crops.get(line.key) %}<img class="check-crop" src="{{ crops[line.key] }}" alt="This line as photographed">{% endif %}
+          {% if line.reason %}<span class="check-why">{{ line.reason }}</span>{% endif %}
+          {% if line.reads %}<details class="check-reads"><summary>Each reading ({{ line.reads|length }})</summary><ul>{% for r in line.reads %}<li>{{ r.pass }}: &ldquo;{{ r.text }}&rdquo; <span class="muted">({{ r.judged }})</span></li>{% endfor %}</ul></details>{% endif %}
+        {% endif %}</td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+{% endif %}
+
+{% if lookup is defined %}
+<h2>Pages with those short hashes</h2>
+{% if lookup_error %}<p class="notice notice-error"><span aria-hidden="true">&#9650;</span> {{ lookup_error }}</p>
+{% elif not lookup %}<p class="notice notice-error"><span aria-hidden="true">&#8709;</span> No page of {% if who.counties %}{{ who.counties|join(', ') }}'s extracts{% else %}any extract here{% endif %} has the page hash <code>{{ typed.page }}</code>{% if typed.extract %} in an extract <code>{{ typed.extract }}</code>{% endif %}.</p>
+{% else %}
+<p class="muted">The short hashes only locate a page. Compare the page below with your printout by eye; the QR code's full hash, read from a photo, is the check.</p>
+{% for item in lookup %}
+<div class="card">
+  {{ where(item.location) }}
+  <h3>The commitment</h3>
+  {{ proofs(item.commitments) }}
+  <h3>The page as committed</h3>
+  <pre class="text">{% for e in item.lines %}{{ e.text }}
+{% endfor %}</pre>
+</div>
+{% endfor %}
+{% endif %}
+{% endif %}
+
+<form method="post" action="{{ who.action }}" enctype="multipart/form-data" class="card form" data-shrink-side="4000" data-shrink-bytes="{{ 8 * 1024 * 1024 }}">
+  <h2>Check a photo</h2>
+  {% if csrf %}<input type="hidden" name="csrf" value="{{ csrf }}">{% endif %}
+  <p>A photo or scan of one page <span class="muted">(JPEG, PNG, WebP or TIFF, up to {{ max_photo_bytes|size }})</span>: use one of these.</p>
+  <label>Take a photo <span class="muted">(opens the camera on a phone)</span>
+    <input type="file" name="photo" accept="image/*" capture="environment">
+  </label>
+  <label>Choose a photo or file <span class="muted">(one already taken, from the gallery or files)</span>
+    <input type="file" name="photo" accept="image/*">
+  </label>
+  <p class="meta" id="photo-shrink" role="status" aria-live="polite" hidden></p>
+  <p class="meta">Hold the phone square to the page, fill the frame with it, and avoid glare. {% if who.photos %}The photo is kept in this server's workspace, without its location or camera details, and shown only to coordinators{% if who.link %} and to you{% endif %}.{% else %}The photo is not kept.{% endif %}</p>
+  <button type="submit">Check this page</button>
+</form>
+<form method="get" action="{{ who.action }}" class="card form">
+  <h2>Or type the short hashes</h2>
+  <p class="meta">From the page's identification line: "extract 2350aed6 · page e83a5d34".</p>
+  <label>Extract <input type="text" name="extract" inputmode="text" autocomplete="off" maxlength="64" pattern="[0-9a-fA-F]{4,64}" value="{{ typed.extract if typed is defined else '' }}"></label>
+  <label>Page <input type="text" name="page" inputmode="text" autocomplete="off" maxlength="64" pattern="[0-9a-fA-F]{4,64}" required value="{{ typed.page if typed is defined else '' }}"></label>
+  <button type="submit" class="secondary">Find the page</button>
+</form>
+<div class="card" id="how">
+  <h2>How it works</h2>
+  <ul>
+    <li>The QR code holds the page's full hash. It is looked up in the page index of every extract this server has built, and in the evidence commitments recorded for them (SHA256SUMS files stamped with OpenTimestamps and signed with Sigstore).</li>
+    <li>The printed text is read twice, differently prepared, and any line still unclear is read again on its own. Each line is compared with the line as committed: it counts as matched only if what is read is what was committed, and as differing only if two readings agree on something else. A line that cannot be read is reported as unread, never as matched.</li>
+    <li>Two answers are given separately. The content: MATCH (the QR code was read and every line matched), MATCH WITH UNREAD LINES (nothing contradicts the page, but some of it could not be read), MISMATCH (some printed line contradicts the page), or UNKNOWN PAGE (the page could not be found at all). The commitment: whether a published, timestamped evidence commitment covers the page yet, with its proofs; until one does, a match shows only that the page matches this tool's own copy.</li>
+    <li>Anyone can also check a page without this server, from the published evidence: see the provenance sheet's "To check a printed page".</li>
+  </ul>
+</div>
+{% endblock %}

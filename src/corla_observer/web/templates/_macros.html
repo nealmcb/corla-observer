@@ -1,0 +1,166 @@
+{# Status badges: colour (Okabe-Ito) is never the only cue; each has an icon and a word. #}
+{% macro badge(kind, text) -%}
+<span class="badge badge-{{ kind }}">{% if kind == 'high' or kind == 'fail' or kind == 'error' %}<span aria-hidden="true">&#9650;</span>{% elif kind == 'ok' %}<span aria-hidden="true">&#10003;</span>{% elif kind == 'missing' or kind == 'warning' %}<span aria-hidden="true">&#9675;</span>{% else %}<span aria-hidden="true">&#9679;</span>{% endif %} {{ text }}</span>
+{%- endmacro %}
+
+{% macro verdict(v) -%}
+{% if v == 'PASS' %}{{ badge('ok', 'PASS') }}{% elif v %}{{ badge('fail', v) }}{% else %}{{ badge('missing', 'not checked') }}{% endif %}
+{%- endmacro %}
+
+{% macro severity(s) -%}
+{% if s == 'high' %}{{ badge('high', 'HIGH') }}{% elif s == 'error' %}{{ badge('error', 'error') }}{% elif s == 'warning' %}{{ badge('warning', 'warning') }}{% else %}{{ badge('normal', s or 'normal') }}{% endif %}
+{%- endmacro %}
+
+{% macro hash(value) -%}
+<code class="hash" title="{{ value }}">{{ value|h12 }}</code>
+{%- endmacro %}
+
+{% macro corla_upload(upload, what='', due=None) -%}
+{% set w = what ~ ' ' if what else '' %}
+{%- if upload and upload.imported %}{{ badge('ok', w ~ 'imported') }} <span class="meta">{{ upload.time }}</span>{% elif upload %}{{ badge('missing', w ~ 'not imported') }} <span class="meta">latest upload {{ upload.status|label }}, {{ upload.time }}</span>{% elif due %}<span class="muted">{{ w }}not yet (due {{ due }})</span>{% else %}{{ badge('missing', w ~ 'not uploaded yet') }}{% endif %}
+{%- endmacro %}
+
+{% macro county_card(row, detailed=False, not_yet={}) -%}
+<article class="card county" id="county-{{ row.county|replace(' ', '-') }}">
+  {% set st = row.status %}
+  <h3>{{ row.county }}
+    {% if detailed and row.flags %}{{ badge('high', row.flags ~ ' open flag' ~ ('s' if row.flags != 1 else '')) }}{% endif %}
+  </h3>
+  {% if st %}<p class="status-line">{{ st.summary }}</p>{% endif %}
+  <dl>
+    {% if st %}
+    {% if st.stage %}<dt>Stage</dt><dd>{{ st.stage[:1]|upper ~ st.stage[1:] }} <span class="meta">({{ st.stage_source }})</span></dd>{% endif %}
+    {% if st.note %}<dt>Note</dt><dd>{{ st.note }}</dd>{% endif %}
+    {% if st.in_corla %}
+    <dt>In CORLA</dt>
+    <dd>
+      {% if st.corla_source %}
+        {{ corla_upload(st.corla_manifest, 'Manifest', not_yet.corla) }}<br>
+        {{ corla_upload(st.corla_cvr, 'CVR', not_yet.corla) }}
+        <span class="meta">from CORLA's upload status, {{ st.corla_source }}</span>
+      {% else %}<span class="muted">CORLA's upload status not yet fetched{% if not_yet.corla %} (due {{ not_yet.corla }}){% endif %}</span>{% endif %}
+    </dd>
+    {% endif %}
+    {% endif %}
+    {% if row.cvr %}
+    <dt>Redacted CVR</dt>
+    <dd>
+        {{ verdict(row.cvr.verdict) }}
+        {% set c = row.cvr.counts %}
+        {% if c %}
+        <span class="counts">{{ c.rows_read }} rows, {{ c.ballot_rows }} ballots, {{ c.styles }} contest patterns, {{ c.groups }} groups (by {{ c.grouped_by|replace('style', 'contest pattern')|replace('+', ', ')|replace('_', ' ') }}), {{ c.rare_group_count }} rare groups{% if c.already_redacted_rows %}, {{ c.already_redacted_rows }} rows already redacted{% endif %}{% if c.aggregate_rows %}, {{ c.aggregate_rows }} aggregate rows{% endif %}</span>
+        {% endif %}
+        <span class="meta">{{ hash(row.cvr.sha256) }} {{ row.cvr.size|size }}, {{ row.cvr.time|local }}{% if detailed %}, {{ row.cvr.name }} by {{ row.cvr.actor }}{% endif %}</span>
+    </dd>
+    {% endif %}
+    {% if row.manifest or row.map_manifest %}
+    <dt>Manifest</dt>
+    <dd>
+      {% if row.manifest %}{{ badge('ok', 'county copy received') }} <span class="meta">{{ hash(row.manifest.sha256) }} {{ row.manifest.time|local }}{% if detailed %}, {{ row.manifest.name }} by {{ row.manifest.actor }}{% endif %}</span>{% endif %}
+      {% if row.map_manifest %}
+        <span>Used for sampling: {{ row.map_manifest.batches }} batches, {{ row.map_manifest.ballot_cards }} ballot cards</span>
+        <span class="meta">{{ row.map_manifest.ref }} {{ hash(row.map_manifest.sha256) }}</span>
+      {% endif %}
+    </dd>
+    {% endif %}
+    {% if row.pull_list %}
+    <dt>Pull list</dt>
+    <dd>
+        {{ badge('ok', 'received') }}
+        {% if row.pull_list.rows is defined %}<span class="counts">{{ row.pull_list.rows }} ballots{% if row.pull_list.audit_board_count is defined %}, {{ row.pull_list.audit_board_count }} audit boards named{% endif %}</span>{% endif %}
+        <span class="meta">{{ hash(row.pull_list.sha256) }} {{ row.pull_list.time|local }}{% if detailed %}, {{ row.pull_list.name }} by {{ row.pull_list.actor }}{% endif %}</span>
+    </dd>
+    {% endif %}
+    <dt>Audit boards</dt>
+    <dd>{% if row.audit_boards is none or row.audit_boards_placeholder %}not yet known{% if detailed and row.audit_boards_placeholder %} <span class="meta">(placeholder {{ row.audit_boards }} recorded)</span>{% endif %}{% else %}{{ row.audit_boards }}{% endif %}</dd>
+    {% if st and st.boards %}
+    <dt>Observation</dt>
+    <dd>{% for b in st.boards %}{{ b.text }}{% if b.observers %} <span class="meta">({{ b.observers }} observer{{ 's' if b.observers != 1 else '' }})</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>
+    {% endif %}
+    {% if row.rejected %}
+    <dt>Rejected uploads</dt>
+    <dd>{{ row.rejected }} (latest: {{ row.last_rejection }})</dd>
+    {% endif %}
+    {% if detailed %}
+      {% for item in [row.cvr, row.manifest, row.pull_list] if item and item.warnings %}
+        {% for w in item.warnings %}<dt>Warning</dt><dd>{{ badge('warning', 'warning') }} {{ w }}</dd>{% endfor %}
+      {% endfor %}
+    {% endif %}
+    {% set waiting = row.missing|reject('equalto', 'audit_boards')|list %}
+    <dt>Not yet provided to us</dt>
+    <dd>{% if waiting and not_yet.cvr %}<span class="muted">{{ waiting|map('missing_label')|join(', ') }}, not yet expected (due {{ not_yet.cvr }})</span>{% elif waiting %}{{ badge('missing', waiting|map('missing_label')|join(', ')) }}{% else %}nothing{% endif %}{% if not row.manifest and not row.map_manifest %} <span class="muted">(a manifest from the county is optional)</span>{% endif %}</dd>
+  </dl>
+</article>
+{%- endmacro %}
+
+{% macro flag_list(flags) -%}
+{% if flags %}
+<ol class="flags">
+  {% for f in flags %}
+  <li class="flag flag-{{ f.severity }}">
+    <div class="flag-head">{{ severity(f.severity) }} <strong>{{ f.reason|label }}</strong>{% if f.counties %} <span class="muted">{{ f.counties|join(', ') }}</span>{% endif %}{% if f.time %} <span class="meta">{{ f.time|local }}</span>{% endif %}</div>
+    <p>{{ f.message }}</p>
+    <p class="investigate"><span class="label">Investigate:</span> {{ f.investigate }}</p>
+    {% if f.sha256 or f.previous_sha256 %}<p class="meta">sha256 {{ hash(f.previous_sha256 or '') }} &rarr; {{ hash(f.sha256 or '') }}</p>{% endif %}
+    {% if f.aspects|length > 1 or f.refs %}
+    <details class="flag-details">
+      <summary>Details{% if f.aspects|length > 1 %}: {{ f.aspects|length }} findings{% endif %}</summary>
+      {% if f.aspects|length > 1 %}
+      <ul>
+        {% for a in f.aspects %}<li>{% if a.reason != f.reason %}<strong>{{ a.reason|label }}:</strong> {% endif %}{{ a.message }}{% if a.time %} <span class="meta">{{ a.time|local }}</span>{% endif %}</li>{% endfor %}
+      </ul>
+      {% endif %}
+      {% if f.refs %}<p class="meta">Files: {% for r in f.refs %}<span class="url">{{ r }}</span>{% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    </details>
+    {% endif %}
+    {{ caller(f) if caller is defined else '' }}
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="muted">No flags.</p>
+{% endif %}
+{%- endmacro %}
+
+{% macro problem_list(problems) -%}
+{% if problems %}
+<ol class="flags">
+  {% for p in problems %}
+  <li class="flag flag-{{ p.severity }}">
+    <div class="flag-head">{{ severity(p.severity) }} <strong>{{ p.code|label }}</strong>{% if p.county %} <span class="muted">{{ p.county }}</span>{% elif p.counties and p.counties|length > 1 %} <span class="muted">{{ p.counties|length }} counties</span>{% endif %}</div>
+    <p>{{ p.message }}</p>
+    {% if p.members %}
+    <details class="flag-details">
+      <summary>{{ p.counties|join(', ') }}</summary>
+      <ul>{% for m in p.members %}<li>{{ m }}</li>{% endfor %}</ul>
+    </details>
+    {% endif %}
+    {% if p.hint %}<p class="investigate"><span class="label">What to do:</span> {{ p.hint }}</p>{% endif %}
+  </li>
+  {% endfor %}
+</ol>
+{% else %}
+<p class="muted">No problems found.</p>
+{% endif %}
+{%- endmacro %}
+
+{# The inputs not yet expected, each with its count and due time; status lines after them. #}
+{% macro waiting_list(snap) -%}
+{% if snap.waiting or snap.status_lines %}
+<ul class="waiting">
+  {% for w in snap.waiting %}<li><strong>{{ w.label }}:</strong> {{ w.status }}, <span class="meta">{{ w.when }}</span></li>{% endfor %}
+  {% for line in snap.status_lines %}<li class="muted">{{ line }}</li>{% endfor %}
+</ul>
+{% if snap.as_of %}<p class="meta">As of {{ snap.as_of|local }} ({{ snap.as_of_source }}). Something missing becomes a problem only once it is due; anything present but wrong is a problem at any time.</p>{% endif %}
+{% else %}
+<p class="muted">Nothing is still to come before its due time.</p>
+{% endif %}
+{%- endmacro %}
+
+{% macro county_select(selected) -%}
+<select name="county" required>
+  <option value=""{% if not selected %} selected{% endif %}>Choose a county</option>
+  {% for c in counties %}<option{% if c == selected %} selected{% endif %}>{{ c }}</option>{% endfor %}
+  {% if test_counties %}<optgroup label="Test and demo counties (practice only)">{% for c in test_counties %}<option{% if c == selected %} selected{% endif %}>{{ c }}</option>{% endfor %}</optgroup>{% endif %}
+</select>
+{%- endmacro %}

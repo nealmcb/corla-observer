@@ -1,0 +1,83 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, county_select %}
+{% block title %}Coordinator: extracts{% endblock %}
+{% block main %}
+<h1>Extracts</h1>
+{% if message %}<p class="notice" role="status"><span aria-hidden="true">&#10003;</span> {{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
+<p>Each county's extract: its selected ballots in pull order with their expected votes, from its pull list and redacted CVR (or CORLA's posted selections, or until then the predicted selections, marked as such). Print the PDF at actual size (100%).</p>
+<details class="meta">
+  <summary>More about the extracts and their printouts</summary>
+  <p>Every printed page carries one short identification line (county, board, page N of M, and the first 8 hex digits of the extract's hash and of the page's hash) and a QR code of the page's hash. Each board's print starts with its provenance page, which lists the seed, the extract's hash, every input's hash and the page index's hash in full (each page's hash is in the CSV). Names are shortened to fit their columns, never cut to share a line: a contest's several choices take a line each; the provenance page gives the key to the abbreviations. The printout is a PDF, the same on every printer and phone and the same bytes whenever it is drawn (its hash is recorded with the extract): one page per sheet, in one of four layouts (portrait with one or two columns of ballots, landscape with two or three).</p>
+</details>
+
+<form method="post" action="{{ url('/coord/extract/build') }}" class="card form">
+  <h2>Build an extract</h2>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>County {{ county_select("") }}</label>
+  <label>Audit boards, to split a predicted order (default: the recorded count) <input name="boards" type="number" min="1" max="{{ max_extract_boards }}" inputmode="numeric"></label>
+  <label>A test county's sample count, when its selections are predicted (no pull list; default {{ test_sample_count }}) <input name="sample_count" type="number" min="1" max="10000" inputmode="numeric"></label>
+  <button type="submit">Build and record</button>
+</form>
+
+<section>
+  <h2>Counties</h2>
+  {% for row in rows %}
+  <div class="card">
+    <h3>{{ row.county }}</h3>
+    <p class="meta">Pull list: {% if 'pull_list' in row.status.latest %}{{ badge('ok', 'received') }} <code class="hash">{{ row.status.latest['pull_list'].sha256|h12 }}</code>{% else %}{{ badge('missing', 'not yet') }}{% endif %}
+      &middot; audit boards: {{ row.status.audit_boards or 'not recorded' }}{% if row.status.audit_boards_placeholder %} (placeholder){% endif %}</p>
+    {% if row.extract %}
+      <p><code class="hash">{{ row.ident }}</code>
+        {% if row.extract.order == 'predicted' %}{{ badge('warning', 'predicted order') }}{% else %}{{ badge('ok', 'pull list order') }}{% endif %}
+        {% if row.extract.purpose == 'practice' %}{{ badge('warning', 'practice') }}{% endif %}</p>
+      <p class="meta">{{ row.extract.ballots|length }} ballots.
+        {% if row.extract.checks.not_predicted %}{{ badge('error', row.extract.checks.not_predicted|length ~ ' not predicted') }}{% endif %}
+        {% if row.extract.checks.predicted_not_listed %}{{ badge('error', row.extract.checks.predicted_not_listed|length ~ ' predicted, not on the list') }}{% endif %}
+        {% if row.extract.checks.previously_targeted %}{{ badge('warning', row.extract.checks.previously_targeted|length ~ ' previously targeted') }} <span class="meta">on an earlier targeted list, may already have been pulled: {% for p in row.extract.checks.previously_targeted %}<code>{{ p.imprinted_id }}</code> ({{ p.list }}){% if not loop.last %}, {% endif %}{% endfor %}</span>{% endif %}</p>
+      <div class="table-wrap"><table class="extract-boards">
+        <thead><tr><th>Board</th><th>Ballots</th><th>Printout (PDF): pages</th><th>Also</th></tr></thead>
+        <tbody>
+        {% for board, pages, ballots in row.boards %}
+          {% set q = '?county=' ~ row.county|urlencode ~ '&board=' ~ board %}
+          <tr><td>{{ board }}</td><td>{{ ballots }}</td>
+            <td>{% for layout in row.layouts %}{% if not loop.first %} &middot; {% endif %}<a href="{{ url('/coord/extract/pdf' ~ q ~ '&layout=' ~ layout) }}" download>Download PDF ({{ layout_label(layout) }})</a>: {{ pages[loop.index0] }}{% endfor %}</td>
+            <td><a href="{{ url('/coord/extract/text' ~ q) }}">text</a>
+              &middot; <a href="{{ url('/coord/extract/provenance' ~ q) }}">provenance</a>
+              &middot; <a href="{{ url('/coord/extract/csv' ~ q) }}">CSV</a></td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      <p><a href="{{ url('/coord/extract/csv?county=' ~ row.county|urlencode) }}">CSV of the whole county</a></p>
+    {% else %}
+      <p class="notice" role="note"><span aria-hidden="true">&#9675;</span> <strong>No RLA-sample extract for {{ row.county }} yet.</strong>
+        {% if not has_seed %}The RLA sample needs the seed: once it is rolled, enter it under <a href="{{ url('/coord/seed') }}">Seed</a>, then build the extract above.{% else %}The seed is in effect: build the extract above.{% endif %}
+        {% if row.targeted %}Meanwhile observers' links open on the targeted list{{ 's' if row.targeted|length > 1 else '' }} below, which {{ 'have their' if row.targeted|length > 1 else 'has its' }} own PDFs.{% else %}It has no targeted lists either.{% endif %}</p>
+    {% endif %}
+    {% if row.targeted %}
+    <h4 id="lists">Targeted lists (not RLA)</h4>
+    <p class="meta">{% if row.extract %}Observers see the RLA sample by default and switch to these on their page.{% else %}Observers' links open on the first of these until {{ row.county }} has an RLA sample.{% endif %} Sent to the county from <a href="{{ url('/coord/targets') }}?county={{ row.county|urlencode }}#sent">Targeted ballots</a>.</p>
+    {% for t in row.targeted %}{% set x = t.list %}
+      <p><strong>{{ x.label }}</strong> {{ badge('warning', 'TARGETED (NOT RLA)') }}{% if x.retired %} {{ badge('missing', 'retired') }}{% endif %}{% if x.published %} {{ badge('ok', 'details published') }}{% endif %}{% if t.extract_in_rla %} {{ badge('warning', t.extract_in_rla ~ ' also in the RLA sample') }}{% endif %}
+        <span class="meta">{{ x.ballots }} ballots, built {{ x.built|local }} by {{ x.actor }}, extract <code class="hash">{{ x.sha256|h12 }}</code></span></p>
+      <div class="table-wrap"><table class="extract-boards">
+        <thead><tr><th>Board</th><th>Ballots</th><th>Printout (PDF): pages</th><th>Also</th></tr></thead>
+        <tbody>
+        {% for board, pages, ballots in t.boards %}
+          {% set q = '?county=' ~ row.county|urlencode ~ '&board=' ~ board ~ '&list=' ~ x.key %}
+          <tr><td>{{ board }}</td><td>{{ ballots }}</td>
+            <td>{% for layout in t.layouts %}{% if not loop.first %} &middot; {% endif %}<a href="{{ url('/coord/extract/pdf' ~ q ~ '&layout=' ~ layout) }}" download>Download PDF ({{ layout_label(layout) }})</a>: {{ pages[loop.index0] }}{% endfor %}</td>
+            <td><a href="{{ url('/coord/extract/text' ~ q) }}">text</a> &middot; <a href="{{ url('/coord/extract/provenance' ~ q) }}">provenance</a> &middot; <a href="{{ url('/coord/extract/csv' ~ q) }}">CSV</a></td></tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      <form method="post" action="{{ url('/coord/targets/lists') }}" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ row.county }}"><input type="hidden" name="list" value="{{ x.key }}"><input type="hidden" name="back" value="extract">
+        {% if x.retired %}<button type="submit" name="action" value="restore" class="link">Show to observers again</button>{% else %}<button type="submit" name="action" value="retire" class="link">Hide from observers (retire)</button>{% endif %}</form>
+    {% endfor %}
+    {% endif %}
+  </div>
+  {% else %}
+  <p class="muted">No county has a redacted CVR yet.</p>
+  {% endfor %}
+</section>
+{% endblock %}

@@ -1,0 +1,30 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, corla_upload %}
+{% block title %}Colorado counties{% endblock %}
+{% block main %}
+<div class="page-head">
+  <h1>All Colorado counties</h1>
+</div>
+<p>Each county's status in CORLA, the state's audit software, where its published upload status records it, and whether the county takes part in observation. {% if snap.corla.source %}CORLA's upload status: <span class="url">{{ snap.corla.source }}</span>; times are Colorado time.{% else %}CORLA's upload status has not been fetched yet.{% endif %} <a href="{{ url('/') }}">The dashboard</a> shows the counties taking part in observation in detail.</p>
+{% if snap.election %}<p class="meta">Election {{ snap.election }}</p>{% endif %}
+<div class="table-wrap"><table class="stats counties">
+  <thead><tr><th>County</th><th>Stage</th><th>Manifest in CORLA</th><th>CVR in CORLA</th><th>Observation</th></tr></thead>
+  <tbody>
+  {% for st in snap.statuses.values() %}
+  <tr id="county-{{ st.county|replace(' ', '-') }}">
+    <th scope="row">{{ st.county }}</th>
+    {% if st.in_corla %}
+    <td>{{ st.stage[:1]|upper ~ st.stage[1:] }}</td>
+    {% set due = snap.not_yet.get(st.county, {}).get('corla') %}
+    <td>{% if st.corla_source %}{{ corla_upload(st.corla_manifest, '', due) }}{% elif due %}<span class="muted">not yet (due {{ due }})</span>{% else %}<span class="muted">not known</span>{% endif %}</td>
+    <td>{% if st.corla_source %}{{ corla_upload(st.corla_cvr, '', due) }}{% elif due %}<span class="muted">not yet (due {{ due }})</span>{% else %}<span class="muted">not known</span>{% endif %}</td>
+    {% else %}
+    <td colspan="3">{{ st.note }}</td>
+    {% endif %}
+    <td>{% if st.participating %}{{ badge('ok', 'taking part') }}{% else %}<span class="muted">not taking part</span>{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+<p class="meta">As of event {{ snap.head_seq }}, built {{ snap.built_at|local }}. <a href="{{ url('/counties.json') }}">This page as JSON</a></p>
+{% endblock %}

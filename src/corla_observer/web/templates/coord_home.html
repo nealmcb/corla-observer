@@ -1,0 +1,79 @@
+{% extends "base.html" %}
+{% from "_macros.html" import county_card, badge, county_select %}
+{% block title %}Coordinator: status{% endblock %}
+{% block main %}
+<h1>Coordinator</h1>
+{% if message %}<p class="notice" role="status"><span aria-hidden="true">&#10003;</span> {{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
+
+<section class="actions">
+  <a class="button" href="{{ url('/coord/upload') }}">Upload files</a>
+  <a class="button secondary" href="{{ url('/coord/flags') }}">Flags: {{ snap.open_flags|length }} open{% if snap.high_flags %}, {{ snap.high_flags }} high{% endif %}</a>
+  <a class="button secondary" href="{{ url('/coord/map') }}">Data map: {{ snap.problems|length }} problem{{ 's' if snap.problems|length != 1 else '' }}{% if snap.error_count %}, {{ snap.error_count }} blocking{% endif %}</a>
+  <a class="button secondary" href="{{ url('/coord/estimates') }}">Estimates</a>
+  <a class="button secondary" href="{{ url('/coord/schedule') }}">Schedule</a>
+</section>
+
+<section class="grid two">
+  <form method="post" action="{{ url('/coord/audit-boards') }}" class="card form">
+    <h2>Audit boards</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>County {{ county_select("") }}</label>
+    <label>Number of audit boards <input name="count" type="number" min="1" max="{{ max_boards }}" required inputmode="numeric"></label>
+    <label class="check"><input type="checkbox" name="placeholder" value="yes"> Placeholder: not yet known</label>
+    <label>Note (where the number came from) <input name="note" maxlength="500"></label>
+    <button type="submit">Record</button>
+  </form>
+
+  {% if walkthrough_banner %}
+  <div class="card">
+    <h2>Audit center</h2>
+    <p>This is a walkthrough: nothing is fetched from the real sites. <a href="{{ url('/coord/walkthrough') }}">Apply the next step</a> instead.</p>
+  </div>
+  {% else %}
+  <form method="post" action="{{ url('/coord/fetch') }}" class="card form">
+    <h2>Audit center</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    {% if crawl_off and crawl_off.mode == 'mirror' %}
+    <p>A past election replayed for a demonstration: the live Audit Center holds another election's files, so it is never fetched here. Its audit center is the public mirror's <code>{{ crawl_off.election }}</code> files (<a href="{{ crawl_off.repository }}">{{ crawl_off.repository }}</a>), in the states listed in <code>election.toml</code>: each <strong>Fetch now</strong> brings in the next one.</p>
+    <p>{{ crawl_off.applied }} of {{ crawl_off.total }} applied{% if crawl_off.last %} (last: {{ crawl_off.last }}){% endif %}. {% if crawl_off.next %}Next: <strong>{{ crawl_off.next }}</strong>.{% else %}Nothing further: Fetch now fetches the last state again.{% endif %}</p>
+    {% elif crawl_off %}
+    <p>This election's setup (<code>election.toml</code>) turns crawling off: a past election replayed for a demonstration. The live Audit Center holds another election's files, so it is never fetched here.</p>
+    {% else %}
+    <p>Fetch the Audit Center page and every file it links to, recording each fetch.</p>
+    {% endif %}
+    {% if fetch.running %}
+      <p>{{ badge('warning', 'running') }} since {{ fetch.started|local }}</p>
+    {% elif fetch.started %}
+      <p>Last web fetch {{ fetch.started|local }} to {{ fetch.finished|local }}{% if fetch.error %}: {{ badge('error', 'failed') }} {{ fetch.error }}{% else %} {{ badge('ok', 'finished') }}{% endif %}</p>
+    {% endif %}
+    <button type="submit"{% if fetch.running %} disabled{% endif %}>Fetch now</button>
+    <p class="meta">Runs a full cycle: {% if crawl_off and crawl_off.mode == 'mirror' %}the next update from the mirror, {% elif crawl_off %}(no crawl) {% else %}the crawl, {% endif %}the results, flags, estimates and, after the roll, the prediction and interim extracts. The scheduler does the same on its <a href="{{ url('/coord/schedule') }}">schedule</a>.</p>
+  </form>
+  {% endif %}
+</section>
+
+{% if snap.waiting %}
+<section>
+  <h2>Not yet expected</h2>
+  <ul class="waiting">{% for w in snap.waiting %}<li>{{ w.text }}</li>{% endfor %}</ul>
+  <p class="meta">As of {{ snap.as_of|local }} ({{ snap.as_of_source }}); these become problems only once due. <a href="{{ url('/coord/map') }}">The data map</a> lists the problems.</p>
+</section>
+{% endif %}
+
+<section>
+  <h2>Counties</h2>
+  <p class="meta">Event log: {{ snap.head_seq }} events, head <code class="hash">{{ snap.head_hash|h12 }}</code></p>
+  {% if snap.counties %}
+  <div class="grid">{% for row in snap.counties %}{{ county_card(row, detailed=True, not_yet=snap.not_yet.get(row.county, {})) }}{% endfor %}</div>
+  {% elif snap.test_counties %}<p class="muted">Nothing has arrived from any real county yet.</p>
+  {% else %}<p class="muted">Nothing has arrived from any county yet.</p>{% endif %}
+</section>
+{% if snap.test_counties %}
+<section>
+  <h2>Test counties (practice only)</h2>
+  <p class="meta">Fictional and demonstration counties (a real county's files from an earlier election), for practice and demonstrations: shown to coordinators only, never on the public pages, in the data map or in an evidence commitment. Their extracts are on <a href="{{ url('/coord/extract') }}">Extracts</a>.</p>
+  <div class="grid">{% for row in snap.test_counties %}{{ county_card(row, detailed=True, not_yet={}) }}{% endfor %}</div>
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import county_select %}
+{% block title %}Coordinator: observer links{% endblock %}
+{% block main %}
+<h1>Observer links</h1>
+{% if message %}<p class="notice" role="status"><span aria-hidden="true">&#10003;</span> {{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
+{% if made %}
+<section class="card" aria-live="polite">
+  <h2>New {{ made.link.role }} link: {% if made.link.role == 'observer' %}{{ made.link.actor }}{% else %}{{ made.link.name }} (practice reader){% endif %}, {{ made.link.county }} board {{ made.link.board }}</h2>
+  <p>Copy it now and send it to {{ made.link.name }}: it is shown only once, since only a hash of it is kept. Whoever has it can {% if made.link.role == 'observer' %}enter observations as {{ made.link.actor }}{% else %}read ballots aloud for this board in practice{% endif %}.</p>
+  <p><code class="hash full" id="new-link">{{ made.url }}</code></p>
+  <p><button type="button" data-copy="new-link">Copy to clipboard</button> <span class="copy-status" role="status" aria-live="polite"></span></p>
+</section>
+{% endif %}
+
+<form method="post" action="{{ url('/coord/links') }}" class="card form" autocomplete="off">
+  <h2>Make a link</h2>
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <label>For
+    <select name="role" required>
+      <option value="observer" selected>an observer (enters what they hear)</option>
+      <option value="reader">a practice reader (acts as the audit board)</option>
+    </select>
+  </label>
+  <label>Name (letters, digits, '.', '_' or '-'; for an observer it becomes their observer ID, such as observer:ann) <input name="name" required maxlength="64" pattern="[A-Za-z0-9._\-]{1,64}" spellcheck="false" autocapitalize="none"></label>
+  <label>County {{ county_select("") }}</label>
+  <label>Audit board <input name="board" type="number" min="1" max="{{ max_link_boards }}" value="1" required inputmode="numeric"></label>
+  <button type="submit">Make the link</button>
+</form>
+
+<section>
+  <h2>Links made ({{ links|length }})</h2>
+  {% if links %}
+  <div class="table-wrap"><table class="stats">
+    <thead><tr><th>Who</th><th>Role</th><th>County, board</th><th>Made</th><th>Link ID</th><th></th></tr></thead>
+    <tbody>
+    {% for digest, link in links %}
+      <tr>
+        <td>{% if link.role == 'observer' %}{{ link.actor }}{% else %}{{ link.name }}{% endif %}</td><td>{{ 'observer' if link.role == 'observer' else 'practice reader' }}</td><td>{{ link.county }}, {{ link.board }}</td><td>{{ link.created|local }}</td>
+        <td><code class="hash" title="SHA-256 of the link's token">{{ digest|h12 }}</code></td>
+        <td><form method="post" action="{{ url('/coord/links/revoke') }}" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="id" value="{{ digest }}"><button type="submit" class="secondary small">Revoke</button></form></td>
+      </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="meta">A link's address is shown only when it is made. To give someone a new one, make another and revoke the old.</p>
+  {% else %}<p class="muted">No links yet.</p>{% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Coordinator: seed{% endblock %}
+{% block main %}
+<h1>Seed</h1>
+{% if message %}<p class="notice{% if mismatch %} notice-error{% endif %}" role="status"><span aria-hidden="true">{% if mismatch %}&#9650;{% else %}&#10003;{% endif %}</span> {{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
+
+<section class="card">
+  <h2>In effect</h2>
+  {% if seeds.current %}
+    <p class="big"><code class="seed">{{ seeds.current.seed }}</code> {% if seeds.unresolved_mismatch %}{{ badge('error', 'second entry differs') }}{% elif seeds.confirmation %}{{ badge('ok', 'confirmed') }}{% else %}{{ badge('ok', 'entered') }}{% endif %}{% if seeds.current.rehearsal %} {{ badge('warning', 'rehearsal') }}{% endif %}</p>
+    <p class="meta">Entered by {{ seeds.current.actor }} at {{ seeds.current.time|local }} (event {{ seeds.current.seq }}){% if seeds.confirmation %}, confirmed by {{ seeds.confirmation.second.actor }} at {{ seeds.confirmation.second.time|local }} (event {{ seeds.confirmation.seq }}){% endif %}.</p>
+    {% if seeds.current.source %}<p class="meta">Source: {{ seeds.current.source }}</p>{% endif %}
+  {% else %}
+    <p>{{ badge('missing', 'none') }} No seed entered yet. Predictions and extracts wait for one.</p>
+  {% endif %}
+  {% for o in seeds.mismatches %}
+    <p>{{ badge('error', 'mismatch') }} Event {{ o.seq }}: {{ o.first.actor }} entered <code class="seed">{{ o.first.seed }}</code>, {{ o.second.actor }} entered <code class="seed">{{ o.second.seed }}</code>{% if seeds.current and o.first.seq != seeds.current.seq %} (resolved by a later entry){% endif %}.</p>
+  {% endfor %}
+  {% for c in seeds.changes %}
+    <p>{{ badge('error', 'changed') }} Event {{ c.entry.seq }}: {{ c.entry.actor }} entered <code class="seed">{{ c.entry.seed }}</code>, replacing <code class="seed">{{ c.previous.seed }}</code> entered by {{ c.previous.actor }} (event {{ c.previous.seq }}).</p>
+  {% endfor %}
+</section>
+
+<section class="grid two">
+  {% if seeds.current %}
+  <form method="post" action="{{ url('/coord/seed/confirm') }}" class="card form" autocomplete="off">
+    <h2>Check the seed (optional)</h2>
+    <p>{% if own_entry %}You entered the seed in effect: entering it here records it again as a new entry, not a second one.{% else %}A second, independent entry, compared with the seed in effect. Enter it from the announcement or your own notes, not from this page.{% endif %}</p>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Seed (20 digits) <input name="seed" required inputmode="numeric" maxlength="40" pattern="[0-9 ]{20,40}" autocomplete="off" spellcheck="false"></label>
+    <label>Where you got it <input name="source" maxlength="500"></label>
+    <button type="submit">Check</button>
+  </form>
+  {% endif %}
+  <form method="post" action="{{ url('/coord/seed/set') }}" class="card form" autocomplete="off">
+    <h2>{% if seeds.current %}Enter the seed again{% else %}Enter the seed{% endif %}</h2>
+    <p>{% if seeds.current %}A new entry replaces the seed in effect; a different value is flagged as a change.{% else %}It takes effect at once. Another coordinator may check it afterwards with a second entry.{% endif %}</p>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <label>Seed (20 digits) <input name="seed" required inputmode="numeric" maxlength="40" pattern="[0-9 ]{20,40}" autocomplete="off" spellcheck="false"></label>
+    <label>Source (where it was announced or read) <input name="source" maxlength="500" required></label>
+    <button type="submit">Enter</button>
+  </form>
+</section>
+{% endblock %}

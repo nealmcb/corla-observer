@@ -1,0 +1,21 @@
+# Party labels for the 2020 general election's statewide and US House candidates in the
+# demonstration counties (corla_observer.classify.DEMO_COUNTIES), as named in their CVRs,
+# for `corla-observer targets parties` (public information: the 2020 ballot).
+Joseph R. Biden / Kamala D. Harris = DEM
+Donald J. Trump / Michael R. Pence = REP
+Jo Jorgensen / Jeremy "Spike" Cohen = LBR
+Howie Hawkins / Angela Nicole Walker = GRN
+John W. Hickenlooper = DEM
+Cory Gardner = REP
+Raymon Anthony Doane = LBR
+Lauren Boebert = REP
+Diane E. Mitsch Bush = DEM
+John Ryan Keil = LBR
+Joe Neguse = DEM
+Charlie Winn = REP
+Ken Buck = REP
+Ike McCorkle = DEM
+Jason Crow = DEM
+Steve House = REP
+Ed Perlmutter = DEM
+Charles "Casper" Stockham = REP

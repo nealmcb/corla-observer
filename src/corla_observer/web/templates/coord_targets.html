@@ -1,0 +1,185 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Coordinator: targeted ballots{% endblock %}
+{% block head %}<script src="{{ static('targets.js') }}" integrity="{{ integrity['targets.js'] }}" defer></script>{% endblock %}
+{% macro choice(c, k, chosen) -%}
+<label class="target-choice"><input type="checkbox" name="v" value="{{ c.index }}:{{ k }}" data-contest="{{ c.index }}"{% if k in chosen %} checked{% endif %}> {{ c.votes.choices[k] }}{% if c.parties[k] %} ({{ c.parties[k] }}){% endif %} <span class="meta">{{ c.votes.votes[k] }} votes</span> <span class="meta target-count" data-count="{{ c.index }}:{{ k }}">&rarr; {{ grid[c.index ~ ':' ~ k] }}</span></label>
+{%- endmacro %}
+{% macro added_fields() -%}{% for a in added %}<input type="hidden" name="add" value="{{ a }}">{% endfor %}{%- endmacro %}
+{% block main %}
+<h1>Targeted ballots{% if county %}: {{ county }}{% endif %}</h1>
+{% if just_sent %}{% set x = just_sent.item %}
+<div class="notice" role="status" id="sent-notice">
+  <p><span aria-hidden="true">&#10003;</span> <strong>{{ x.label }} sent to the county</strong> ({{ x.ballots }} ballot{{ '' if x.ballots == 1 else 's' }}{% if just_sent.entries|selectattr('in_rla')|list %}, {{ just_sent.entries|selectattr('in_rla')|list|length }} also in the RLA sample{% endif %}, marked TARGETED (NOT RLA), extract <code class="hash">{{ x.sha256|h12 }}</code>). The text for the county's email and the printouts are under <a href="#sent">Sent lists</a>; observers see “{{ x.label }}” in the list at the top of their page{% if not has_rla %}, and while {{ county }} has no RLA sample their links open on it{% endif %}. The working list is empty again for the next list.</p>
+</div>
+{% elif message %}<p class="notice" role="status"><span aria-hidden="true">&#10003;</span> {{ message }}</p>{% endif %}
+{% if added_message %}<p class="notice" role="status"><span aria-hidden="true">&#10003;</span> {{ added_message }}</p>{% endif %}
+{% if lookup_notes %}<ul class="notice" role="status">{% for n in lookup_notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
+<p>Ballots the observers choose, outside the RLA's random sample: the county pulls and examines them at the observers' request, and they are not entered into CORLA. Find ballots by a pattern of votes in the redacted CVR, draw some at random, add any ballot by its imprinted ID, and send the county one list in its pull order (the design: docs/TARGETING.md in the repository). The counts are for coordinators only.</p>
+
+<form method="get" action="{{ url('/coord/targets') }}" class="actions">
+  <label>County
+    <select name="county">{% for c in counties %}<option{% if c == county %} selected{% endif %}>{{ c }}</option>{% endfor %}</select>
+  </label>
+  <button type="submit">Show</button>
+  {% if not counties %}<span class="muted">No county has a redacted CVR yet.</span>{% endif %}
+</form>
+
+{% if county %}
+{% if county in demo_notes %}<p class="notice"><span aria-hidden="true">&#9675;</span> Demonstration county: {{ demo_notes[county] }} Kept apart from the county's current files.</p>{% endif %}
+<p class="meta">Redacted CVR <code class="hash">{{ data.cvr_sha256|h12 }}</code>: {{ data.votes.rows }} rows, {{ data.votes.ballots.bit_count() }} single ballot cards with votes{% if data.votes.redacted_rows %}, {{ data.votes.redacted_rows }} fully redacted{% endif %}{% if data.votes.aggregate_rows %}, {{ data.votes.aggregate_rows }} aggregate rows{% endif %}, {{ data.votes.contests|length }} contests. Manifest: {% if data.manifest_sha256 %}<code class="hash">{{ data.manifest_sha256|h12 }}</code>{% else %}{{ badge('missing', 'none, so no storage locations') }}{% endif %}.</p>
+
+<section>
+  <h2>Choose a pattern</h2>
+  {% if data.results %}<p class="meta">Contests are ordered by their margin in the state's election night results, tightest first (the county's own margin beside it, for information).</p>
+  {% elif data.corla %}<p class="meta">Contests are ordered by their margin in CORLA's posted contest list (its margin over its ballot cards), tightest first, where it has the contest; the county's own margin is beside it, for information. The state's results are not loaded.</p>
+  {% else %}<p class="notice"><span aria-hidden="true">&#9650;</span> <strong>No results are loaded</strong>, so the contests are ordered by the county's own tally, which is not the contest's actual margin. <a href="{{ url('/coord/upload') }}">Upload a results file</a> or <a href="{{ url('/coord') }}">fetch</a> the audit center and the results, and the order follows the results.</p>{% endif %}
+  <p class="meta">Check a candidate to require a vote for them in that contest; "any" means no requirement. A ballot matches when it shows a valid vote (no overvote) for every candidate checked. Redacted rows and contests never match. Beside each box: the ballots that would match with it checked. Margins are CORLA's (last winner minus first loser), with their share of the votes in the contest.</p>
+  <form method="get" action="{{ url('/coord/targets') }}" id="targets-grid" data-county="{{ county }}" data-count-url="{{ url('/coord/targets/count') }}">
+    <input type="hidden" name="county" value="{{ county }}">{{ added_fields() }}
+    {% for group, title in [('statewide', 'Statewide contests'), ('house', 'US House'), ('added', 'Other contests added')] %}
+    {% set rows = data.shown|selectattr('group', 'equalto', group)|list %}
+    {% if rows %}
+    <h3>{{ title }}</h3>
+    <div class="table-wrap"><table class="data targets-grid">
+      <thead><tr><th class="target-contest">Contest and margin</th><th>Require a vote for</th></tr></thead>
+      <tbody>
+      {% for c in rows %}
+      {% set chosen = selection.get(c.index, []) %}
+      <tr>
+        <td><strong>{{ c.name }}</strong><br><span class="meta">{% if c.from_results %}{{ result_sources[c.result_source] }}: {{ c.result_margin }} ({{ pct(c.result_share) }}); county: {{ c.votes.margin }} ({{ pct(c.share) }}){% else %}county: {{ c.votes.margin }} ({{ pct(c.share) }}){% if data.has_results %}; {{ badge('warning', 'not in the results') }}{% endif %}{% endif %}{% if c.votes.redacted %}; {{ c.votes.redacted }} redacted{% endif %}</span></td>
+        <td><div class="target-choices">
+          <label class="target-choice"><input type="checkbox" data-any="{{ c.index }}"{% if not chosen %} checked{% endif %}> any <span class="meta" data-count="{{ c.index }}:any">{{ grid[c.index ~ ':any'] }}</span></label>
+          {% for k in c.order[:4] %}{{ choice(c, k, chosen) }}{% endfor %}
+          {% set rest = c.order[4:] %}
+          {% if rest %}<details class="target-more"{% if chosen|select('in', rest)|list %} open{% endif %}><summary>{{ rest|length }} more</summary><div class="target-choices">{% for k in rest %}{{ choice(c, k, chosen) }}{% endfor %}</div></details>{% endif %}
+        </div>
+        </td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% endif %}
+    {% endfor %}
+    {% if not data.shown %}<p class="muted">No statewide or US House candidate contests in this CVR: add a contest by name below.</p>{% endif %}
+    <p class="target-status" role="status" aria-live="polite"><strong id="target-matching">{{ matching }}</strong> ballots match<span id="target-description">{% if selection %}: {{ description }}{% endif %}</span>; <span id="target-clean">{{ clean }}</span> of them with no redaction marker in their row. <button type="submit">Count</button></p>
+  </form>
+
+  <form method="get" action="{{ url('/coord/targets') }}" class="actions target-add">
+    <input type="hidden" name="county" value="{{ county }}">{{ added_fields() }}{% for c, ks in selection.items() %}{% for k in ks %}<input type="hidden" name="v" value="{{ c }}:{{ k }}">{% endfor %}{% endfor %}
+    <label>Add a contest to the grid <input type="search" name="q" value="{{ query }}" maxlength="80" size="28" placeholder="part of its name, e.g. Commissioner"></label>
+    <button type="submit" class="secondary">Search</button>
+    {% if query %}{% if search %}<span class="target-found">{% for cv in search %}<a href="{{ url('/coord/targets') }}?county={{ county|urlencode }}{% for a in added %}&amp;add={{ a|urlencode }}{% endfor %}&amp;add={{ cv.name|urlencode }}{% for c, ks in selection.items() %}{% for k in ks %}&amp;v={{ c }}:{{ k }}{% endfor %}{% endfor %}">{{ cv.name }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}</span>{% else %}<span class="meta">No contest of the CVR matches “{{ query }}”{% if added|length >= 12 %} (or the grid has its 12 added contests){% endif %}.</span>{% endif %}{% endif %}
+  </form>
+
+  {% if presets %}
+  <h3>Split tickets</h3>
+  <ul>{% for label, href in presets %}<li><a href="{{ href }}">{{ label }}</a></li>{% endfor %}</ul>
+  {% else %}<p class="meta">No split-ticket presets: the candidates' parties are not in the CVR's labels, the state's results or the contest names.</p>{% endif %}
+
+  <form method="post" action="{{ url('/coord/targets/draw') }}" class="actions target-draw-row" id="draw-row">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="county" value="{{ county }}">
+    <input type="hidden" name="selection" value="{{ selection_text }}" id="target-selection">
+    <span class="target-row-pattern"><strong id="draw-description">{% if selection %}{{ description }}{% else %}No candidate checked yet{% endif %}</strong></span>
+    <span class="target-row-count"><strong id="draw-matching">{{ matching }}</strong> matching</span>
+    <label>Seed <input type="text" name="seed" maxlength="{{ max_seed }}" size="18" value="{{ seed }}" placeholder="any text" aria-describedby="seed-help"></label>
+    <label>Ballots <input type="number" name="size" value="{{ draw_size }}" min="1" max="{{ max_draw }}" inputmode="numeric" class="target-size"></label>
+    <button type="submit" id="draw-button"{% if not selection or not matching %} disabled{% endif %}>Draw</button>
+  </form>
+  <p class="meta" id="seed-help">The draw takes the ballots at random from the seed (any text, hashed{% if seed %}; the RLA seed in effect, {{ seed }}, unless changed{% endif %}), the pattern, the CVR and the draw's number, so anyone can redo it; ballots already on the working list, on a sent list or in the RLA sample are skipped and more are taken instead. The draw joins the working list below as a source, included; each draw is recorded in the event log by the hash of its record.</p>
+</section>
+
+<section id="list">
+  <h2>The working list</h2>
+  <p class="meta">The union of the sources checked below, each ballot once, in CORLA's pull order (storage location, tabulator, batch, record). Uncheck a source to leave its ballots out; it stays on record. <strong>Send to county</strong> freezes the list as Targeted list {{ next_number }}; what is added afterwards goes into the next list.</p>
+  <h3>Sources</h3>
+  {% if sources %}
+  <div class="table-wrap"><table class="data targets-table targets-sources">
+    <thead><tr><th><span class="visually-hidden">Include</span></th><th>Source</th><th class="num">Ballots</th><th><span class="visually-hidden">Actions</span></th></tr></thead>
+    <tbody>
+    {% for s in sources %}
+    <tr{% if not s.included %} class="is-excluded"{% endif %}>
+      <td><form method="post" action="{{ url('/coord/targets/include') }}" class="inline target-include"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="source" value="{{ s.id }}"><input type="hidden" name="included" value="{{ '0' if s.included else '1' }}"><label class="target-choice"><input type="checkbox" data-include="{{ s.id }}"{% if s.included %} checked{% endif %} aria-label="Include {{ s.title|lower }} {{ s.id }}"> <span class="narrow-only">include</span></label> <button type="submit" class="secondary small js-hidden">{{ 'Exclude' if s.included else 'Include' }}</button></form></td>
+      <td class="target-pattern"><strong>{{ s.title }}</strong> <span class="meta">{{ s.time|local }} by {{ s.actor }}</span><br><span class="meta">{{ s.description }}</span>{% if s.draw %}<br><a href="{{ url('/coord/targets/draw') }}?county={{ county|urlencode }}&amp;n={{ s.draw.draw }}" class="meta">the draw's ballots and record</a>{% endif %}</td>
+      <td class="num">{{ s.ids|length }}</td>
+      <td>{% if s.draw %}<form method="post" action="{{ url('/coord/targets/draw/again') }}" class="inline"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="source" value="{{ s.id }}"><button type="submit" class="secondary small">Draw again</button></form>{% endif %}</td>
+    </tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">No sources yet: draw from a pattern above, or enter imprinted IDs below.</p>{% endif %}
+
+  <form method="post" action="{{ url('/coord/targets/list/add') }}" class="actions target-enter">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}">
+    <label>Imprinted IDs <input type="text" name="ids" maxlength="4000" size="26" placeholder="101-12-5, 102-3-40"></label>
+    <label>Note <input type="text" name="note" maxlength="500" size="26" placeholder="why these (optional)"></label>
+    <button type="submit">Look up and add</button>
+    <span class="meta">Each is looked up in the CVR and the manifest, and the result shown here; one in neither is not added. The IDs entered together are one source.</span>
+  </form>
+
+  <h3>Ballots</h3>
+  {% if entries %}
+  <div class="table-wrap"><table class="data targets-table targets-list">
+    <thead><tr><th class="num">#</th><th>Imprinted ID</th><th>Storage location</th><th>Ballot type</th><th>Found</th><th>From</th></tr></thead>
+    <tbody>
+    {% for e in entries %}
+    <tr><td class="num">{{ loop.index }}</td><td class="nowrap"><code>{{ e.imprinted_id }}</code>{% if e.in_rla %} {{ badge('warning', 'also in the RLA sample') }}{% endif %}</td><td>{{ e.location or '' }}</td><td>{{ e.ballot_type or '' }}</td>
+      <td class="nowrap">{% if e.cvr_status %}{{ badge('ok', 'CVR') }}{% else %}{{ badge('missing', 'not in CVR') }}{% endif %} {% if e.in_manifest %}{{ badge('ok', 'manifest') }}{% else %}{{ badge('missing', 'not in manifest') }}{% endif %}</td>
+      <td class="nowrap">{% for sid in e.sources %}{{ source_by_id[sid].title if sid in source_by_id else sid }}{% if not loop.last %}, {% endif %}{% endfor %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="target-summary"><strong>The working list now: {{ entries|length }} ballot{{ '' if entries|length == 1 else 's' }}</strong>{% if in_rla %}, {{ in_rla }} also in the RLA sample (the county need not pull {{ 'it' if in_rla == 1 else 'them' }} twice){% endif %}, from {{ sources|selectattr('included')|list|length }} source{{ '' if sources|selectattr('included')|list|length == 1 else 's' }}. <a href="{{ url('/coord/targets/list/csv') }}?county={{ county|urlencode }}">Download CSV</a></p>
+  <details class="target-email"><summary>Text for an email (not yet sent)</summary>
+  <pre class="text" id="list-email">{{ list_email }}</pre>
+  <p><button type="button" data-copy="list-email">Copy to clipboard</button> <span class="copy-status" role="status" aria-live="polite"></span></p></details>
+  <h3 id="send">Send to county</h3>
+  <p>These {{ entries|length }} ballot{{ '' if entries|length == 1 else 's' }} become <strong>Targeted list {{ next_number }}</strong>: dated, with its extract hash, printable PDFs, a spreadsheet and the text to copy into the county's email, marked "TARGETED (NOT RLA)" beside {{ county }}'s RLA sample. Observers see it in the list at the top of their page{% if not has_rla %} (and, until {{ county }} has an RLA sample, their links open on it){% endif %}.</p>
+  <form method="post" action="{{ url('/coord/targets/send') }}" class="actions">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}">
+    <label>Audit boards <input type="number" name="boards" min="1" max="{{ max_extract_boards }}" value="1"></label>
+    <button type="submit">Send to county: make Targeted list {{ next_number }}</button>
+  </form>
+  {% else %}<p class="muted">Empty: check a source above, draw from a pattern, or enter imprinted IDs.</p>{% endif %}
+</section>
+
+<section id="sent">
+  <h2>Sent lists</h2>
+  <p class="meta">{{ sent|rejectattr('item.retired')|list|length }} list{{ '' if sent|rejectattr('item.retired')|list|length == 1 else 's' }} active, {{ active_total }} ballots{% if active_distinct != active_total %} ({{ active_distinct }} different){% endif %}.
+    {% if allowed is not none %}The county allows {{ allowed }}.{% endif %}</p>
+  {% if over_allowed %}<p class="notice"><span aria-hidden="true">&#9650;</span> The active lists have {{ active_distinct }} different ballots, more than the {{ allowed }} {{ county }} allows. Retire a list, or check with the county.</p>{% endif %}
+  <form method="post" action="{{ url('/coord/targets/allowed') }}" class="actions">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}">
+    <label>Ballots the county allows in all <input type="number" name="allowed" min="1" max="100000" value="{{ allowed if allowed is not none else '' }}" inputmode="numeric"></label>
+    <button type="submit" class="secondary">Record</button> <span class="meta">Optional; blank clears it. A note for coordinators, not a limit.</span>
+  </form>
+  {% if sent %}
+  {% for v in sent %}{% set x = v.item %}
+  <article class="card target-sent" id="{{ x.key }}">
+    <h3>{{ x.label }}{% if x.retired %} {{ badge('missing', 'retired') }}{% endif %}{% if x.published %} {{ badge('ok', 'details published') }}{% endif %} <span class="meta">public: {{ x.public_label }}</span></h3>
+    <p class="meta">Sent <span class="nowrap">{{ x.built|local }}</span> by {{ x.actor }} &middot; {{ x.ballots }} ballot{{ '' if x.ballots == 1 else 's' }}{% if v.entries|selectattr('in_rla')|list %}, {{ v.entries|selectattr('in_rla')|list|length }} also in the RLA sample{% endif %} &middot; extract <code class="hash">{{ x.sha256|h12 }}</code>{% if x.record_sha256 %} &middot; record <code class="hash">{{ x.record_sha256|h12 }}</code> (<a href="{{ url('/coord/targets/sent/record') }}?county={{ county|urlencode }}&amp;list={{ x.key }}">download</a>){% endif %}</p>
+    {% if v.sources %}<p class="meta">Sources: {% for s in v.sources %}{% if s.kind == 'draw' %}draw {{ s.draw }} ({{ s.description }}){% else %}entered by ID ({{ s.ballots }}{% if s.note %}: {{ s.note }}{% endif %}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
+    <p class="actions">{% for b in x.boards %}{% for layout in v.layouts %}<a class="nowrap" href="{{ url('/coord/extract/pdf') }}?county={{ county|urlencode }}&amp;board={{ b }}&amp;layout={{ layout }}&amp;list={{ x.key }}" download>PDF{% if x.boards|length > 1 %} board {{ b }}{% endif %}, {{ layout_label(layout) }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}{% if not loop.last %} &middot; {% endif %}{% endfor %} &middot; <a href="{{ url('/coord/targets/sent/csv') }}?county={{ county|urlencode }}&amp;list={{ x.key }}">CSV</a> &middot; <a href="{{ url('/coord/extract') }}#lists">more on Extracts</a></p>
+    <details class="target-email"{% if just_sent and just_sent.item.key == x.key %} open{% endif %}><summary>Text for the county's email</summary>
+      <pre class="text" id="sent-email-{{ x.number }}">{{ v.email }}</pre>
+      <p><button type="button" data-copy="sent-email-{{ x.number }}">Copy to clipboard</button> <span class="copy-status" role="status" aria-live="polite"></span></p>
+    </details>
+    <details><summary>Ballots ({{ v.entries|length }})</summary>
+      <div class="table-wrap"><table class="data targets-table">
+        <thead><tr><th class="num">#</th><th>Imprinted ID</th><th>Storage location</th><th>From</th></tr></thead>
+        <tbody>{% for e in v.entries %}<tr><td class="num">{{ loop.index }}</td><td class="nowrap"><code>{{ e.imprinted_id }}</code>{% if e.in_rla %} {{ badge('warning', 'also in the RLA sample') }}{% endif %}</td><td>{{ e.location or '' }}</td><td class="nowrap">{{ e.sources|join(', ') }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </details>
+    <form method="post" action="{{ url('/coord/targets/lists') }}" class="actions"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="list" value="{{ x.key }}">
+      {% if x.retired %}<button type="submit" name="action" value="restore" class="secondary small">Show to observers again</button>{% else %}<button type="submit" name="action" value="retire" class="secondary small">Hide from observers (retire)</button>{% endif %}
+      {% if x.published %}<button type="submit" name="action" value="withdraw" class="secondary small">Withdraw the published details</button>{% else %}<button type="submit" name="action" value="publish" class="secondary small">Publish details</button>{% endif %}
+    </form>
+  </article>
+  {% endfor %}
+  <p class="meta">During the audit the public dashboard shows each list only as "Targeted list N", with its counts. <strong>Publish details</strong> (off until chosen; for after the targeted ballots have been examined) puts the list's sources in words and its imprinted IDs in the public log and on the dashboard. A retired list is hidden from observers' switchers and the dashboard but kept on record.</p>
+  {% else %}<p class="muted">None yet: send the working list above.</p>{% endif %}
+</section>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,626 @@
+{
+  "mirror": "https://github.com/nealmcb/auditcenter",
+  "description": "Public audit center files used by the acceptance tests in tests/acceptance/, each at a pinned mirror commit with its SHA-256. See tests/acceptance/mirror.py.",
+  "files": [
+    {
+      "path": "2026/primary/files/Adams.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "47e0eeefabde201b943017761b4bdb2205675947733703798147b29f215b6fae"
+    },
+    {
+      "path": "2026/primary/files/Alamosa.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "3af7b4cefc694e6164c4cd9c2dfecb3e721c5551fa58da950235f130096aedf1"
+    },
+    {
+      "path": "2026/primary/files/Arapahoe.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "495a7e29e074175e65f9c8ff204c51b3c7b2e56f9d812682a31d25631383663a"
+    },
+    {
+      "path": "2026/primary/files/Archuleta.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "d36454d6f5e442c26679a90cf67f4972e0c65d7966ba7288a974fac27bd2a068"
+    },
+    {
+      "path": "2026/primary/files/Baca.csv",
+      "commit": "23af1c61f97071337b29386d3ceea675678a44f9",
+      "sha256": "cd79ffee46c234eda57bff73fd76373af2e49d38a03dfbe00aa01b24a928106a"
+    },
+    {
+      "path": "2026/primary/files/Bent.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "0b3f8525c6ff29e09778ca235bc6b2bb12adfb340fc645afd30f2499e0c592ee"
+    },
+    {
+      "path": "2026/primary/files/Boulder.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "718e02d6a4ce1056420e7e6076d9fee643035833c23bc691f08d998b551d5e8c"
+    },
+    {
+      "path": "2026/primary/files/Broomfield.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "2497e8642a3e989a8dc37a155c2e4849fd838b8fe8687d96a27bf5ffe80bc450"
+    },
+    {
+      "path": "2026/primary/files/Chaffee.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "4378b140a0035c8ee5255dc7128d6de8ec242a1f435d18e7c61f2afcf1219694"
+    },
+    {
+      "path": "2026/primary/files/Cheyenne.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "6ebc35ab4db811feb46e721e94d55d10c625a079c7ec5ee705c0b3b66f8b4c14"
+    },
+    {
+      "path": "2026/primary/files/ClearCreek.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "3816d4f1c1cc36141e3c77f73e46aebeb375f3bfaeb75b1ebf098a1056d322ff"
+    },
+    {
+      "path": "2026/primary/files/Conejos.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "8edd5e28ba11a619f9ae9caf5b8b7f9a8c81ab359708d6b3f0620b7967968dd4"
+    },
+    {
+      "path": "2026/primary/files/Costilla.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "01b90be0601ec962b8aeb39ffeebbf23c573d2716962680abb9289c2457b5775"
+    },
+    {
+      "path": "2026/primary/files/Crowley.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "f932acffad4d2c774f4debe0e39b84d95a0234014fc797008975bdf1e855ee2a"
+    },
+    {
+      "path": "2026/primary/files/Custer.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "98a1061403eb98054288fc25b6f93630aa98fe1519d1f872dff92b65c5bb8b75"
+    },
+    {
+      "path": "2026/primary/files/Delta.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "d71ba8b8851cd442d6759cde39cbdc1b50c0d7708eec63e7187c87d83acd62a9"
+    },
+    {
+      "path": "2026/primary/files/Denver.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "bae8aeed9f249dfad514777a556dee1f4587d07b47324e6bb0854f1e5b426fdf"
+    },
+    {
+      "path": "2026/primary/files/Dolores.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "76beac262aa2b3e8c621251cc79e054670ff915a73f73fb42d7b85f627a251c6"
+    },
+    {
+      "path": "2026/primary/files/Douglas.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "47e72bd70ea0fc004e441646803474bc46b6ee69997d7445c23ac2ea1457b088"
+    },
+    {
+      "path": "2026/primary/files/Eagle.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "ed06617cac2c129c999e92f96ad59118ba0e78a9f24003292bc939cd175e9027"
+    },
+    {
+      "path": "2026/primary/files/ElPaso.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "53039575ade92b7baca2e42984378ab656ad77ae7a6a45719d6a705504137a3c"
+    },
+    {
+      "path": "2026/primary/files/Elbert.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "7503d04bfd9ae4a605998ef6fa6a4b0cde39e09e333ffc415a90ae67c404e062"
+    },
+    {
+      "path": "2026/primary/files/Fremont.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "5770ac539d033c4be28458f98e7b6d50d84b85bbeeac773c0a74520b6a8a63c6"
+    },
+    {
+      "path": "2026/primary/files/Garfield.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "02af609a148035af54c8dcd8440df27b2b965e85c0979ef8024b810782e2810b"
+    },
+    {
+      "path": "2026/primary/files/Gilpin.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "f3fa11ac934ecb7695669f7e61b231b6e1081226295c29f63ca9f97b5bcabdf0"
+    },
+    {
+      "path": "2026/primary/files/Grand.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "1b997fa1be148d6091fdd03e956eafaf159b55edd29167c75d11f22333573b8f"
+    },
+    {
+      "path": "2026/primary/files/Gunnison.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "5628689a1b043bf5367f16e5b774f2e1a4b36b6e2c08f1795fedcce4b450c6fb"
+    },
+    {
+      "path": "2026/primary/files/Hinsdale.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "b53730306fedbe83080487a3e3d31dcb08a4f3f49969cb2db66ca742990534ea"
+    },
+    {
+      "path": "2026/primary/files/Huerfano.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "7904a1dda130b96828fa043944fccbd7e57cd623fb30168fd9f50016663b692c"
+    },
+    {
+      "path": "2026/primary/files/Jackson.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "9b359ec6df0f9a35e00c6cd033aba5b7cbd24e248a2b0c300ff477672d92bbcb"
+    },
+    {
+      "path": "2026/primary/files/Jefferson.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "5e3fdc249a9440ed9955eac3e6a1e8d9e30d259abe8b27d5bf0da34be63d7f3a"
+    },
+    {
+      "path": "2026/primary/files/Kiowa.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "8a2fcf31924118e064a7bbcb50b1bd0db2b801151ce7eb00fe6a0ef86e725bb8"
+    },
+    {
+      "path": "2026/primary/files/KitCarson.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "b6693ddadc5f69cfd210a3c197a1c0cf71425f7e4da3216b21b95e7279b74093"
+    },
+    {
+      "path": "2026/primary/files/LaPlata.csv",
+      "commit": "43b6c782887becdd48bd07d3ebcd31915f144c3f",
+      "sha256": "c4ab2dc98beb46ceb23551093165aa401404b3ffb3a10962fab32b76f4589c8c"
+    },
+    {
+      "path": "2026/primary/files/Lake.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "ba2c30c66e532b29b45ad3b0ae9e2ea1a3f4a392b0c360b1185420ca0c19a788"
+    },
+    {
+      "path": "2026/primary/files/Larimer.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "97c582faa6dedace983bdb5c1d160c50f7652a9a4a508ba1320c5a676024835a"
+    },
+    {
+      "path": "2026/primary/files/LasAnimas.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "f8c9f660be46124c756296449d7e1ec72d14bb70bbc570d310d14d86835de6f1"
+    },
+    {
+      "path": "2026/primary/files/Lincoln.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "21fb70063426002638da08721ecf3435d262151c6ed1a37f0486f35610bd8098"
+    },
+    {
+      "path": "2026/primary/files/Logan.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "ae498e6847122be5ce5328e8cf8205c48335ca7e5c9ede330b957811ea1f8a39"
+    },
+    {
+      "path": "2026/primary/files/Mesa.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "c13e2bd2b5834e1cc0d053d3278f26676a20430608864a64ac216274e529e3ce"
+    },
+    {
+      "path": "2026/primary/files/Mineral.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "cad9b343342d15c8e5757c40908ffd5be399590a5254363962bbbec798a33f28"
+    },
+    {
+      "path": "2026/primary/files/Moffat.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "71c289e3101535ec8a04fae81fb0a1bd472e4851a66731a01e4e9cd5aea8e902"
+    },
+    {
+      "path": "2026/primary/files/Montezuma.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "86953cf4b23141b6f9339c67ae0c8bf0a9bf75a29bcf87df4fcf997c077872b3"
+    },
+    {
+      "path": "2026/primary/files/Montrose.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "f1c48f04b556844ff3fa8f3d1988b0787667b0083495771fec7c1defe6ee377c"
+    },
+    {
+      "path": "2026/primary/files/Morgan.csv",
+      "commit": "f46c6630655e115bcf959f797aee42c0b35d7c86",
+      "sha256": "1a768209a2888546c1d528058817dbe1839f0f457c70cb426acd8b830bd24694"
+    },
+    {
+      "path": "2026/primary/files/Otero.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "217bd37a27dea506ee7fed552b6ec7386b1446f22f6519a3439f218d47902018"
+    },
+    {
+      "path": "2026/primary/files/Ouray.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "b3ceee8b12e5569951385610a75f92007c769ead1f076a8a9c23f69d4d10300a"
+    },
+    {
+      "path": "2026/primary/files/Park.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "c4c5ee9ba72ec5392365c26a587dd1a1ff66316b9975b6d8e822a5fc3c9a4004"
+    },
+    {
+      "path": "2026/primary/files/Phillips.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "f74d60c404ea6e1b186ac576ec2f6f2df1f8ec7d4e8e6d17bfcfd03e9dd25564"
+    },
+    {
+      "path": "2026/primary/files/Pitkin.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "2ac5d8dd595106f1f071809c8a7c216ece2973e5f8262c3d77abf1b369ea2d2b"
+    },
+    {
+      "path": "2026/primary/files/Prowers.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "943033217678b90c3f18a2ac74384a0d3b3166710cf28090ae977464e4151974"
+    },
+    {
+      "path": "2026/primary/files/Pueblo.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "3656c3549319d01e138beb92d061ae10f8698ba6b813d7a3b6b20220f9fade5c"
+    },
+    {
+      "path": "2026/primary/files/RioBlanco.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "4752a9315b67a9f7db4f710e6e61481d71b93c6d5a1583b1ea9913287d801d64"
+    },
+    {
+      "path": "2026/primary/files/RioGrande.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "eabff9852d53253cfbf9831dc70a9ce66c367c865dab7603404329aead85545e"
+    },
+    {
+      "path": "2026/primary/files/Routt.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "b0c16bcd6bb05bc90cded625e9b45a3a626585c1ac35a223e6e1d5679fb524f3"
+    },
+    {
+      "path": "2026/primary/files/Saguache.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "64dec2dcfb3df0755c1df8eb676c7e5e75bd7fb02fac1adb7f83e1834424366c"
+    },
+    {
+      "path": "2026/primary/files/SanMiguel.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "0564f40d4adc16d00f5896579e455d63dd4554d4597217c966e7dae22be28318"
+    },
+    {
+      "path": "2026/primary/files/Sedgwick.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "2bf1c17027f793c09c901ffb6a8f08f1288d17f8e83e06d5f588599646106c87"
+    },
+    {
+      "path": "2026/primary/files/Summit.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "80b900f07d1a43b10253151134b73b21797f57c478591cede687a35f3c4d0b14"
+    },
+    {
+      "path": "2026/primary/files/Teller.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "9193f980387d992de449739ef72b91c61177a71796e415629bda9a1afaf5e5e5"
+    },
+    {
+      "path": "2026/primary/files/Washington.csv",
+      "commit": "23af1c61f97071337b29386d3ceea675678a44f9",
+      "sha256": "1520764a9c39e79dbe4eb5d41d87f6b6ef4f8b0ee9844fdfaf4b78a44d074162"
+    },
+    {
+      "path": "2026/primary/files/Weld.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "c26253088bb0c5e4ddcba6363531ab3485f6ff9728b3a9e7fab15bfe6eaeab1b"
+    },
+    {
+      "path": "2026/primary/files/Yuma.csv",
+      "commit": "a4a2b935445406da32f6ce01ba9bc317990c99fa",
+      "sha256": "b8b186476270b8b49580d9ce77f82fd3d78996423109df5e67b98ea1bc9aaddf"
+    },
+    {
+      "path": "2026/primary/finalReports/ContestIDsByCounty.csv",
+      "commit": "ba18ba6874c5ed4be713b3745a5d32c261cc6083",
+      "sha256": "360fc35779cfd11c9deb96410e1e5feb6c95c48cf897bb956997f9ae5fe535cf"
+    },
+    {
+      "path": "2026/primary/finalReports/ContestsListRound1.csv",
+      "commit": "ba18ba6874c5ed4be713b3745a5d32c261cc6083",
+      "sha256": "3313143230bf8db72f9336eeddb3f83cc9c6bf62fd19e70331667c37b0ac31e3"
+    },
+    {
+      "path": "2026/primary/finalReports/ContestMarginAndContestCVR-IDs-Round1.csv",
+      "commit": "ba18ba6874c5ed4be713b3745a5d32c261cc6083",
+      "sha256": "0c54f7aeaeb5c2d35754cbca906340855d72dbebba9906b0ab768758ec3943eb"
+    },
+    {
+      "path": "2026/primary/finalReports/CVRtoAuditBoardInterpretationComparison.csv",
+      "commit": "ba18ba6874c5ed4be713b3745a5d32c261cc6083",
+      "sha256": "bdae0aceb57be409e63030e20856b76497f40b3687e278cbc126a1b36bf7a93a"
+    },
+    {
+      "path": "2026/primary/finalReports/CountyBallotManifestToCVRcomparison.csv",
+      "commit": "ba18ba6874c5ed4be713b3745a5d32c261cc6083",
+      "sha256": "6258edf549d16eb6fba71935c507616c02d5bf8c3fc1d5a3c50f8f633f86f0fe"
+    },
+    {
+      "path": "2019/round_1/county_manifest_Adams.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "d54ba3d9762b7c10878cf9f02ea0cb6626c42341bc56b2a84b24f45c6962be05"
+    },
+    {
+      "path": "2019/round_1/county_manifest_Baca.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "a9c78ae97f5e693992428230295feab7e104a9f26b499e974abaa5f0b88ab5f3"
+    },
+    {
+      "path": "2019/round_1/contest.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "4f7c87176d7377af68528261b1dcec7e0cf8c2e6148e0a2904f3451c19f2c90b"
+    },
+    {
+      "path": "2019/round_1/contestSelection.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "fb6221cc5bfa0f5c5aedbf0f4bdc8c61f04d6918bd6197df0331fe4a17035c6d"
+    },
+    {
+      "path": "2019/round_1/stateReport.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "9673e646645eeba36e9f4ee3b0822ac6760c1c791c90b551317efce5a9294f25"
+    },
+    {
+      "path": "2019/round_1/countyManifest.html",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "157114e472526bde9d22307b721bf6f6c1522754741d25df877eb90242986479"
+    },
+    {
+      "path": "2019/batch_count_comparison.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "a08cdc72a3b0279f866f70efbc4a482c47cc72b4d2eaa2fd12085e519fa24f35"
+    },
+    {
+      "path": "2019/contests_by_county.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "796c5ac166ed790b9638f742c189581ccc84493ef1280d9d5db33b21ea95cc36"
+    },
+    {
+      "path": "2019/upload_status.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "e5d75482a90fb6c984d0f3059821f5692bf50766cfa77b2b1d69d286dab97af4"
+    },
+    {
+      "path": "2019/tabulate.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "9a4dbefa995de68ec41d4b64a331234c86ababfc69743480197843542d23a896"
+    },
+    {
+      "path": "2019/2019CoordinatedTargetContests.pdf",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "3565f5714d15f39a7429595990a1bdfd7f76d9b65f6663cdb34eca41c0683c00"
+    },
+    {
+      "path": "2022/general/ContestsList.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "2533cab0e596b591e73e14453693d553f7e77e99f4dfccf18831b5f426fae6af"
+    },
+    {
+      "path": "2022/general/round_1/Adams.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "e41bdce2fa01fc67834ac88a06fe380d45127cba2fa455aa8bee0e8e9e3f79f9"
+    },
+    {
+      "path": "2022/general/round_1/Baca.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "05012961361b529df4ae7e70949b7ad00e62bd3761eab22cf8cf728d53c9c5ef"
+    },
+    {
+      "path": "2022/general/round_1/Conejos.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "3a4f06e6a23f25b2b3752c5b5f27a6ada09dc560250f3c72fbb4440a7cb24a3b"
+    },
+    {
+      "path": "2022/general/round_1/CVRtoAuditBoardInterpretativeComparison.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "5debac9542157d9f107acd3c0d303f3e1236bd9161675e84175e4ace090ee05d"
+    },
+    {
+      "path": "2022/general/round_1/contestSelection.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "954dc7e67b3c8ac256ff4f550eb88a469480e281ad1515fac91db05e0540aa86"
+    },
+    {
+      "path": "2022/general/round_1/contestsByCounty.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "80c5f77e274fe81b9b4fb0db629bdb2ac614444f816ea49c846b184124920d2e"
+    },
+    {
+      "path": "2022/general/round_1/uploadStatus.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "59e5f5b6fe32da79f631f7385ea24c2aeac166f899d99df54b5f8ce5ffbf9431"
+    },
+    {
+      "path": "2022/general/round_1/StateAuditReport.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "b8109a31040cbc667ecce3e3d2b7849575a24e8d591f2c9958267a275b5eda2f"
+    },
+    {
+      "path": "2022/general/round_1/AuditActivityReport.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "1de998f76eaa658797c5aa4867441374812efa0b77bf5f22c9499dbba6895651"
+    },
+    {
+      "path": "2022/general/round_1/canonicalListFinal.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "270fb1ad1788c57aa82869a1a960d8500964f6ccfa8fae3c56977aa49fe0190e"
+    },
+    {
+      "path": "2024/general/AdamsBallotManifest.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "174f0d7d9ea73d1e61332c1297ab814d3752542ac294192996420b592c1568e8"
+    },
+    {
+      "path": "2024/general/targetedContests.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "57291d7812503830dc92f4768598716f95ca7ccd73f94b9e2c9bbd305f0a8e5e"
+    },
+    {
+      "path": "2024/general/2024GEDiscrepancyReport.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "b724c211f4496c85804cd4d722555a7e44c83b775d876009298adb169ec147d2"
+    },
+    {
+      "path": "2024/general/seed.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "947bd4ab9aa08cd597efc41280af24d05dd2dc935b6d999ccd5291c75c9754d1"
+    },
+    {
+      "path": "2024/general/uploadStatus.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "710e82ca1b6f9a273667719646c9dc6291f49c613effe6aabc78025fe481e802"
+    },
+    {
+      "path": "2024/general/batchCountComparison.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "7caf4200b2a3972a57cfa53349528a422596841a59bd5da138160df5822a513c"
+    },
+    {
+      "path": "2024/general/round1/20241120stateGeneral11052024report205PM.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "6a92d94033c7a035983fbd97773d0677c7b44a2fb5dd13617a556d2d0e1d969f"
+    },
+    {
+      "path": "2024/general/round1/contestSelection.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "59ba7f5a46a75cd810ad69071e64cd506c629e2bcd4eb3a9928e85abaf724696"
+    },
+    {
+      "path": "2024/general/discrepancy.html",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "5f75486667099a44410bf7bbeba721dc95c91d0b10ce22d62cc41e3c8761a165"
+    },
+    {
+      "path": "2026/primary/files/targetContestSelections.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "a161e9c6e9b73b0f2d46a1046e05b63ccc24753eb2e5afd1cefe15a6928c00f3"
+    },
+    {
+      "path": "2026/primary/files/2026DiscrepancyReportPE.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "7b0934ab088f1b624a64857a48efa8505990de342e68b8c0fc3a91c9241e0e09"
+    },
+    {
+      "path": "2026/primary/files/2026DiscrepancyReportPE.docx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "46dafa62fb382923f9bd76737b3357fa7398231e3d13705fbc395dbd8fc441ab"
+    },
+    {
+      "path": "2026/primary/files/uploadStatus.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "44fd404818f88bc0e00566f3ca8a892b444e29e24f0a6b052b841665eef6b848"
+    },
+    {
+      "path": "2026/primary/riskLimit.html",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "751c2421aa37e612038ef9dde797835b871526c35bdf1514f7c987a8944091b8"
+    },
+    {
+      "path": "auditCenters/auditCenter-2022-11-23T20:51:38-07:00.html",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "c92c6632d67eb622eda577e7b7263073b762e27ae5fed7d48be8c17832f36108"
+    },
+    {
+      "path": "auditCenters/auditCenter-2022-11-24T14:19:39-07:00.html",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "d9bc732746f5aead3c2789b89e33bd814756fd08633597539185cf4f6c7564d2"
+    },
+    {
+      "path": "auditCenters/auditCenter_2022-07-15T08-27.html",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "b9c7193cf37b8c5071272c9fb9020c5949b8c081ca16d47f2e5b005b8d4844d9"
+    },
+    {
+      "path": "auditCenters/auditCenter_2022-07-15T21-26.html",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "3e1d644dd9c72225d501975755fa7a7f9555b9099997c66510c32bad6cac4337"
+    },
+    {
+      "path": "auditCenters/auditCenter-2026-07-07T12:30:05-06:00.html",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "7982feb5c76712cb112f807e7643d9d9d4f577334de21bad6b4b2d0c7ab3d6fc"
+    },
+    {
+      "path": "2026/primary/finalReports/StateAuditReport.xlsx",
+      "commit": "ba18ba6874c5ed4be713b3745a5d32c261cc6083",
+      "sha256": "bca825818b17573967c10dde2dbae200a0b2a024d56c1263b6522ca1d9a0bae3"
+    },
+    {
+      "path": "2025/cvrs/2025-boulder-Redacted-CVR-PUBLIC.csv",
+      "commit": "eabfc4b91875eecee37a3cc05773e75aad057051",
+      "sha256": "3ff74cb027a6432d4e9f16bcdf4921d78cfe87ba77b9111e774a23a81dd4f3cc"
+    },
+    {
+      "path": "2025/cvrs/broomfield-Redacted_CVR_Export_20251119093616.csv",
+      "commit": "03f9584d912973d95ddf57ceb710a00ac398f91f",
+      "sha256": "62b3b6399d6bfdd7ffaafc3b9378e736b77f9b337342a6e0a31080125ceeb6eb"
+    },
+    {
+      "path": "2026/primary/observerfiles/LaPlata_RedactedTest_NoContestBalance_CVR_Export_20260709081424.csv",
+      "commit": "7569ddbd41f7a0dc54e4fba70ec000cf6dfa2121",
+      "sha256": "6b8fcd43412319bebaaaea85596404fed4468f07e9a8bf26e898abd1dbb3361d"
+    },
+    {
+      "path": "2026/primary/observerfiles/Morgan_CVR_Export_20260709092315_Redacted.csv",
+      "commit": "7569ddbd41f7a0dc54e4fba70ec000cf6dfa2121",
+      "sha256": "b66bc37082f825494c88a63ac1aee52fdfd7e9c3b2c50a919f7fa97741fa4a00"
+    },
+    {
+      "path": "2026/primary/observerfiles/Weld_CVR_Export_20260709140755.csv",
+      "commit": "f46c6630655e115bcf959f797aee42c0b35d7c86",
+      "sha256": "56d1c5ba446f7f89309304fbe6d73f7e8514e624930111fa5f2965fe26f44241"
+    },
+    {
+      "path": "2024/primary/HuerfanoManifest.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "5904fe2079aebfde24d8b8688d8064fea7833a742afd0377295239dfd381f82c"
+    },
+    {
+      "path": "2024/primary/PhillipsManifest.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "ee53ab53826c4da4b95d55a6be541779032566615ce28c5972a9377d5c5e9e7e"
+    },
+    {
+      "path": "2018G/round_1/county_report_Adams.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "ed79967790dccc48b95dacb77811e1eb5827049ae1926fe6f1176f9e8994ba65"
+    },
+    {
+      "path": "2018G/round_1/upload_status.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "7670cb0a00209a2469632960a975e946f14a774d4cab88972538cbb59cec69d6"
+    },
+    {
+      "path": "2017/round_1/m_cvr_hash.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "9f05ce06f0ca898f883cd32e54381448f440072a5545e9318c63d7ed425fcc84"
+    },
+    {
+      "path": "2025-irv/seed.json",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "ab5fcd7afd10a298ba16056499f9559b67b0a02568c19439fedc0313032f2215"
+    },
+    {
+      "path": "2025-irv/contest.json",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "f048e76f29aa9b38488ea69052c5ec904df82325913edb88134c76a095157ff7"
+    },
+    {
+      "path": "2025/files/MontroseManifest.csv",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "009d495e37e21a1dbd50da5f0db68acb6d0883e8134ebbb45c1ed8d484debdac"
+    },
+    {
+      "path": "2025/2025CoordinatedRLASelectedContests.xlsx",
+      "commit": "39f0ef47b08e3e5a465bae54b028fea76541d63f",
+      "sha256": "d82d8d80b09b701f5f6f4e5af26839551e7d5939b6993d4a1c49d361dbdefbb5"
+    }
+  ]
+}

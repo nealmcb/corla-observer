@@ -1,0 +1,67 @@
+{% extends "base.html" %}
+{% block title %}Practice reader: {{ link.county }} board {{ link.board }}{% endblock %}
+{% block main %}
+<h1>Practice reader: {{ link.county }}, board {{ link.board }}</h1>
+{% if show_switcher %}<form method="get" action="{{ url('/read/' ~ token) }}" class="actions">
+  <label>Pull list <select name="list">{% for x in lists %}<option value="{{ x.key }}"{% if x.key == list_key %} selected{% endif %}>{{ x.label }} ({{ x.ballots }})</option>{% endfor %}</select></label>
+  <button type="submit" class="secondary small">Switch</button>
+</form>{% endif %}
+{% if order == 'targeted' %}<p class="badge badge-warning"><strong>TARGETED (NOT RLA)</strong>: ballots chosen by observers, not part of the RLA sample.</p>{% endif %}
+<p class="muted">You are the audit board. Read each ballot's imprinted ID and votes aloud at a steady pace twice, as the board's two members would: the first reading, then press Second reading and read it again, then press Next. Observers tap once after each reading.</p>
+{% if rla_notice %}<p class="notice" role="note"><span aria-hidden="true">&#9675;</span> {{ rla_notice }}</p>{% endif %}
+{% if not has_extract %}
+<p class="notice notice-error">No extract for {{ link.county }} board {{ link.board }} yet: nothing to read until one is built (the RLA sample needs the seed; a targeted list, the targeted pull list).</p>
+{% else %}
+<section class="card">
+  {% if current %}
+    <p class="meta">Ballot {{ current.board_position }} of {{ total }}</p>
+    {% if current.deviation and current.deviation.type == 'skipped_ballot' %}
+      <p class="reader-id">(skipped)</p>
+      <p>Practice difference: say nothing for this ballot; it is skipped. Press Next.</p>
+    {% else %}
+      <p class="badge {% if second %}badge-ok{% else %}badge-warning{% endif %}"><span aria-hidden="true">{% if second %}2{% else %}1{% endif %}</span> {% if second %}Second reading: read it all aloud again{% else %}First reading: read it aloud{% endif %}</p>
+      <p class="reader-id">{{ current.imprinted_id_read }}</p>
+      {% if current.redacted %}<p><strong>Redacted in the CVR:</strong> read the ballot's votes as the board would; observers can't check them.</p>{% endif %}
+      <ul class="reader-votes">
+        {% for contest, choice in current.votes_read %}<li><span class="muted">{{ short_contest(contest) }}:</span> <strong>{{ choice }}</strong></li>{% endfor %}
+      </ul>
+      {% if current.deviation %}<p class="meta">Practice difference injected here ({{ current.deviation.type|label }}); read it as shown.</p>{% endif %}
+    {% endif %}
+  {% else %}
+    <p>Press Next to show the first ballot ({{ total }} on this board).</p>
+  {% endif %}
+  {% if current and not second and not (current.deviation and current.deviation.type == 'skipped_ballot') %}
+  <form method="get" action="{{ url('/read/' ~ token) }}">
+    <input type="hidden" name="rate" value="{{ rate }}">
+    <input type="hidden" name="step" value="2">
+    {% if list_key != 'rla' %}<input type="hidden" name="list" value="{{ list_key }}">{% endif %}
+    <button type="submit" class="reader-next">Second reading</button>
+  </form>
+  {% elif current and current.board_position >= total %}
+    <p class="notice"><span aria-hidden="true">&#10003;</span> That was the last ballot on this board.</p>
+  {% else %}
+  <form method="post" action="{{ url('/read/' ~ token ~ '/next') }}">
+    <input type="hidden" name="rate" value="{{ rate }}">
+    <input type="hidden" name="list" value="{{ list_key }}">
+    <button type="submit" class="reader-next">Next ballot</button>
+  </form>
+  {% endif %}
+</section>
+<form method="get" action="{{ url('/read/' ~ token) }}" class="card form">
+  <label>Deliberate differences (a changed vote, a wrong ID or a skipped ballot), recorded for scoring
+    <select name="rate">{% for value, label in rates %}<option value="{{ value }}"{% if value == rate %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  </label>
+  {% if list_key != 'rla' %}<input type="hidden" name="list" value="{{ list_key }}">{% endif %}
+  <button type="submit" class="secondary">Use this setting</button>
+</form>
+<form method="post" action="{{ url('/read/' ~ token ~ '/restart') }}">
+  <input type="hidden" name="rate" value="{{ rate }}">
+  <input type="hidden" name="list" value="{{ list_key }}">
+  <button type="submit" class="secondary small">Start this board over</button>
+</form>
+{% if ident %}
+<p class="meta"><code class="hash">{{ ident }}</code> &middot; <a href="{{ url('/read/' ~ token ~ '/provenance') }}{% if list_key != 'rla' %}?list={{ list_key }}{% endif %}">provenance</a> (the seed and every hash in full) &middot; <a href="{{ url('/read/' ~ token ~ '/check') }}">check a printed page</a></p>
+{% if print_layouts %}<p class="meta">Printout: {% for layout in print_layouts %}{% if not loop.first %} &middot; {% endif %}<a href="{{ url('/read/' ~ token ~ '/pdf?layout=' ~ layout) }}{{ list_amp }}" download>Download PDF ({{ layout_label(layout) }})</a>{% endfor %}</p>{% endif %}
+{% endif %}
+{% endif %}
+{% endblock %}

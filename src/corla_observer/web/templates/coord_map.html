@@ -1,0 +1,31 @@
+{% extends "base.html" %}
+{% from "_macros.html" import problem_list, waiting_list %}
+{% block title %}Coordinator: data map{% endblock %}
+{% block main %}
+<h1>Data map</h1>
+<p class="meta">As of event {{ snap.head_seq }}. The map is changed only through the workspace's overrides file and <code>corla-observer map apply</code>.</p>
+
+<p><a href="{{ url('/coord/flags') }}">Change flags</a>: {{ snap.open_flags|length }} open, {{ snap.high_flags }} of them high severity. The problems below leave out what a flag already reports.</p>
+
+<section>
+  <h2>Not yet expected</h2>
+  {{ waiting_list(snap) }}
+</section>
+
+<section>
+  <h2>Problems ({{ snap.problems|length }})</h2>
+  {{ problem_list(snap.problems) }}
+</section>
+
+<section>
+  <h2>The map</h2>
+  <pre class="text">{{ map_text }}</pre>
+</section>
+
+<section>
+  <h2>For an AI assistant</h2>
+  <p class="muted">The same as <code>corla-observer map show --for-ai</code>: compact and self-contained, with the problems and the overrides format.</p>
+  <p><button type="button" data-copy="ai-text">Copy to clipboard</button> <span class="copy-status" role="status" aria-live="polite"></span></p>
+  <pre class="text" id="ai-text">{{ ai_text }}</pre>
+</section>
+{% endblock %}

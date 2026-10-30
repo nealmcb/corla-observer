@@ -1,0 +1,89 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge, verdict %}
+{% block title %}Coordinator: upload{% endblock %}
+{% block main %}
+<h1>Upload: {{ items|length }} file{{ '' if items|length == 1 else 's' }}</h1>
+{% if pending_ids|length > 1 %}<p class="notice">{{ badge('warning', 'choose') }} {{ pending_ids|length }} files wait for a choice: choosing for one keeps the others on the next page.</p>{% endif %}
+{% for intake, report in items %}
+{% set d = intake.detection %}
+<section class="card" aria-label="{{ intake.original_name }}">
+  <h2>{{ intake.original_name }}:
+    {% if intake.accepted %}{{ badge('ok', 'accepted') }}{% elif intake.pending %}{{ badge('warning', 'choose') }}{% else %}{{ badge('fail', 'rejected') }}{% endif %}</h2>
+  <dl>
+    <dt>Detected</dt>
+    <dd>{% if d.kind %}{{ kind_labels[d.kind] }}{% if 'kind' in d.chosen %} <span class="muted">(chosen)</span>{% endif %}{% else %}<strong>kind not known</strong>{% endif %}
+      for {% if d.county == 'state' %}the state{% elif d.county %}{{ d.county }}{% if 'county' in d.chosen %} <span class="muted">(chosen)</span>{% endif %}{% else %}<strong>county not known</strong>{% endif %}</dd>
+    <dt>Evidence</dt>
+    <dd><ul class="plain">{% for e in d.evidence %}<li>{{ e }}</li>{% endfor %}</ul></dd>
+    <dt>File</dt><dd>{{ intake.size|size }}</dd>
+    {% set up = intake.upload %}{% set res = intake.results %}
+    {% if up and up.sha256 %}<dt>SHA-256</dt><dd><code class="hash full">{{ up.sha256 }}</code></dd>
+    {% elif res and res.sha256 %}<dt>SHA-256</dt><dd><code class="hash full">{{ res.sha256 }}</code></dd>{% endif %}
+    {% if up and up.reason %}<dt>Reason</dt><dd>{{ up.reason|label }}{% if up.reason == 'redaction_check_failed' %}: the file was deleted and not stored{% endif %}</dd>{% endif %}
+    {% if res and res.reason %}<dt>Reason</dt><dd>{{ res.reason }}; nothing was stored</dd>{% endif %}
+    {% if intake.error and not intake.pending %}<dt>Reason</dt><dd>{{ intake.error }}</dd>{% endif %}
+    {% if res and res.accepted %}
+    <dt>Generated</dt><dd>{% if res.generated %}{{ res.generated|local }} <span class="meta">({{ res.generated_basis }})</span>{% else %}not known{% endif %}</dd>
+    <dt>Contents</dt><dd>{{ res.form }}: {{ res.contests }} contests{% if res.ballots_cast %}, {{ '{:,}'.format(res.ballots_cast) }} ballots cast{% endif %}</dd>
+    {% endif %}
+  </dl>
+  {% for w in d.warnings %}<p class="notice">{{ badge('warning', 'warning') }} {{ w }}</p>{% endfor %}
+  {% if up %}{% for w in up.warnings %}<p class="notice">{{ badge('warning', 'warning') }} {{ w }}</p>{% endfor %}{% endif %}
+  {% if res %}{% for n in res.notes %}<p class="notice">{{ badge('warning', 'note') }} {{ n }}</p>{% endfor %}{% endif %}
+  {% if report %}
+  <h3>Redaction check {{ verdict(report.verdict) }}</h3>
+  <p class="muted">Counts, styles, precincts and ballot types only; never votes.</p>
+  <dl class="cols">
+    <dt>Rows read</dt><dd>{{ report.rows_read }}</dd>
+    <dt>Ballots grouped</dt><dd>{{ report.ballot_rows }}</dd>
+    <dt>Rows already redacted</dt><dd>{{ report.already_redacted_rows }}</dd>
+    <dt>Aggregate rows</dt><dd>{{ report.aggregate_rows }}</dd>
+    <dt>Grouped by</dt><dd>{{ report.grouped_by|replace('style', 'contest pattern')|replace('+', ', ')|replace('_', ' ') }}</dd>
+    <dt>Contest patterns</dt><dd>{{ report.styles }} <span class="meta">(the different sets of contests on a card: a card with a contest blanked out by the county's redaction has a pattern of its own, so this can be more than the ballot styles)</span></dd>
+    <dt>Groups</dt><dd>{{ report.groups }} <span class="meta">(contest pattern, precinct and ballot type)</span></dd>
+    <dt>Rare groups (under {{ report.threshold }})</dt><dd>{{ report.rare_group_count }}, holding {{ report.rare_ballots }} ballots</dd>
+  </dl>
+  {% if report.rare_group_sizes %}
+  <p>Rare group sizes: {% for size, n in report.rare_group_sizes %}{{ n }} of size {{ size }}{% if not loop.last %}; {% endif %}{% endfor %}</p>
+  {% endif %}
+  {% if report.shared_pattern_count %}
+  <p>Ballot types sharing a contest pattern <span class="meta">(the ballot type column distinguishes them, so they are grouped separately)</span>: {{ report.shared_pattern_count }}</p>
+  <ul>
+    {% for sp in report.shared_patterns[:20] %}<li>[{% for t, n in sp.ballot_types %}{{ '(blank)' if t is none else t }}{% if not loop.last %}, {% endif %}{% endfor %}{% if sp.ballot_type_count > sp.ballot_types|length %}, and {{ sp.ballot_type_count - sp.ballot_types|length }} more{% endif %}] ({{ sp.ballots }} ballots: {% for t, n in sp.ballot_types %}{{ n }}{% if not loop.last %}, {% endif %}{% endfor %}) <span class="meta">contest pattern {{ sp.style_hash }}, {{ sp.contests }} contests</span></li>
+    {% endfor %}
+    {% if report.shared_pattern_count > 20 %}<li>and {{ report.shared_pattern_count - 20 }} more</li>{% endif %}
+  </ul>
+  {% endif %}
+  {% for p in report.problems %}<p class="notice notice-error">{{ badge('error', 'problem') }} {{ p }}</p>{% endfor %}
+  {% for w in report.warnings %}<p class="notice">{{ badge('warning', 'warning') }} {{ w }}</p>{% endfor %}
+  {% endif %}
+  {% if intake.pending %}
+  <form method="post" action="{{ url('/coord/upload/choose') }}" class="form">
+    <p class="notice">{{ badge('warning', 'choose') }} The file {{ intake.error or d.problem() }}. Choose, or discard it; nothing is recorded until you do.</p>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <input type="hidden" name="pending" value="{{ intake.pending }}">
+    <input type="hidden" name="others" value="{{ pending_ids|reject('equalto', intake.pending)|join(' ') }}">
+    {% if not d.kind %}
+    <fieldset><legend>Kind of file</legend>
+      {% for k in (d.kinds or kinds) %}<label class="check"><input type="radio" name="kind" value="{{ k }}" required> {{ kind_labels[k] }}</label>{% endfor %}
+    </fieldset>
+    {% endif %}
+    {% if not d.county %}
+    <label>{{ 'Whose results' if d.kind == 'results' else 'County' }}
+      <select name="county" required>
+        <option value="" selected>Choose</option>
+        {% for c in d.counties %}<option value="{{ c }}">{{ 'The state (all counties)' if c == 'state' else c }}</option>{% endfor %}
+        {% if d.counties|length < all_counties|length %}<optgroup label="Any other county">{% for c in all_counties if c not in d.counties %}<option>{{ c }}</option>{% endfor %}</optgroup>{% endif %}
+        {% if test_counties %}<optgroup label="Test and demo counties (practice only)">{% for c in test_counties if c not in d.counties %}<option>{{ c }}</option>{% endfor %}</optgroup>{% endif %}
+      </select>
+    </label>
+    {% endif %}
+    <button type="submit" name="action" value="choose">Upload as chosen</button>
+    <button type="submit" name="action" value="discard" class="secondary" formnovalidate>Discard this file</button>
+  </form>
+  {% endif %}
+</section>
+{% endfor %}
+{% for n in notes %}<p class="meta">{{ n }}</p>{% endfor %}
+<p><a class="button" href="{{ url('/coord/upload') }}">Upload more</a> <a class="button secondary" href="{{ url('/coord') }}">Back to status</a>{% if items|selectattr('0.results')|list %} <a class="button secondary" href="{{ url('/coord/estimates') }}#totals">Estimates and the totals check</a>{% endif %}</p>
+{% endblock %}

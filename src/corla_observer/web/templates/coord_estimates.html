@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Coordinator: estimates{% endblock %}
+{% block main %}
+<h1>Sample-count estimates</h1>
+{% if message %}<p class="notice" role="status"><span aria-hidden="true">&#10003;</span> {{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
+{% if setup_error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> election.toml: {{ setup_error }}</p>{% endif %}
+<p>Each targeted contest's round-one count by CORLA's formula, until CORLA's contest list gives it: the <strong>central</strong> estimate, and a <strong>low</strong> one (a wider margin, one card per ballot before the manifests). Every ballot within a contest's low count is certain to be drawn if CORLA's count is at least the low one; the rest of the predicted ballots are marked POSSIBLE on the extracts.</p>
+
+<section>
+  <h2>Results</h2>
+  {% if results %}
+  <p class="meta">Per scope, the file used: the newest by the time Clarity generated it (from the file itself), a fetched one before an upload of the same time, and for the state a file with counties before a summary.</p>
+  <ul>{% for scope, pair in results %}<li>{{ scope }}: {% if pair[1].version %}version {{ pair[1].version }}, {% endif %}generated {{ pair[1].generated|local if pair[1].generated else '(time not in the file)' }}, {{ pair[1].origin }} {{ pair[1].time|local }}{% if pair[1].uploaded and pair[1].note %} <span class="meta">({{ pair[1].note }})</span>{% endif %}, {{ pair[0].form or pair[1].form }}, {{ pair[0].contests|length }} contests <code class="hash">{{ pair[1].sha256|h12 }}</code>{% if files_on_record.get(scope, 0) > 1 %} <span class="meta">({{ files_on_record[scope] }} files on record)</span>{% endif %}</li>{% endfor %}</ul>
+  {% else %}<p class="muted">No election night results yet (<code>corla-observer results gather</code>, or the next scheduled cycle).</p>{% endif %}
+  <p class="meta">If the fetch is blocked or behind, <a href="{{ url('/coord/upload') }}">upload a file downloaded by hand</a>.</p>
+</section>
+
+<section id="totals">
+  <h2>Totals check</h2>
+  {% if totals %}
+  <p class="meta">Checked {{ totals[1]|local }}: {{ totals[2].compared }} comparisons of the results (each targeted contest's last winner and first loser, and ballots cast, per county) with the other results files, the redacted CVRs, CORLA's tallies and contest list, and the manifests. Flagged differences are also on <a href="{{ url('/coord/flags') }}">the flags page</a>; the others are information (results move during the canvass).</p>
+  {% if differences %}
+  <ul class="totals">{% for d in differences %}<li>{% if d.flag %}{{ badge('warning', 'flag') }} {% endif %}{{ d.line }}</li>{% endfor %}</ul>
+  {% else %}<p>No differences.</p>{% endif %}
+  {% for n in totals[2].notes or [] %}<p class="meta">{{ n }}</p>{% endfor %}
+  {% else %}<p class="muted">Not checked yet: the check runs when results arrive.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Contests</h2>
+  <table class="data">
+    <thead><tr><th>Contest</th><th>Count</th><th>Margin, and its source</th><th>Ballot cards, and their source</th><th>How it changed</th></tr></thead>
+    <tbody>
+    {% for e in estimates %}
+      <tr>
+        <td>{{ e.name }}{% if e.statewide %} {{ badge('normal', 'statewide') }}{% endif %}<br><span class="meta">{{ e.counties|join(', ') if e.counties|length < 6 else (e.counties|length ~ ' counties') }}</span></td>
+        <td>{% if e.exact %}{{ badge('ok', 'CORLA ' ~ e.corla_count) }}{% if e.from_results is not none and e.from_results != e.corla_count %}<br><span class="meta">estimate was {{ e.from_results }}</span>{% endif %}
+            {% elif e.central is not none %}central <strong>{{ e.central }}</strong><br>low {{ e.low }}{% else %}{{ badge('missing', 'not yet') }}{% endif %}</td>
+        <td>{{ e.margin if e.margin is not none else '-' }}<br><span class="meta">{{ e.margin_source }}</span>{% if e.low_margin_factor != 1.0 %}<br><span class="meta">low: margin x {{ e.low_margin_factor }}</span>{% endif %}</td>
+        <td>{{ e.denominator if e.denominator is not none else '-' }}{% if e.low_denominator and e.low_denominator != e.denominator %} (low {{ e.low_denominator }}){% endif %}<br><span class="meta">{{ e.denominator_source }}{% if e.cards_note %}; {{ e.cards_note }}{% endif %}</span></td>
+        <td>{% for p in history.get(e.name, [])[-6:] %}<span class="meta">{{ p.time|local }}: {% if p.corla_count %}CORLA {{ p.corla_count }}{% else %}{{ p.central }} (low {{ p.low }}){% endif %}</span><br>{% endfor %}</td>
+      </tr>
+      {% for note in e.notes %}<tr class="note"><td></td><td colspan="4" class="meta">{{ note }}</td></tr>{% endfor %}
+    {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section>
+  <h2>Inputs supplied by hand</h2>
+  <p>Audit center data ranks first (CORLA's contest list, then the manifests, then the target list's margin, denominator and cards per ballot), then the election night results; an input supplied by hand is used only where none of those has the value yet, and a later posting replaces it by itself (the contest's notes above say so). To supply one, add an <code>[[estimate]]</code> (a contest's margin, or winner's and loser's votes, its name in the results, or its ballot cards) or a <code>[[county_estimate]]</code> (a county's ballots cast, cards per ballot or ballot cards) to the workspace's <code>overrides.toml</code>, each with its reason, and apply it with <code>corla-observer map apply</code>: it is recorded in the event log like every override.</p>
+  {% if hand.margins or hand.names or hand.ballot_cards or hand.counties %}
+  <ul>
+    {% for name, m in hand.margins.items() %}<li>{{ name }}: margin {{ m.margin }} <span class="meta">({{ m.source }})</span></li>{% endfor %}
+    {% for name, m in hand.names.items() %}<li>{{ name }}: named {{ m.enr_contest }} in the results <span class="meta">({{ m.source }})</span></li>{% endfor %}
+    {% for name, pair in hand.ballot_cards.items() %}<li>{{ name }}: {{ pair[0] }} ballot cards <span class="meta">({{ pair[1] }})</span></li>{% endfor %}
+    {% for county, given in hand.counties.items() %}<li>{{ county }}: {% for key, pair in given.items() %}{{ key|label }} {{ '%g'|format(pair[0]) }}{% if not loop.last %}, {% endif %}{% endfor %} <span class="meta">({{ given.values()|first|last }})</span></li>{% endfor %}
+  </ul>
+  {% else %}<p class="muted">None.</p>{% endif %}
+</section>
+{% endblock %}

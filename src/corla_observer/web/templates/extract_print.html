@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<title>Provenance: {{ extract.county }}, audit board {{ board }}</title>
+{% if inline_css %}
+<style>{{ inline_css }}</style>
+{% else %}
+<link rel="stylesheet" href="{{ stylesheet }}" integrity="{{ integrity }}">
+{% endif %}
+</head>
+<body class="extract">
+{% if links %}
+<nav class="toolbar">{% for label, href in links %}<a href="{{ href }}">{{ label }}</a>{% endfor %}</nav>
+{% endif %}
+{# The provenance page on screen, as on the first sheet of the printout (the PDF, corla_observer.pdfextract), without the notices. #}
+<div class="sheet sheet-provenance">
+  <section class="provenance" aria-label="Provenance">
+    <header class="page-head">
+      <div class="head-text">
+        <p class="ident">{{ prov_head }}</p>
+      </div>
+      <div class="qr qr-extract">{{ prov_qr }}</div>
+    </header>
+    <table class="prov-facts">
+    {% for label, value, hashed in prov_rows %}
+      <tr><th>{{ label }}</th><td{% if hashed %} class="hash"{% endif %}>{{ grouped(value) if hashed else value }}</td></tr>
+    {% endfor %}
+    </table>
+    {% if prov.key %}
+    <h2 class="prov-h">Key</h2>
+    <ul class="prov-key">
+    {% for abbr, meaning in prov.key %}
+      <li><strong>{{ abbr }}</strong> = {{ meaning }}</li>
+    {% endfor %}
+    </ul>
+    {% endif %}
+    {% if prov.shortened %}
+    <h2 class="prov-h">Contests printed shorter</h2>
+    <ul class="prov-shortened">
+    {% for printed, full in prov.shortened %}
+      <li><strong>{{ printed }}</strong> = {{ full }}</li>
+    {% endfor %}
+    </ul>
+    {% endif %}
+    <h2 class="prov-h">To check a printed page</h2>
+    <ol class="check-steps">
+    {% for step in check_steps %}
+      <li>{{ step }}</li>
+    {% endfor %}
+    </ol>
+  </section>
+</div>
+</body>
+</html>

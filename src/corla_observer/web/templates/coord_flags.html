@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% from "_macros.html" import flag_list %}
+{% block title %}Coordinator: flags{% endblock %}
+{% block main %}
+<h1>Change flags</h1>
+{% if message %}<p class="notice" role="status"><span aria-hidden="true">&#10003;</span> {{ message }}</p>{% endif %}
+{% if error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
+<p class="meta">As of event {{ snap.head_seq }}. Changes and uploads to look into, most severe first, each listed once with its findings. Only coordinators see flags: the public dashboard shows none of them. Mark a flag addressed once it has been looked into, saying how; a flag that later gains a new finding is open again.</p>
+
+<section>
+  <h2>Open ({{ snap.open_flags|length }})</h2>
+  {% call(f) flag_list(snap.open_flags) %}
+    {% if f.reopened_by_new %}<p class="meta"><span aria-hidden="true">&#9675;</span> Addressed by {{ f.addressed.actor }} at {{ f.addressed.time|local }} ({{ f.addressed.note }}), with new findings since.</p>{% endif %}
+    <form method="post" action="{{ url('/coord/flags/address') }}" class="inline-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="key" value="{{ f.key }}">
+      <label>How it was addressed <input name="note" maxlength="2000" required></label>
+      <button type="submit" class="secondary small">Mark addressed</button>
+    </form>
+  {% endcall %}
+</section>
+
+<section>
+  <h2>Addressed ({{ snap.done_flags|length }})</h2>
+  {% if snap.done_flags %}
+  {% call(f) flag_list(snap.done_flags) %}
+    <p><span aria-hidden="true">&#10003;</span> <strong>Addressed</strong> by {{ f.addressed.actor }} at {{ f.addressed.time|local }} (event {{ f.addressed.seq }}): {{ f.addressed.note }}</p>
+    <form method="post" action="{{ url('/coord/flags/reopen') }}" class="inline-form">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <input type="hidden" name="key" value="{{ f.key }}">
+      <button type="submit" class="secondary small">Reopen</button>
+    </form>
+  {% endcall %}
+  {% else %}<p class="muted">None yet.</p>{% endif %}
+</section>
+{% endblock %}

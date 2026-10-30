@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Coordinator: schedule{% endblock %}
+{% block main %}
+<h1>Crawl schedule</h1>
+{% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
+{% if schedule_error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> schedule.toml: {{ schedule_error }}</p>{% endif %}
+<p>The scheduler (<code>corla-observer schedule run</code>, a service of its own) runs a cycle whenever this schedule or a sprint says: the crawl, the results, flags, estimates and, after the roll, the prediction and interim extracts. Edit the workspace's <code>schedule.toml</code> to change it.</p>
+<p><strong>Now:</strong> {% if decision.due %}{{ badge('ok', 'a cycle is due') }}{% else %}{{ badge('normal', 'idle') }}{% endif %} {{ decision.reason }}</p>
+{% if sprint %}<p>{{ badge('warning', 'sprint') }} every {{ sprint.every_seconds }} s until {{ sprint.until|local }}, requested by {{ sprint.actor }}</p>{% endif %}
+
+<section class="grid two">
+  <form method="post" action="{{ url('/coord/schedule/sprint') }}" class="card form">
+    <h2>Sprint (roll morning)</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p>Crawl continuously, whatever the schedule says (results are not fetched in a sprint).</p>
+    <label>For (minutes) <input name="minutes" type="number" min="1" max="1440" value="180" inputmode="numeric"></label>
+    <label>Every (seconds, at least 30) <input name="every" type="number" min="30" value="60" inputmode="numeric"></label>
+    <button type="submit">Start the sprint</button>
+  </form>
+  <form method="post" action="{{ url('/coord/schedule/stop') }}" class="card form">
+    <h2>Stop a sprint</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit" class="secondary"{% if not sprint %} disabled{% endif %}>Stop</button>
+  </form>
+</section>
+
+{% if schedule %}
+<section>
+  <h2>Windows</h2>
+  <table class="data"><thead><tr><th>Window</th><th>From</th><th>To</th><th>Every</th><th>Results</th></tr></thead><tbody>
+  {% for w in schedule.windows %}<tr><td>{{ w.name }}</td><td>{{ w.start|local }}</td><td>{{ w.end|local }}</td><td>{{ (w.every_seconds // 60) ~ ' min' if w.every_seconds >= 60 else w.every_seconds ~ ' s' }}</td><td>{{ 'yes' if w.results else 'no' }}</td></tr>{% endfor %}
+  </tbody></table>
+  <p class="meta">Keeping the sprite awake: {{ schedule.keep_awake }}.</p>
+</section>
+{% endif %}
+
+<section>
+  <h2>Latest cycles</h2>
+  {% if cycles %}<ul>{% for e in cycles %}<li>{{ e.server_time|local }}: {{ e.data.trigger }}{% if e.data.window %} ({{ e.data.window }}){% endif %}, {{ e.data.seconds }} s; crawl {{ e.data.crawl }}{% if e.data.results_changed %}; results changed{% endif %}{% if e.data.errors %} {{ badge('error', 'errors') }} {{ e.data.errors|join('; ') }}{% endif %}</li>{% endfor %}</ul>
+  {% else %}<p class="muted">No cycle yet.</p>{% endif %}
+</section>
+
+<section>
+  <h2>When each file was first seen</h2>
+  <table class="data"><thead><tr><th>First seen</th><th>File</th></tr></thead><tbody>
+  {% for url, moment in first_seen %}<tr><td>{{ moment|local }}</td><td>{{ short_ref(url) }}</td></tr>{% endfor %}
+  </tbody></table>
+</section>
+{% endblock %}

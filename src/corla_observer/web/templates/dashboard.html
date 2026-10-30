@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}CORLA observer dashboard{% endblock %}
+{% block main %}
+<div class="page-head">
+  <h1>Audit observation dashboard</h1>
+  <p id="live-status" class="live" role="status" aria-live="polite"><span aria-hidden="true">&#9675;</span> Static page: reload to update</p>
+</div>
+{% include "_dashboard_body.html" %}
+<p class="meta"><a href="{{ url('/dashboard.json') }}">This page as JSON</a></p>
+{% endblock %}

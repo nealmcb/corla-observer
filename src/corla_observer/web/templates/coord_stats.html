@@ -1,0 +1,126 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Coordinator: observation statistics{% endblock %}
+{% block head %}<meta http-equiv="refresh" content="15">{% endblock %}
+{% block main %}
+<h1>Observation statistics</h1>
+<p class="meta">As of event {{ snap.head_seq }}; this page reloads itself every 15 seconds. <span class="muted">How it counts:</span> Observers enter each ballot with two taps or contest by contest, as each chooses. With two taps, a match takes one tap on the first reading of a ballot and one on the second. Contest by contest, each contest is confirmed, heard instead or not heard clearly, in each reading; the ballot counts as entered once it is marked done or every contest has an outcome in the second reading, as a match if every contest was confirmed. Entry time is from a ballot appearing on the observer's screen to their entry (for a match, the second tap); time to first reading is from the ballot appearing to the first tap, and time to confirmation from the first tap to the second. Edits are not timed.</p>
+
+<section>
+  <h2>Boards</h2>
+  {% set boards = snap.boards + snap.test_boards %}
+  {% set practice = boards|selectattr('read')|list %}
+  {% if boards %}
+  <div class="table-wrap"><table class="stats">
+    <thead><tr><th>County, board</th><th>Ballots</th>{% if practice %}<th>Read by the practice reader</th>{% endif %}<th>Entered</th><th>Matches</th><th>With notes</th><th>Observers</th></tr></thead>
+    <tbody>
+    {% for b in boards %}
+      <tr><td>{{ b.county }}, {{ b.board }}{% if b in snap.test_boards %} <span class="badge badge-warning">test county</span>{% endif %}{% if b.targeted %}<br>{{ badge('warning', 'targeted (not RLA)') }} {{ b.list_label }}{% endif %}</td><td>{{ b.ballots if b.ballots is not none else '' }}</td>{% if practice %}<td>{{ b.read }}</td>{% endif %}<td>{{ b.done }}</td><td>{{ b.matches }}</td><td>{{ b.notes }}</td><td>{{ b.observers|length }}{% if b.per_contest %} ({{ b.per_contest|length }} contest by contest){% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% else %}<p class="muted">No boards yet.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Targeted ballots (not RLA)</h2>
+  <p class="meta">Two kinds, counted apart from the RLA sample and from each other (docs/TARGETING.md): <strong>by CVR</strong>, the lists sent to the county from <a href="{{ url('/coord/targets') }}">Targeted ballots</a>; and <strong>from boxes</strong>, ballots looked up by imprinted ID on an observer's screen. The public dashboard names each list only "Targeted list N" with its counts, unless its details are published; retired lists are not shown there.</p>
+  {% set counties = (snap.targeted|map(attribute='county')|list + snap.lookups|map(attribute='county')|list)|unique|list %}
+  {% for county in counties %}
+  {% set lists = snap.targeted|selectattr('county', 'equalto', county)|list %}
+  {% set boxes = snap.lookups|selectattr('county', 'equalto', county)|first %}
+  <p><strong>{{ county }}:</strong>
+    Targeted by CVR: {% if lists %}{{ lists|length }} list{{ '' if lists|length == 1 else 's' }}, {{ lists|sum(attribute='ballots') }} ballots, {{ lists|sum(attribute='done') }} observed{% if lists|sum(attribute='in_rla') %} ({{ lists|sum(attribute='in_rla') }} also in the RLA sample){% endif %}{% else %}none{% endif %}
+    &middot; Targeted from boxes: {% if boxes %}{{ boxes.done }} observed by {{ boxes.observers|length }} observer{{ '' if boxes.observers|length == 1 else 's' }}{% else %}none{% endif %}
+    {% if snap.previously_targeted.get(county) %}&middot; {{ badge('warning', snap.previously_targeted[county] ~ ' of the RLA sample previously targeted') }}{% endif %}</p>
+  {% endfor %}
+  {% if snap.targeted %}
+  <div class="table-wrap"><table class="stats">
+    <thead><tr><th>County, list</th><th>Sent</th><th>Ballots</th><th>Done</th><th>Matches</th><th>With notes</th><th>Observers and entry modes</th></tr></thead>
+    <tbody>
+    {% for t in snap.targeted %}
+      <tr><td>{{ t.county }}: <strong>{{ t.label }}</strong> <span class="meta">(public: {{ t.public_label }})</span>
+          {% if t.retired %}{{ badge('missing', 'retired') }}{% endif %}{% if t.published %}{{ badge('ok', 'details published') }}{% endif %}{% if t.combined %}{{ badge('warning', 'combined') }}{% endif %}</td>
+        <td>{{ t.built|local }} by {{ t.actor }}<br><code class="hash">{{ t.sha256[:8] }}</code></td>
+        <td>{{ t.ballots }}{% if t.in_rla %}<br><span class="meta">{{ t.in_rla }} also in the RLA sample</span>{% endif %}</td><td>{{ t.done }} of {{ t.ballots }}{% if t.done_on_rla %}<br><span class="meta">{{ t.done_on_rla }} entered on the RLA sample</span>{% endif %}</td><td>{{ t.matches }}</td><td>{{ t.notes }}</td>
+        <td>{% for actor in t.observers %}{{ actor }}{% if t.modes.get(actor) %} ({{ t.modes[actor] }}){% endif %}{% if not loop.last %}<br>{% endif %}{% else %}<span class="muted">none yet</span>{% endfor %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  {% endif %}
+  {% if not snap.targeted and not snap.lookups %}<p class="muted">No targeted ballots.</p>{% endif %}
+</section>
+
+{% macro secs(ms) %}{{ '%.1f s'|format(ms / 1000) if ms is not none else '' }}{% endmacro %}
+<section>
+  <h2>Observers</h2>
+  {% set obs = snap.observer_stats %}
+  {% if obs %}
+  <div class="table-wrap"><table class="stats">
+    <thead><tr><th>Observer</th><th>County, board</th><th>Entry mode</th><th>Ballots entered</th><th>Changed later</th><th>Matches</th><th>Notes</th><th>Median time per ballot</th></tr></thead>
+    <tbody>
+    {% for o in obs %}
+      <tr><td>{{ o.actor }}</td><td>{{ o.county }}, {{ o.board }}{% if o.list_key != 'rla' %}<br>{{ badge('warning', 'targeted (not RLA)') }} {{ o.list_label }}{% endif %}</td><td>{{ o.mode_text }}</td><td>{{ o.entries }}</td><td>{{ o.edits }}</td><td>{{ o.matches }}</td><td>{{ o.notes }}</td><td>{{ secs(o.median_ms) }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+
+  <details class="stats-more">
+    <summary>Timing: the two taps, and the slowest ballot</summary>
+    <div class="table-wrap"><table class="stats">
+      <thead><tr><th>Observer</th><th>First readings tapped</th><th>Median time to the first reading</th><th>Median time from it to the confirmation</th><th>Slowest ballot</th></tr></thead>
+      <tbody>{% for o in obs %}<tr><td>{{ o.actor }}</td><td>{{ o.first_readings }}</td><td>{{ secs(o.first_reading_median_ms) }}</td><td>{{ secs(o.confirm_median_ms) }}</td><td>{{ secs(o.slowest_ms) }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+  <details class="stats-more">
+    <summary>Ballots read out of order, and IDs not on the list</summary>
+    <div class="table-wrap"><table class="stats">
+      <thead><tr><th>Observer</th><th>Read out of order</th><th>IDs not on the list</th></tr></thead>
+      <tbody>{% for o in obs %}<tr><td>{{ o.actor }}</td><td>{{ o.out_of_order }}</td><td>{{ o.not_on_list }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+  {% if obs|selectattr('deviations')|list %}
+  <details class="stats-more">
+    <summary>Practice scores: the reader's deliberate differences</summary>
+    <div class="table-wrap"><table class="stats">
+      <thead><tr><th>Observer</th><th>Differences read</th><th>Caught</th><th>Missed</th><th>Other notes</th></tr></thead>
+      <tbody>{% for o in obs %}<tr><td>{{ o.actor }}</td><td>{{ o.deviations }}</td><td>{{ o.caught }}</td><td>{{ o.missed }}</td><td>{{ o.false_alarms }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+  {% endif %}
+  {% if obs|selectattr('contest_ballots')|list %}
+  <details class="stats-more">
+    <summary>Contest by contest</summary>
+    <div class="table-wrap"><table class="stats">
+      <thead><tr><th>Observer</th><th>Ballots</th><th>Contest entries</th><th>Corrections</th><th>Heard instead</th><th>Not heard clearly</th><th>Readings differ</th></tr></thead>
+      <tbody>{% for o in obs %}<tr><td>{{ o.actor }}</td><td>{{ o.contest_ballots }}</td><td>{{ o.contest_marks }}</td><td>{{ o.contest_corrections }}</td><td>{{ o.contest_heard }}</td><td>{{ o.contest_unclear }}</td><td>{{ o.contest_differs }}</td></tr>{% endfor %}</tbody>
+    </table></div>
+  </details>
+  {% endif %}
+  {% else %}<p class="muted">No entries yet.</p>{% endif %}
+</section>
+
+<section>
+  <h2>Comparing observers</h2>
+  <p class="meta">Each board's ballots where an observer recorded a difference, or where observers disagree. Contest-by-contest entries come first: they name the contest, so they are more precise than a two-tap note. A <strong>conflict</strong> is a two-tap note on a ballot where a contest-by-contest observer confirmed every contest, or a two-tap match on one where they found a difference.</p>
+  {% for county, board, items, total, list_label in compared %}
+    <h3>{{ county }}, board {{ board }}{% if list_label %}: {{ badge('warning', 'targeted (not RLA)') }} {{ list_label }}{% endif %}</h3>
+    {% if items %}
+    <div class="table-wrap"><table class="stats compare">
+      <thead><tr><th>Ballot</th><th>Verdict</th><th>Contest by contest</th><th>Two-tap notes</th><th>Matched by</th></tr></thead>
+      <tbody>
+      {% for c in items %}
+        <tr>
+          <td>{{ c.position }}, <code>{{ c.imprinted_id }}</code></td>
+          <td>{% if c.verdict == 'conflict' %}{{ badge('high', 'conflict') }}{% else %}{{ badge('warning', 'difference') }}{% endif %}</td>
+          <td>{% for f in c.contests %}{{ f.observer }}: {{ f.contest }} (expected {{ f.expected }}): {{ f.text }}{% if not loop.last %}<br>{% endif %}{% endfor %}{% for actor, n in c.unresolved_by %}{% if c.contests or not loop.first %}<br>{% endif %}{{ actor }}: {{ n }} unresolved{% endfor %}</td>
+          <td>{% for actor, note in c.ballot_notes %}{{ actor }}: {{ note }}{% if not loop.last %}<br>{% endif %}{% endfor %}</td>
+          <td>{{ c.matched_by|join(', ') }}</td>
+        </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<p class="muted">{{ total }} ballot{{ 's' if total != 1 else '' }} entered; no differences.</p>{% endif %}
+  {% else %}<p class="muted">No boards yet.</p>{% endfor %}
+</section>
+{% endblock %}

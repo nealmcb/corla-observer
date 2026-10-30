@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<meta name="robots" content="noindex">
+<title>Observe: {{ link.county }} board {{ link.board }}</title>
+<link rel="stylesheet" href="{{ static('app.css') }}" integrity="{{ integrity['app.css'] }}">
+<script src="{{ static('idmatch.js') }}" integrity="{{ integrity['idmatch.js'] }}" defer></script>
+<script src="{{ static('signing.js') }}" integrity="{{ integrity['signing.js'] }}" defer></script>
+<script src="{{ static('contestlogic.js') }}" integrity="{{ integrity['contestlogic.js'] }}" defer></script>
+<script src="{{ static('percontest.js') }}" integrity="{{ integrity['percontest.js'] }}" defer></script>
+<script src="{{ static('observe.js') }}" integrity="{{ integrity['observe.js'] }}" defer></script>
+</head>
+<body class="observe{% if ident and ident.order in ('targeted', 'lookup') %} is-targeted{% endif %}{% if lookup %} is-lookup{% endif %}" data-prefix="{{ prefix }}" data-token="{{ token }}" data-list="{{ list_key }}" data-version="{{ version }}" data-observe-integrity="{{ integrity['observe.js'] }}" data-signing-integrity="{{ integrity['signing.js'] }}" data-percontest-integrity="{{ integrity['percontest.js'] }}" data-contestlogic-integrity="{{ integrity['contestlogic.js'] }}">
+<header class="obs-bar" id="obs-bar">
+  <span class="obs-who">{{ link.name }} &middot; {{ link.county }} &middot; board {{ link.board }}</span>
+  <span id="obs-status" class="pill" role="status" aria-live="polite"><span aria-hidden="true">&#9675;</span> Loading</span>
+  <span id="obs-progress" class="obs-progress"></span>
+  {% if show_switcher %}<label class="obs-list"><span class="visually-hidden">Pull list</span>
+    <select id="obs-list" aria-label="Pull list: the RLA sample or a targeted list">{% for x in lists %}<option value="{{ x.key }}"{% if x.key == list_key %} selected{% endif %}>{{ x.label }} ({{ x.ballots }})</option>{% endfor %}</select></label>{% endif %}
+  <span id="obs-modes" class="obs-modes" role="group" aria-label="How you enter what you hear" hidden><button id="obs-mode-per_contest" type="button" data-mode="per_contest" aria-pressed="true" aria-label="Contest by contest"><span class="obs-modes-long">Contest by contest</span><span class="obs-modes-short" aria-hidden="true">By contest</span></button><button id="obs-mode-two_tap" type="button" data-mode="two_tap" aria-pressed="false">Two taps</button></span>
+  <button id="obs-more-button" type="button" class="secondary small" aria-haspopup="dialog">More</button>
+  <p class="obs-reminder"><span aria-hidden="true">&#9673;</span> Keep this screen out of sight of the audit board.</p>
+</header>
+{% if walkthrough_banner %}<p class="walkthrough-banner" role="note"><span aria-hidden="true">&#9654;</span> {{ walkthrough_banner }}</p>{% endif %}
+<main class="obs">
+  <noscript><p class="notice">This page needs JavaScript. Paper works too: ask your coordinator for a printout.</p></noscript>
+  <p id="obs-error" class="notice notice-error" hidden></p>
+  <p id="obs-rla-missing" class="notice obs-rla-missing" role="note"{% if not rla_notice %} hidden{% endif %}><span aria-hidden="true">&#9675;</span> <span id="obs-rla-missing-text">{{ rla_notice or '' }}</span></p>
+  <section id="obs-intro" class="obs-intro" aria-labelledby="obs-intro-title" hidden>
+    <h1 id="obs-intro-title">Before you start</h1>
+    <p class="obs-intro-rule"><strong>Keep this screen out of sight of the audit board and the public.</strong> The board must never see the votes on it: hold the phone or turn the laptop away from the table.</p>
+    <p class="obs-intro-pick-label">Pick how you enter what you hear (you can switch at any time, at the top of the screen):</p>
+    <div class="obs-intro-modes" role="group" aria-label="How you enter what you hear">
+      <button id="obs-intro-mode-per_contest" type="button" class="obs-intro-mode" data-mode="per_contest" aria-pressed="true">
+        <span class="obs-intro-mode-name"><span aria-hidden="true">&#9776;</span> Contest by contest</span>
+        <span class="obs-intro-mode-how">Confirm or correct each contest as it is read: Enter confirms, typing corrects, <kbd>/</kbd> if unclear. Then again for the second reading.</span>
+      </button>
+      <button id="obs-intro-mode-two_tap" type="button" class="obs-intro-mode" data-mode="two_tap" aria-pressed="false">
+        <span class="obs-intro-mode-name"><span aria-hidden="true">&#10003;&#10003;</span> Two taps per ballot</span>
+        <span class="obs-intro-mode-how">Tap <strong>First reading</strong> after the first board member reads the ballot, then <strong>Confirmed match</strong> after the second. Heard something different? Type it and press Enter.</span>
+      </button>
+    </div>
+    <p class="meta">The board read a different ballot? Type the end of its imprinted ID, such as <code>46-5</code>. Don't interrupt the board: observers note, they don't overrule.</p>
+    <p><button id="obs-intro-start" type="button" class="obs-intro-start">I understand, start</button></p>
+    <p class="meta"><button id="obs-intro-more" type="button" class="link">More about how this works</button></p>
+  </section>
+  <section id="pc" class="pc" aria-label="Contest by contest" hidden>
+    <div id="pc-head" class="pc-head ballot-head">
+      <div class="ballot-head-text">
+        <p class="ballot-headline"><span id="pc-id" class="ballot-id"></span> <span id="pc-done" class="badge badge-ok" hidden><span aria-hidden="true">&#10003;</span> done</span> <span id="pc-pos" class="ballot-pos"></span></p>
+        <p class="ballot-ident"><span id="pc-ident" class="ballot-ident-text"></span></p>
+      </div>
+      <span id="pc-qr" class="ballot-qr" aria-hidden="true"></span>
+      <p class="pc-line"><button id="pc-reading" type="button" class="pc-reading small"></button> <span id="pc-progress" class="pc-progress"></span> <span id="pc-send" class="pc-send"></span> <button id="pc-keys-button" type="button" class="secondary small pc-keys-button" aria-haspopup="dialog">Keys</button></p>
+      <p id="pc-marks" class="pc-marks" hidden></p>
+    </div>
+    <p id="pc-message" class="obs-message" role="status" aria-live="polite" hidden></p>
+    <p id="pc-live" class="visually-hidden" role="status" aria-live="polite"></p>
+    <ol id="pc-rows" class="pc-rows" aria-label="Contests on this ballot: Enter confirms, typing notes what you heard instead, ? marks not heard clearly"></ol>
+    <div id="pc-foot" class="pc-foot">
+      <div id="pc-prompt" class="pc-prompt" role="alert" hidden></div>
+      <div class="pc-tools">
+        <button id="pc-prev" type="button" class="secondary" aria-label="Previous ballot"><span aria-hidden="true">&#9664;</span><span class="pc-wide"> Ballot</span></button>
+        <button id="pc-second" type="button" class="secondary">2nd reading</button>
+        <button id="pc-unresolved" type="button" class="secondary" aria-label="Next unresolved contest"><span class="pc-wide">Next </span>unresolved</button>
+        <button id="pc-done-button" type="button" class="secondary" aria-label="Ballot done">Done</button>
+        <button id="pc-next" type="button" class="secondary" aria-label="Next ballot"><span class="pc-wide">Ballot </span><span aria-hidden="true">&#9654;</span></button>
+      </div>
+    </div>
+    <div class="obs-row pc-extra">
+      <button id="pc-other" type="button" class="secondary small" aria-expanded="false" aria-controls="pc-other-form">Different ballot&hellip;</button>
+      <button id="pc-other-board" type="button" class="secondary small" hidden>Skipped: other board</button>
+    </div>
+    <form id="pc-other-form" class="obs-note-form" hidden>
+      <label for="pc-other-id" class="visually-hidden">Imprinted ID the board read</label>
+      <input id="pc-other-id" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="64" placeholder="ID the board read, e.g. 46-5">
+      <button type="submit" class="secondary">Go</button>
+    </form>
+    <section id="pc-summary" class="pc-summary" aria-label="Board summary"></section>
+  </section>
+  <dialog id="pc-keys" class="pc-keys" aria-labelledby="pc-keys-title">
+    <h2 id="pc-keys-title">Keys, contest by contest</h2>
+    <table class="pc-keytable">
+      <tbody>
+        <tr><th scope="row"><kbd>Enter</kbd> or <kbd>Space</kbd></th><td>Confirm the contest as expected and go to the next. At the last contest, a prompt asks first: <kbd>Enter</kbd> again starts the second reading, or after it, goes to the next ballot.</td></tr>
+        <tr><th scope="row">A letter or digit</th><td>What you heard instead: a box opens with what you typed, suggesting the contest's choices, NO VOTE, overvote, and your own words ("other"). <kbd>&uarr;</kbd> <kbd>&darr;</kbd> pick a suggestion, <kbd>Tab</kbd> completes it, <kbd>Enter</kbd> saves and goes on, <kbd>Esc</kbd> cancels.</td></tr>
+        <tr><th scope="row"><kbd>?</kbd> or <kbd>/</kbd></th><td>Didn't hear it clearly; go to the next. <kbd>?</kbd> twice quickly opens this help instead.</td></tr>
+        <tr><th scope="row"><kbd>&darr;</kbd> <kbd>&uarr;</kbd>, <kbd>Tab</kbd> <kbd>Shift+Tab</kbd>, <kbd>Alt+J</kbd> <kbd>Alt+K</kbd></th><td>Next and previous contest.</td></tr>
+        <tr><th scope="row"><kbd>PageDown</kbd> <kbd>PageUp</kbd>, <kbd>Alt+L</kbd> <kbd>Alt+H</kbd></th><td>Next and previous ballot.</td></tr>
+        <tr><th scope="row"><kbd>Home</kbd> or <kbd>Alt+R</kbd></th><td>Start the second reading: back to the ballot's first contest. <kbd>End</kbd> goes to its last.</td></tr>
+        <tr><th scope="row"><kbd>Alt+N</kbd> or <kbd>F8</kbd></th><td>Next unresolved contest: not entered, not heard clearly, or heard differently in the two readings, on this ballot and then earlier ones.</td></tr>
+        <tr><th scope="row"><kbd>Esc</kbd></th><td>Close a box or prompt.</td></tr>
+      </tbody>
+    </table>
+    <p class="meta">On a Mac, <kbd>Alt</kbd> is <kbd>Option</kbd>.</p>
+    <p class="meta">On a phone: tap a contest to confirm it, &#9998; for what you heard instead, <strong>?</strong> for not heard clearly. The first reading's and second reading's outcomes show side by side: &#10003; confirmed, &#9650; heard instead (with what you heard), ? not heard clearly, &#9675; not yet, and &ne; where the two readings differ.</p>
+    <p><button id="pc-keys-close" type="button">Close</button></p>
+  </dialog>
+  {% if ident and ident.order == "predicted" %}<p class="badge badge-warning obs-order">Predicted order: not yet the county's pull list</p>{% endif %}
+  {% if ident and ident.order == "audit_center" %}<p class="badge badge-warning obs-order">Audit center order: CORLA's posted selections, not yet the county's pull list</p>{% endif %}
+  {% if ident and ident.order == "targeted" %}<p class="badge badge-warning obs-order"><strong>TARGETED (NOT RLA)</strong>: ballots chosen by observers, not part of the RLA sample. Your RLA sample entries are kept apart{% if lists|length > 1 %}; switch back with the list above{% endif %}.</p>{% endif %}
+  {% if lookup %}
+  <section id="obs-lookup" class="obs-lookup" aria-labelledby="obs-lookup-title">
+    <p class="badge badge-warning obs-order"><strong>LOOKED UP (NOT RLA)</strong>: ballots picked from the storage boxes, not part of the RLA sample or any sent list. Each is recorded apart, as a box-targeted observation.</p>
+    <h2 id="obs-lookup-title" class="visually-hidden">Look up a ballot</h2>
+    <form id="obs-lookup-form">
+      <label for="obs-lookup-id" class="visually-hidden">Imprinted ID of the ballot picked from a box</label>
+      <input id="obs-lookup-id" autocomplete="off" autocapitalize="none" spellcheck="false" inputmode="numeric" maxlength="64" placeholder="Imprinted ID, e.g. 101-12-5">
+      <button type="submit">Look up</button>
+      <p id="obs-lookup-status" class="meta" role="status" aria-live="polite">Type the imprinted ID of a ballot the board pulled from a box: its expected votes come from the county's redacted CVR, and you enter it contest by contest.</p>
+    </form>
+  </section>
+  {% endif %}
+  <ol id="obs-history" class="obs-history" aria-label="Ballots entered: tap one to change it"></ol>
+  <section id="obs-current" class="obs-current" hidden>
+    <div class="obs-head ballot-head">
+      <div class="ballot-head-text">
+        <p class="ballot-headline"><span id="obs-id" class="ballot-id"></span> <span id="obs-pos" class="ballot-pos"></span></p>
+        <p class="ballot-ident"><span id="obs-ident" class="ballot-ident-text"></span></p>
+      </div>
+      <span id="obs-qr" class="ballot-qr" aria-hidden="true"></span>
+    </div>
+    <p id="obs-mode" class="obs-mode badge badge-warning" hidden></p>
+    <p id="obs-earlier" class="obs-earlier" hidden></p>
+    <p id="obs-marks" class="obs-marks notice" hidden></p>
+    <ul id="obs-votes" class="obs-votes"></ul>
+    <div class="obs-controls">
+      <button id="obs-match" class="obs-match" type="button"><span aria-hidden="true" class="obs-match-icon">1</span> First reading <kbd>Enter</kbd></button>
+      <form id="obs-note-form" class="obs-note-form">
+        <label for="obs-note" class="visually-hidden">What you heard instead</label>
+        <input id="obs-note" autocomplete="off" autocapitalize="sentences" maxlength="500" placeholder="Heard something else? Type it">
+        <button type="submit" class="secondary">Note</button>
+      </form>
+      <p id="obs-message" class="obs-message" role="status" aria-live="polite" hidden></p>
+      <div class="obs-row">
+        <button id="obs-other" type="button" class="secondary small" aria-expanded="false" aria-controls="obs-other-form">Different ballot&hellip;</button>
+        <button id="obs-cancel" type="button" class="secondary small" hidden>Back to the next ballot</button>
+        <button id="obs-other-board" type="button" class="secondary small" hidden>Skipped: other board</button>
+      </div>
+      <form id="obs-other-form" class="obs-note-form" hidden>
+        <label for="obs-other-id" class="visually-hidden">Imprinted ID the board read</label>
+        <input id="obs-other-id" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="64" placeholder="ID the board read, e.g. 46-5">
+        <button type="submit" class="secondary">Go</button>
+      </form>
+    </div>
+  </section>
+  <div id="obs-done" class="notice" hidden>
+    <p><span aria-hidden="true">&#10003;</span> All of this board's ballots have an entry. Tap any ballot above to change it.</p>
+    <p>Keep your own copy of what you entered, with the server's receipts:</p>
+    <p class="obs-row"><button id="obs-download-end" type="button">Download my record</button> <button id="obs-download-csv-end" type="button" class="secondary">As a spreadsheet (CSV)</button></p>
+  </div>
+  <dialog id="obs-more" class="obs-more" aria-labelledby="obs-more-title">
+    <h2 id="obs-more-title">More</h2>
+    <div class="obs-more-group">
+      <p class="obs-more-label">Your record (every entry, with its signature and the server's receipt):</p>
+      <button id="obs-download" type="button" class="secondary small">Download my record</button>
+      <button id="obs-download-csv" type="button" class="secondary small">As a spreadsheet (CSV)</button>
+    </div>
+    <div class="obs-more-group">
+      <a class="button secondary small" href="{{ url('/observe/' ~ token ~ '/check') }}">Check a printed page, or send photos of your marked pages</a>
+      {% if ident and not lookup %}<a class="button secondary small" href="{{ url('/observe/' ~ token ~ '/provenance') }}{{ list_query }}">Provenance (the seed and every hash)</a>{% endif %}
+    </div>
+    {% if can_lookup and not lookup %}
+    <div class="obs-more-group">
+      <a class="button secondary small" id="obs-lookup-link" href="{{ url('/observe/' ~ token) }}?list=lookup">Look up a ballot picked from a box</a>
+      <p class="meta">For a ballot the board pulls from a storage box at the observers' request: its expected votes from the redacted CVR, entered contest by contest, recorded apart from every list.</p>
+    </div>
+    {% endif %}
+    {% if ident and not lookup %}
+    <div class="obs-more-group">
+      <p class="obs-more-label">Printout, if you prefer paper{% if ident.order == "predicted" %} (predicted order: not yet the county's pull list){% elif ident.order == "audit_center" %} (CORLA's posted selections: not yet the county's pull list){% elif ident.order == "targeted" %} (targeted ballots, not part of the RLA sample){% endif %}:</p>
+      {% for layout in ident.layouts %}<a class="button secondary small" href="{{ url('/observe/' ~ token ~ '/pdf?layout=' ~ layout) }}{{ list_amp }}" download>PDF, {{ layout_label(layout) }}</a> {% endfor %}
+      <p class="meta"><code class="hash">{{ ident.line }}</code></p>
+    </div>
+    {% endif %}
+    <div class="obs-more-group">
+      <button id="obs-dim" type="button" class="secondary small" aria-pressed="false">Dim the screen</button>
+      <button id="obs-intro-again" type="button" class="secondary small">Show the instructions again</button>
+    </div>
+    <details id="obs-help" class="obs-help">
+      <summary>How this works</summary>
+      <ul>
+      <li>Follow the audit board as it reads each ballot. <strong>Contest by contest</strong> (the default; switch at the top, at any time): confirm each contest as it is read, in each of the two readings, or type what you heard instead, or mark it not heard clearly. Your record names the contest. Enter confirms and moves on; the <strong>Keys</strong> button lists every key. Each contest's entry is signed like any other and sent in small batches, so "to send" counts go up and down as you work.</li>
+      <li><strong>Two taps</strong> (the other way, fewer taps): each ballot takes two taps for a match: when the first board member has read it and it matches the screen, tap <strong>First reading</strong>; the button becomes <strong>Confirmed match</strong> (&#10003;&#10003;). When the second member has read it and it still matches, tap <strong>Confirmed match</strong>: that records the match and moves to the next ballot. On a keyboard, Enter or the space bar does each step. The two taps keep a mis-tap from recording a match, and both are recorded with their times.</li>
+      <li>If you hear a different vote, or anything else, type what you heard in your own words and press Enter, before or after the first tap. That records a difference instead of a match. Typing anywhere goes to the box.</li>
+      <li>If the board reads a different ballot, type its imprinted ID in the box (or tap <strong>Different ballot&hellip;</strong>). The end of the ID is enough when only one ballot on this board ends that way, such as <code>46-5</code> for 102-46-5. If it is on this board's list, the page jumps to it so you can follow its votes; the ballots skipped stay marked <strong>not read yet</strong> for when the board reaches them, and after the jumped-to ballot the page goes back to the first one not yet done. If the ID is not on this board's list, your note is recorded and the page stays where it is.</li>
+      <li>Until the county's pull list arrives, the split of ballots among boards is not known exactly, so a ballot at either end of this board's list may be the next or previous board's: it is marked <strong>BOUNDARY</strong>. If this board doesn't pull it, tap <strong>Skipped: other board</strong>; it then counts as done here. A ballot marked <strong>POSSIBLE</strong> is drawn only if the sample count turns out above its low estimate; if the board doesn't read it, leave it as not read yet.</li>
+      <li>Tap an earlier ballot to change its entry (the change is recorded as a new entry), or a ballot marked not read yet to enter it now.</li>
+      <li>Every entry is signed by this device, kept on it and sent at once. "Queued" means it will be sent when the connection is back. The server answers each entry with a signed receipt; its short code (such as <code>412-3f9a1c</code>: the entry's number in the public log and the start of its hash) appears next to each ballot.</li>
+      <li><strong>Download my record</strong> saves every entry with its signature and receipt, so you, or anyone you give it to, can check later that the published log holds exactly what you entered: <code>corla-observer check-record</code>. Use the same browser on this device for the whole session; another browser or device gets its own key.</li>
+      <li>When the county has targeted ballots too (ballots observers chose, examined after the state's sample), the list at the top switches between the <strong>RLA sample</strong> and each <strong>Targeted list</strong>. Each list keeps your place and your entries apart; a targeted list is marked TARGETED (NOT RLA) on the screen and its printouts. A ballot on a targeted list that is also in the RLA sample says so: enter it on the RLA sample, where it counts for both.</li>
+      <li><strong>Look up a ballot</strong> (in the same list at the top) is for a ballot the board pulls from a storage box at the observers' request: type its imprinted ID, and its expected votes come from the county's redacted CVR, to enter contest by contest. These are recorded apart from every list, as box-targeted observations.</li>
+      <li>Don't interrupt the audit board; observers note, they don't overrule.</li>
+    </ul>
+    </details>
+    <p><button id="obs-more-close" type="button">Close</button></p>
+  </dialog>
+</main>
+</body>
+</html>

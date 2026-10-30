@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Software version{% endblock %}
+{% block main %}
+<h1>Software version</h1>
+<p>The software running this server, as it names itself in every event, evidence commitment and printout it makes: <code>{{ identity.software }}</code>.</p>
+<div class="card">
+<dl>
+  <dt>Version</dt><dd>{{ identity.version }}</dd>
+  <dt>Commit</dt><dd>{% if identity.commit %}<a href="{{ identity.commit_url }}" rel="noreferrer"><code class="hash full">{{ identity.commit }}</code></a> (on GitHub){% else %}unknown: not run from a git checkout, and no version file{% endif %}</dd>
+  {% if identity.commit %}<dt>Working tree</dt><dd>{% if identity.dirty %}<span class="badge badge-warning"><span aria-hidden="true">&#9650;</span> dirty</span> the running code has changes not in this commit{% else %}clean: the running code is this commit{% endif %}</dd>{% endif %}
+  <dt>Learnt from</dt><dd>{{ {'git': 'the git checkout it runs from', 'file': 'a version file written when it was built', 'unknown': 'nothing'}[identity.source] }}</dd>
+</dl>
+</div>
+{% if identity.log %}
+<h2>The commit</h2>
+<div class="card">
+<dl>
+  {% if identity.log.date %}<dt>Date</dt><dd>{{ identity.log.date }}</dd>{% endif %}
+  {% if identity.log.subject %}<dt>Subject</dt><dd>{{ identity.log.subject }}</dd>{% endif %}
+</dl>
+{% if identity.log.body %}<pre class="text">{{ identity.log.body }}</pre>{% endif %}
+</div>
+{% endif %}
+<p class="meta">Also as JSON: <a href="{{ url('/version.json') }}">version.json</a>.</p>
+{% endblock %}

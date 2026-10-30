@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Coordinator: walkthrough{% endblock %}
+{% block main %}
+<h1>Walkthrough</h1>
+{% if not walk %}
+<p>This workspace is not a walkthrough. Make one with <code>corla-observer walkthrough init --workspace DIR --county Weld</code> and serve it on its own.</p>
+{% else %}
+<p>The {{ walk.election }} audit, replayed for {{ walk.county }} from the public audit center mirror in the order things arrived. Each step applies exactly what arrived then (a fetch from the mirror at that commit, the county's files uploaded as a coordinator would, the seed), then runs the normal pipeline. Look at any page in between: the <a href="{{ url('/coord/map') }}">data map</a>, the <a href="{{ url('/coord/flags') }}">flags</a>, the <a href="{{ url('/coord/estimates') }}">estimates</a>, the <a href="{{ url('/coord/extract') }}">extract</a> and its print, and an observer's screen from <a href="{{ url('/coord/links') }}">a link</a>. Every event is recorded as usual, marked simulated. To start again: <code>corla-observer walkthrough init --force</code>.</p>
+{% for note in notes %}<p class="notice{% if note.startswith('error') %} notice-error{% endif %}" role="status">{{ note }}</p>{% endfor %}
+<form method="post" action="{{ url('/coord/walkthrough/next') }}" class="form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  {% if walk.next %}<button type="submit">Next step: {{ walk.next.preview }} ({{ walk.next.utc|local }})</button>
+  {% else %}<p>{{ badge('ok', 'done') }} Every step has been applied.</p>{% endif %}
+</form>
+<ol class="steps">
+{% for n, step, done in rows %}
+  <li>{% if done %}{{ badge('ok', 'done') }}{% elif loop.index0 == walk.done %}{{ badge('warning', 'next') }}{% else %}{{ badge('normal', 'to come') }}{% endif %}
+    <strong>{{ step.utc|local }}</strong>: {% if done %}{{ step.title }}{% else %}{{ step.preview }}{% endif %}{% if step.commit %} <span class="meta">(mirror commit {{ step.commit }})</span>{% endif %}{% if step.detail and (done or not step.upcoming) %}<br><span class="meta">{{ step.detail }}</span>{% endif %}{% if done and step.overrides_note %}<br><span class="meta">Data map overrides applied at this step, once their evidence arrived: {{ step.overrides_note }}.</span>{% endif %}</li>
+{% endfor %}
+</ol>
+{% endif %}
+{% endblock %}

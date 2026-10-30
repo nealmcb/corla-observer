@@ -1,0 +1,130 @@
+{% from "_macros.html" import county_card, problem_list, hash, badge, severity, waiting_list %}
+<div id="dashboard" data-live data-head="{{ snap.head_seq }}">
+  {% for e in snap.errors %}<p class="notice notice-error">{{ badge('error', 'error') }} {{ e }}</p>{% endfor %}
+  <section class="summary">
+    <div class="card stat">
+      <h2>Election</h2>
+      <p class="big">{{ snap.election or 'not yet known' }}</p>
+      <p class="meta">{{ snap.contests }} targeted contests, manifests for {{ snap.manifests_in_map }} counties in the data map</p>
+    </div>
+    <div class="card stat">
+      <h2>Seed</h2>
+      {% if snap.seed %}
+      <p class="big"><code class="seed">{{ snap.seed }}</code></p>
+      <p class="meta">{{ snap.seed_source }}</p>
+      {% else %}
+      <p class="big muted">not yet entered</p>
+      {% endif %}
+      {% if snap.roll_time %}<p class="meta">Rolled {{ snap.roll_time|local }}</p>{% endif %}
+    </div>
+    <div class="card stat">
+      <h2>Event log</h2>
+      <p class="big">{{ snap.head_seq }} events</p>
+      <p class="meta">Head hash <code class="hash full">{{ snap.head_hash }}</code></p>
+      <p class="meta">Observers' receipts are signed with the {{ receipt_key.algorithm }} key <code class="hash full">{{ receipt_key.key_id }}</code>, published at <a href="{{ url('/receipt-key') }}">receipt-key</a> (<a href="{{ url('/receipt-key.pem') }}">PEM</a>).</p>
+    </div>
+    <div class="card stat">
+      <h2>Data map</h2>
+      <p class="big">{% if snap.public_error_count %}{{ badge('error', snap.public_error_count ~ ' blocking') }}{% else %}{{ badge('ok', 'nothing blocking') }}{% endif %}</p>
+      <p class="meta">{{ snap.public_problems|length }} problem{{ 's' if snap.public_problems|length != 1 else '' }} listed below{% if snap.waiting %}; {{ snap.waiting|length }} kind{{ 's' if snap.waiting|length != 1 else '' }} of input not yet expected{% endif %}</p>
+    </div>
+  </section>
+
+  {% set rla_boards = snap.boards|rejectattr('targeted')|list %}
+  {% if rla_boards %}
+  <section>
+    <h2>Audit boards, live</h2>
+    <div class="grid">
+      {% for b in rla_boards %}
+      <article class="card">
+        <h3>{{ b.county }}, board {{ b.board }}</h3>
+        <dl>
+          <dt>Ballots done</dt><dd>{{ b.done }}{% if b.ballots %} of {{ b.ballots }}{% endif %}</dd>
+          <dt>Matches</dt><dd>{{ badge('ok', b.matches ~ ' match') }}</dd>
+          <dt>Notes</dt><dd>{% if b.notes %}{{ badge('warning', b.notes ~ ' with notes') }}{% else %}none{% endif %}</dd>
+          <dt>Observers</dt><dd>{{ b.observers|length }}{% if b.per_contest %} <span class="meta">({{ b.per_contest|length }} contest by contest)</span>{% endif %}</dd>
+          {% if b.read %}<dt>Read aloud</dt><dd>{{ b.read }} (practice reader)</dd>{% endif %}
+          {% if snap.previously_targeted.get(b.county) %}<dt>Previously targeted</dt><dd>{{ snap.previously_targeted[b.county] }} of the county's sample {{ 'was' if snap.previously_targeted[b.county] == 1 else 'were' }} on an earlier targeted list: may already have been pulled</dd>{% endif %}
+        </dl>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if snap.public_targeted or snap.public_lookups %}
+  <section>
+    <h2>Targeted ballots (not RLA)</h2>
+    <p class="meta">Ballots observers chose, which the county pulls at their request: not part of the RLA sample, and counted apart from it. <strong>Targeted by CVR</strong>: lists sent to the county, each named by number only, with its counts, until its ballots have been examined and a coordinator publishes its details. <strong>Targeted from boxes</strong>: ballots picked from the storage boxes and looked up on an observer's screen.</p>
+    <div class="grid">
+      {% for x in snap.public_lookups %}
+      <article class="card">
+        <h3>{{ x.county }}: Targeted from boxes {{ badge('warning', 'targeted (not RLA)') }}</h3>
+        <dl>
+          <dt>Ballots observed</dt><dd>{{ x.done }}</dd>
+          <dt>Matches</dt><dd>{{ badge('ok', x.matches ~ ' match') }}</dd>
+          <dt>Notes</dt><dd>{% if x.notes %}{{ badge('warning', x.notes ~ ' with notes') }}{% else %}none{% endif %}</dd>
+          <dt>Observers</dt><dd>{{ x.observers|length }}</dd>
+        </dl>
+      </article>
+      {% endfor %}
+      {% for t in snap.public_targeted %}
+      <article class="card">
+        <h3>{{ t.county }}: {{ t.public_label }} {{ badge('warning', 'targeted (not RLA)') }}</h3>
+        <dl>
+          <dt>Sent</dt><dd>{{ t.built|local }} &middot; {{ t.ballots }} ballots{% if t.in_rla %} ({{ t.in_rla }} also in the RLA sample){% endif %} &middot; extract <code class="hash">{{ t.sha256[:8] }}</code></dd>
+          <dt>Ballots done</dt><dd>{{ t.done }} of {{ t.ballots }}</dd>
+          <dt>Matches</dt><dd>{{ badge('ok', t.matches ~ ' match') }}</dd>
+          <dt>Notes</dt><dd>{% if t.notes %}{{ badge('warning', t.notes ~ ' with notes') }}{% else %}none{% endif %}</dd>
+          <dt>Observers</dt><dd>{{ t.observers|length }}</dd>
+          {% if t.published %}<dt>Details (published)</dt><dd><strong>{{ t.published.name }}</strong>{% for pat in t.published.patterns %}<br><span class="meta">{{ pat.name }}: {{ pat.description }}</span>{% endfor %}<br><span class="meta">{{ t.published.ids|join(', ') }}</span></dd>{% endif %}
+        </dl>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <section>
+    <h2>Counties taking part in observation</h2>
+    <p class="meta">Counties that provided a redacted CVR to the project or have observers. <a href="{{ url('/counties') }}">All Colorado counties</a> shows every county's status in CORLA.</p>
+    {% set active = snap.active_counties %}
+    {% if active %}
+    <div class="grid">
+      {% for row in active %}{{ county_card(row, not_yet=snap.not_yet.get(row.county, {})) }}{% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No county is taking part in observation yet.</p>
+    {% endif %}
+  </section>
+
+  <section>
+    <h2>Not yet expected</h2>
+    {{ waiting_list(snap) }}
+  </section>
+
+  <section>
+    <h2>Data map problems</h2>
+    {{ problem_list(snap.public_problems) }}
+  </section>
+
+  <section>
+    <h2>Recent fetch activity</h2>
+    {% if snap.public_fetches %}
+    <ol class="activity">
+      {% for f in snap.public_fetches %}
+      <li>
+        <span class="meta">{{ f.time|local }}</span>
+        {% if f.severity %}{{ severity(f.severity) }}{% endif %}
+        <strong>{{ f.what }}</strong>
+        {% if f.url %}<span class="url">{{ f.url }}</span>{% endif %}
+        {% if f.detail %}<span class="muted">{{ f.detail|label }}</span>{% endif %}
+      </li>
+      {% endfor %}
+    </ol>
+    {% else %}
+    <p class="muted">No fetches yet.</p>
+    {% endif %}
+  </section>
+  <p class="meta">As of event {{ snap.head_seq }}, built {{ snap.built_at|local }}.</p>
+</div>

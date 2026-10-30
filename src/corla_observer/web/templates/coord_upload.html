@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% block title %}Coordinator: upload{% endblock %}
+{% block main %}
+<h1>Upload county files</h1>
+{% if error %}<p class="notice{% if not error.endswith('nothing was recorded or kept.') %} notice-error{% endif %}" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
+{# The CSRF token comes before the files: the server checks it before reading any of them. #}
+<form method="post" action="{{ url('/coord/upload') }}" enctype="multipart/form-data" class="card form">
+  <input type="hidden" name="csrf" value="{{ csrf }}">
+  <p>Choose the files: a county's redacted CVR, its ballot manifest, its pull list, or an election night results file downloaded by hand. Each file's kind and county are worked out from what is in it, and shown with the evidence on the next page; you are asked only if they cannot be told.</p>
+  <label>Files <span class="muted">(up to {{ max_files }} at once, {{ max_total_bytes|size }} in all; a redacted CVR up to {{ max_bytes.redacted_cvr|size }}, a manifest or pull list up to {{ max_bytes.manifest|size }}, a results file up to {{ max_results_bytes|size }})</span>
+    <input type="file" name="file" multiple required>
+  </label>
+  <details>
+    <summary>For a results file: where it came from <span class="muted">(optional)</span></summary>
+    <label>Downloaded from <input type="url" name="source_url" maxlength="500" placeholder="https://results.enr.clarityelections.com/CO/..."></label>
+    <label>Note <input type="text" name="note" maxlength="1000" placeholder="who downloaded it, when, and why by hand"></label>
+    <label>When Clarity generated it <span class="muted">(only for a file that does not say, such as a summary.json: Colorado time, 2026-11-04 21:40)</span> <input type="text" name="file_time" maxlength="40"></label>
+  </details>
+  <button type="submit">Upload and check</button>
+</form>
+<div class="card">
+  <h2>What happens</h2>
+  <ul>
+    <li>Each file's kind is recognized by its content: a Dominion CVR export by its columns, a manifest or pull list by its columns, a Clarity results file (<code>detail.xml</code>, <code>detail.xlsx</code>, either zipped, <code>summary.csv</code> or <code>.zip</code>, <code>summary.json</code>) by its form. Its county comes from the file itself: a CVR's first row names the election ("2026 Weld County Primary Election"), a manifest or pull list has a County column, a results file has its own region or its ballots cast by county. The file name counts only as weak evidence, and the county is checked against this workspace's counties.</li>
+    <li>A redacted CVR is checked for rare groups of fewer than 10 ballots before anything is kept. If it fails, it is deleted, and only its hash and the counts-only report are recorded.</li>
+    <li>A manifest or pull list is stored, and anything odd about it (a manifest that does not load, a pull list without an audit board column) is recorded as a warning.</li>
+    <li>A results file is stored by its hash, recorded as uploaded by hand under your name with its source and note, and then used like a fetched one: the newest by the time the file itself gives (a fetched one if the times are equal) feeds the margins and estimates. Its totals are checked against the other results files, the redacted CVRs, CORLA's tallies and the manifests at once (<a href="{{ url('/coord/estimates') }}#totals">the estimates page</a>).</li>
+    <li>A file whose kind or county cannot be told waits (for two hours, in the server's staging area, never backed up) for you to choose; nothing is recorded until you do.</li>
+    <li>Every upload is recorded in the event log under your name, with what was detected and why.</li>
+  </ul>
+</div>
+{% endblock %}

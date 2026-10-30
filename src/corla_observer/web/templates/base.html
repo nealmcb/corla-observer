@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<meta name="color-scheme" content="light dark">
+<title>{% block title %}CORLA observer{% endblock %}</title>
+<link rel="stylesheet" href="{{ static('app.css') }}" integrity="{{ integrity['app.css'] }}">
+<script src="{{ static('app.js') }}" integrity="{{ integrity['app.js'] }}" defer></script>
+{% block head %}{% endblock %}
+</head>
+<body data-prefix="{{ prefix }}">
+{% block header %}
+<header class="site">
+  <a class="brand" href="{{ url('/') }}">CORLA observer</a>
+  <nav>
+    <a href="{{ url('/') }}">Dashboard</a>
+    <a href="{{ url('/counties') }}">Counties</a>
+    {% if session %}
+    <a href="{{ url('/coord') }}">Coordinator</a>
+    <a href="{{ url('/coord/upload') }}">Upload</a>
+    <a href="{{ url('/coord/map') }}">Data map</a>
+    <a href="{{ url('/coord/flags') }}">Flags</a>
+    <a href="{{ url('/coord/estimates') }}">Estimates</a>
+    <a href="{{ url('/coord/schedule') }}">Schedule</a>
+    <a href="{{ url('/coord/seed') }}">Seed</a>
+    <a href="{{ url('/coord/extract') }}">Extracts</a>
+    <a href="{{ url('/coord/targets') }}">Targets</a>
+    <a href="{{ url('/coord/check') }}">Check a page</a>
+    <a href="{{ url('/coord/stats') }}">Observation</a>
+    <a href="{{ url('/coord/links') }}">Links</a>
+    <form class="inline" method="post" action="{{ url('/logout') }}">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <button type="submit" class="link">Log out {{ session.account }}</button>
+    </form>
+    {% else %}
+    <a href="{{ url('/coord') }}">Coordinators</a>
+    {% endif %}
+  </nav>
+</header>
+{% endblock %}
+{% if walkthrough_banner %}<p class="walkthrough-banner" role="note"><span aria-hidden="true">&#9654;</span> {{ walkthrough_banner }} <a href="{{ url('/coord/walkthrough') }}">Steps</a></p>{% endif %}
+<main>
+{% block main %}{% endblock %}
+</main>
+<footer class="site">
+  corla-observer <a href="{{ url('/version') }}">{{ version }}</a>. Every figure here can be recomputed from the published event log.
+</footer>
+</body>
+</html>

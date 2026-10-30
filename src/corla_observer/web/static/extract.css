@@ -1,0 +1,25 @@
+/* corla-observer: a board's provenance on screen (the first sheet of the printed extract, which is a PDF:
+   corla_observer.pdfextract). Hashes are monospaced in groups of 8 hex digits, so that a hash too long for its cell
+   breaks between groups instead of overflowing. */
+html, body { background: #fff; color: #000; }
+body.extract { margin: 0; font: 10pt/1.3 "DejaVu Sans Condensed", "Liberation Sans Narrow", Arial, sans-serif; background: #ddd; }
+.toolbar { padding: 8px 16px; border-bottom: 1px solid #999; font-size: 11pt; background: #fff; }
+.toolbar a { margin-right: 12px; }
+.sheet { background: #fff; margin: 12px auto; padding: 16px; max-width: 200mm; box-shadow: 0 1px 4px rgba(0, 0, 0, 0.3); }
+.page-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 8px; border-bottom: 1px solid #000; margin-bottom: 4px; }
+.head-text { flex: 1; min-width: 0; }
+.head-text p { margin: 0 0 2px; }
+.ident { font-family: "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, monospace; overflow-wrap: anywhere; }
+.qr svg { display: block; width: 22mm; height: 22mm; }
+.qr svg path { stroke: #000; }
+.prov-facts { border-collapse: collapse; margin: 4px 0; width: 100%; table-layout: auto; }
+.prov-facts th { text-align: left; font-weight: normal; padding: 0 12px 0 0; white-space: nowrap; vertical-align: top; width: 1%; }
+.prov-facts td { overflow-wrap: anywhere; }
+.prov-facts td.hash { font-family: "DejaVu Sans Mono", "Liberation Mono", Menlo, Consolas, monospace; font-size: 9pt; word-spacing: 0.3em; }
+.prov-h { font-size: 11pt; margin: 8px 0 4px; }
+.prov-key, .prov-shortened { list-style: none; margin: 0; padding: 0; columns: 2 16em; column-gap: 24px; font-size: 9pt; line-height: 1.25; }
+.prov-key li, .prov-shortened li { break-inside: avoid; }
+.check-steps { margin: 0; padding-left: 20px; }
+/* The QR code is drawn large on screen, so that a phone photo of the screen (from a laptop at arm's length, say) can still decode it. */
+.provenance .qr-extract svg { width: 36mm; height: 36mm; max-width: 40vw; max-height: 40vw; }
+@media (max-width: 600px) { .sheet { margin: 0; padding: 12px; box-shadow: none; } }
