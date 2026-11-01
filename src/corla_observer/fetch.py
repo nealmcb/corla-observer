@@ -461,7 +461,10 @@ def fetch(url: str, policy: FetchPolicy | None = None) -> FetchResult:
 # HTML
 
 
-_SCRIPT_RE = re.compile(rb"<script\b[^>]*>.*?</script\s*>", re.IGNORECASE | re.DOTALL)
+# The end tag admits attributes and whitespace, ``</script foo>``, which HTML
+# treats as closing the element. Requiring a bare ``</script>`` would run the
+# lazy match on to the next one and treat page content in between as script.
+_SCRIPT_RE = re.compile(rb"<script\b[^>]*>.*?</script\b[^>]*>", re.IGNORECASE | re.DOTALL)
 _CF_SCRIPT_MARKERS = (b"__CF$cv$params", b"/cdn-cgi/", b"_cf_chl_opt")
 _ATTR_VALUE = rb"""(?:"[^"]*"|'[^']*'|[^\s>]*)"""
 _CF_SUBSTITUTIONS: tuple[tuple[re.Pattern[bytes], bytes], ...] = (

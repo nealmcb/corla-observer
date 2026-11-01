@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import codecs
 import io
+import time
 import zipfile
 from pathlib import Path
 
@@ -27,6 +28,7 @@ from corla_observer.classify import (
     classify_file,
     county_from_filename,
     extract_seed,
+    looks_like_html,
     match_signature,
     normalize_header,
 )
@@ -611,3 +613,20 @@ def test_cli_classify_and_seed(tmp_path: Path) -> None:
 )
 def test_county_from_filename(name: str, county: str | None) -> None:
     assert county_from_filename(name) == county
+
+
+def test_looks_like_html_skips_leading_comments() -> None:
+    assert looks_like_html("<!-- a --> <!-- b -->\n<!DOCTYPE html><html>")
+    assert looks_like_html("  <!--x--><head>")
+    assert not looks_like_html("<!-- a --> plain text")
+
+
+def test_looks_like_html_is_linear_on_a_run_of_comments() -> None:
+    # CodeQL alert #3 on the public repository: the earlier pattern nested a
+    # lazy quantifier inside a repeated group and backtracked exponentially on a
+    # page that opens with comments and never reaches a tag. Twenty-four
+    # repetitions took 2.7 seconds; this fills the whole 4,096-byte window.
+    text = "<!--" + "--><!--" * 600 + "x"
+    started = time.perf_counter()
+    assert not looks_like_html(text)
+    assert time.perf_counter() - started < 0.5

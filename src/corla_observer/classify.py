@@ -739,7 +739,15 @@ def _classify_csv(text: str, encoding: str) -> Classification:
     return Classification("unknown", None, evidence)
 
 
-_HTML_RE = re.compile(r"^\s*(<!--.*?-->\s*)*<(!doctype\s+html|html|head|body)\b", re.IGNORECASE | re.DOTALL)
+# Leading comments are skipped with a tempered pattern, ``(?:(?!-->).)*``, so each
+# comment body has exactly one way to match. The earlier ``(<!--.*?-->\s*)*``
+# nested a lazy quantifier inside a repeated group and backtracked exponentially
+# on a page opening with a run of comments that never reaches a tag: 24
+# repetitions, 173 bytes, took 2.7 seconds, and the 4,096-byte window admits
+# hundreds. A fetched page should never be able to hang the classifier.
+_HTML_RE = re.compile(
+    r"^\s*(?:<!--(?:(?!-->).)*-->\s*)*<(!doctype\s+html|html|head|body)\b", re.IGNORECASE | re.DOTALL
+)
 _TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title\s*>", re.IGNORECASE | re.DOTALL)
 
 

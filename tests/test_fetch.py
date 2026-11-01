@@ -845,3 +845,22 @@ def test_probe_urls_are_fetched_and_missing_ones_recorded_once(election: Site, s
     # A probe no longer requested is not reported as no longer linked.
     events, _ = run(election, store)
     assert probe not in by_url(events, "fetch.missing")
+
+
+def test_normalize_html_handles_a_script_end_tag_with_attributes() -> None:
+    # CodeQL alert #5 on the public repository: an end tag like ``</script foo>``
+    # closes the element in HTML, but the earlier pattern required a bare
+    # ``</script>`` and would run on to the next one, treating the page content
+    # in between as script. Here that content carries a Cloudflare marker, so the
+    # old pattern would have dropped the paragraph from the normalized page.
+    page = (
+        b"<html><body>"
+        b"<script>(function(){window['__CF$cv$params']={r:'abc'};})();</script foo>"
+        b"<p>Round 1 files</p>"
+        b"<script>var keep = 1; /* /cdn-cgi/ */</script>"
+        b"</body></html>"
+    )
+    normalized = normalize_html(page)
+    assert b"__CF$cv$params" not in normalized
+    assert b"<p>Round 1 files</p>" in normalized
+    assert b"var keep = 1" not in normalized  # its own marker removes it, independently
