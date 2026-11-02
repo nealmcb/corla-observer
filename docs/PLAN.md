@@ -412,6 +412,43 @@ Because the audit center's files and formats change from election to election, e
 
 Each override needs a reason, is applied deterministically and is logged. For a layout nobody anticipated, small adapter modules named in the overrides file can convert it; the hash of each adapter's code is logged when it runs, and nothing not named in the overrides is ever run. Commands show the map, explain any classification, list what is still missing for a sampling run, and print a compact description of the map and its problems for pasting into an AI assistant. The formats found in past elections are surveyed in `docs/AUDITCENTER_FORMATS.md`.
 
+## Feedback from demos and practice
+
+Each item names its source and its state: open, fixed (with the commit) or decided.
+
+From Neal's demo, 2026-10-29:
+
+1. **Next steps.** The pages should recommend what to do next, e.g. "upload a CVR". Open.
+2. **The data map early in an election** is distracting and suggests the wrong things. Before
+  there is data to audit it should not expect or suggest a seed, warn about missing contests,
+  expect a pull list before the seed, or report that there are no selections. Open.
+3. **Targeting: searching for a contest resets the pattern.** The search form and its result
+  links carried the selection the page was loaded with, not the boxes checked since. Fixed.
+4. **Printed list: Contests section starts on a new page.** A portrait printout for board 1 had
+  two leading pages for Contests, though page 1 had plenty of room. Open.
+5. **Remember the county.** A coordinator normally sticks with one county; the pages should
+  remember the last county entered. Open.
+6. **One observer on several devices.** Check what happens when the same observer's entries
+  collide across devices. Open.
+7. **Updating the software during an audit.** Preserve all data, record the update as an event
+  in the live run, and test and save the data before and after the change. Open; see open
+  question 8.
+8. **Loading the audit center is slow.** Find out why. Open.
+
+From a coordinator's practice session, 2026-11-02:
+
+9. **A rejected CVR looked like a county problem.** A CVR upload was rejected three times by
+  the redaction check (two groups under 10 ballots), but the result page put the warning that
+  the county "is not one of this workspace's counties" in a notice box above the redaction
+  details, and did not list the small groups, so the warning read as the reason. The page
+  should lead with the reason for a rejection and name the small groups (size, precinct,
+  ballot type), and the county warning should say that the file was still taken. Open.
+
+From Neal, 2026-11-02:
+
+10. **Targeting: paste a list of imprinted IDs**, separated by newlines or commas. Fixed: the
+  field is a text area, since a one-line field drops a pasted column's line breaks.
+
 ## Open questions
 
 1. When will each county's pull list reach the coordinator: after the drawing on 16 Nov, or only on audit day?
