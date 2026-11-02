@@ -219,6 +219,13 @@ def test_upload_stores_a_passing_cvr_and_rejects_a_failing_one(workspace: Path, 
     assert not any((workspace / STAGING_DIRNAME).iterdir())
     assert ("upload.rejected", "coordinator:alice") in events(workspace)
     assert "Fire" not in bad.text  # contest names are not shown
+    # The rejection leads the card: why, which groups, what to do, and a text for the county.
+    card = bad.text[bad.text.index('<section class="card"'):]
+    assert card.index("fails Colorado's small-group rule") < card.index("<dt>Detected</dt>")
+    assert re.search(r'<td class="num">3</td><td>7</td><td>BT-1</td><td class="num">2</td>', card)
+    assert "What to do next:</strong>" in card and "ask the county for a redacted CVR" in card
+    assert "Do not redact or edit the county's file yourself" in card
+    assert "- 3 ballots, precinct 7, ballot type BT-1, 2 contests on the card" in card
 
     manifest = upload(client, MANIFEST, kind="manifest")
     assert manifest.status_code == 200
@@ -404,13 +411,6 @@ def test_audit_boards_map_and_fetch(workspace: Path, make_client: Factory) -> No
     assert page.status_code == 200 and "overrides" in page.text and 'data-copy="ai-text"' in page.text
 
 
-def test_path_prefix(make_client: Factory) -> None:
-    client = make_client(path_prefix="/x7Gq2")
-    page = client.get("/x7Gq2/")
-    assert page.status_code == 200
-    assert 'href="/x7Gq2/coord"' in page.text and "/x7Gq2/static/app.js" in page.text
-    assert client.get("/").status_code == 404
-    assert client.get("/coord", follow_redirects=False).status_code == 404
 def test_fetch_reports_a_skipped_or_failing_cycle(make_client: Factory) -> None:
     from corla_observer.schedule import CycleReport
 
@@ -435,6 +435,13 @@ def test_fetch_reports_a_skipped_or_failing_cycle(make_client: Factory) -> None:
         assert expected in page, re.findall(r"Last web fetch.{0,300}", page)
 
 
+def test_path_prefix(make_client: Factory) -> None:
+    client = make_client(path_prefix="/x7Gq2")
+    page = client.get("/x7Gq2/")
+    assert page.status_code == 200
+    assert 'href="/x7Gq2/coord"' in page.text and "/x7Gq2/static/app.js" in page.text
+    assert client.get("/").status_code == 404
+    assert client.get("/coord", follow_redirects=False).status_code == 404
     assert client.get("/x7Gq2", follow_redirects=False).status_code == 308
     script = client.get("/x7Gq2/static/app.js")
     assert script.status_code == 200 and "javascript" in script.headers["content-type"]

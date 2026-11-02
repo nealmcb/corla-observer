@@ -77,7 +77,7 @@ def test_detect_asks_when_it_cannot_tell(tmp_path: Path) -> None:
 def test_content_beats_name_and_known_counties_cross_check(tmp_path: Path) -> None:
     found = detect(write(tmp_path, "Morgan_CVR.csv", WELD_CVR), "Morgan_CVR.csv", ["Morgan"])
     assert found.county == "Weld"
-    assert any("suggests Morgan" in w for w in found.warnings) and any("not one of this workspace's counties" in w for w in found.warnings)
+    assert any("suggests Morgan" in w for w in found.warnings) and any("is new to this workspace" in w for w in found.warnings)
 
 
 def test_detect_results(tmp_path: Path) -> None:

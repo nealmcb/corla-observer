@@ -413,7 +413,8 @@ def detect(path: Path | str, original_name: str, known: Sequence[str] = ()) -> D
             if kind == "results":
                 candidates = ["state", *candidates]
     if county is not None and county != "state" and known and county not in known:
-        warnings.append(f"{county} is not one of this workspace's counties ({', '.join(known)})")
+        # Only a note: a new county never stops a file, which is checked and kept (or rejected) on its own merits.
+        warnings.append(f"{county} is new to this workspace (its counties so far: {', '.join(known)}); this does not stop the file")
     kinds: tuple[str, ...] = ()
     if kind is None:
         kinds = KINDS

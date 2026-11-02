@@ -9,6 +9,35 @@
 <section class="card" aria-label="{{ intake.original_name }}">
   <h2>{{ intake.original_name }}:
     {% if intake.accepted %}{{ badge('ok', 'accepted') }}{% elif intake.pending %}{{ badge('warning', 'choose') }}{% else %}{{ badge('fail', 'rejected') }}{% endif %}</h2>
+  {% set up = intake.upload %}
+  {% if up and up.reason == 'redaction_check_failed' and up.report %}{% set rr = up.report %}
+  <div class="notice notice-error" role="alert">
+    {% if rr.rare_group_count %}
+    <p>{{ badge('error', 'rejected') }} <strong>This CVR fails Colorado's small-group rule.</strong> {{ rr.rare_group_count }} group{{ '' if rr.rare_group_count == 1 else 's' }} of ballots with the same contests{% if rr.precinct_present %}, precinct{% endif %}{% if rr.ballot_type_present %} and ballot type{% endif %} {{ 'has' if rr.rare_group_count == 1 else 'have' }} fewer than {{ rr.threshold }} ballots ({{ rr.rare_ballots }} ballots in all), so those voters' choices could be identified. The rule (C.R.S. 24-72-205.5(4)(b)(III)) is that no group of fewer than {{ rr.threshold }} ballots identical in their contests and precinct coding be identifiable.</p>
+    {% endif %}
+    {% if rr.problems %}<p>{{ badge('error', 'rejected') }} <strong>The file could not be checked reliably:</strong> {{ rr.problems|join('; ') }}.</p>{% endif %}
+    <p>The file was deleted: nothing of it is kept but its SHA-256, its size and the counts below.</p>
+    <p><strong>What to do next:</strong>
+    {% if rr.rare_group_count %}ask the county for a redacted CVR in which each group below is redacted (its votes blanked or marked redacted, or combined into an aggregate row), and upload that file. The text below can be sent as it is: it holds counts only, never votes.
+    {% else %}ask the county for the file exactly as exported. A CVR opened and saved again in Excel, or edited by hand, often cannot be read.{% endif %}
+    Do not redact or edit the county's file yourself: the check, and the SHA-256 recorded, are of the file as the county provides it.</p>
+  </div>
+  {% if rr.rare_groups %}
+  <div class="table-wrap"><table class="data">
+    <caption>Groups under {{ rr.threshold }} ballots{% if rr.rare_group_count > rr.rare_groups|length %} (the first {{ rr.rare_groups|length }} of {{ rr.rare_group_count }}){% endif %}</caption>
+    <thead><tr><th class="num">Ballots</th><th>Precinct</th><th>Ballot type</th><th class="num">Contests on the card</th><th>Contest pattern</th></tr></thead>
+    <tbody>{% for g in rr.rare_groups %}<tr><td class="num">{{ g.size }}</td><td>{{ g.precinct if g.precinct is not none else '(none)' }}</td><td>{{ g.ballot_type if g.ballot_type is not none else '(none)' }}</td><td class="num">{{ g.contests }}</td><td><code>{{ g.style_hash }}</code></td></tr>{% endfor %}</tbody>
+  </table></div>
+  <details><summary>Text for the county</summary>
+  <pre class="text" id="redaction-email-{{ loop.index }}">Our check of the redacted CVR {{ intake.original_name }} (SHA-256 {{ up.sha256 }}) finds {{ rr.rare_group_count }} group{{ '' if rr.rare_group_count == 1 else 's' }} of fewer than {{ rr.threshold }} ballots with the same contests{% if rr.precinct_present %}, precinct{% endif %}{% if rr.ballot_type_present %} and ballot type{% endif %}, which Colorado's rule (C.R.S. 24-72-205.5(4)(b)(III)) requires to be redacted:
+{% for g in rr.rare_groups %}
+- {{ g.size }} ballot{{ '' if g.size == 1 else 's' }}{% if g.precinct is not none %}, precinct {{ g.precinct }}{% endif %}{% if g.ballot_type is not none %}, ballot type {{ g.ballot_type }}{% endif %}, {{ g.contests }} contests on the card{% endfor %}{% if rr.rare_group_count > rr.rare_groups|length %}
+- and {{ rr.rare_group_count - rr.rare_groups|length }} more groups{% endif %}
+
+Could you send a redacted CVR in which these groups are redacted?</pre>
+  <p><button type="button" data-copy="redaction-email-{{ loop.index }}">Copy to clipboard</button> <span class="copy-status" role="status" aria-live="polite"></span></p></details>
+  {% endif %}
+  {% endif %}
   <dl>
     <dt>Detected</dt>
     <dd>{% if d.kind %}{{ kind_labels[d.kind] }}{% if 'kind' in d.chosen %} <span class="muted">(chosen)</span>{% endif %}{% else %}<strong>kind not known</strong>{% endif %}
@@ -16,7 +45,7 @@
     <dt>Evidence</dt>
     <dd><ul class="plain">{% for e in d.evidence %}<li>{{ e }}</li>{% endfor %}</ul></dd>
     <dt>File</dt><dd>{{ intake.size|size }}</dd>
-    {% set up = intake.upload %}{% set res = intake.results %}
+    {% set res = intake.results %}
     {% if up and up.sha256 %}<dt>SHA-256</dt><dd><code class="hash full">{{ up.sha256 }}</code></dd>
     {% elif res and res.sha256 %}<dt>SHA-256</dt><dd><code class="hash full">{{ res.sha256 }}</code></dd>{% endif %}
     {% if up and up.reason %}<dt>Reason</dt><dd>{{ up.reason|label }}{% if up.reason == 'redaction_check_failed' %}: the file was deleted and not stored{% endif %}</dd>{% endif %}
