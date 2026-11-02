@@ -113,10 +113,10 @@
 
   <form method="post" action="{{ url('/coord/targets/list/add') }}" class="actions target-enter">
     <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}">
-    <label>Imprinted IDs <input type="text" name="ids" maxlength="4000" size="26" placeholder="101-12-5, 102-3-40"></label>
+    <label>Imprinted IDs <textarea name="ids" maxlength="8000" rows="4" cols="26" placeholder="101-12-5, 102-3-40&#10;or paste a list, one per line"></textarea></label>
     <label>Note <input type="text" name="note" maxlength="500" size="26" placeholder="why these (optional)"></label>
     <button type="submit">Look up and add</button>
-    <span class="meta">Each is looked up in the CVR and the manifest, and the result shown here; one in neither is not added. The IDs entered together are one source.</span>
+    <span class="meta">Each is looked up in the CVR and the manifest, and the result shown here; one in neither is not added. Type or paste them one per line or separated by commas. The IDs entered together are one source.</span>
   </form>
 
   <h3>Ballots</h3>

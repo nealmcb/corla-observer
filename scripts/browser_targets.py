@@ -111,11 +111,14 @@ def main(argv: list[str]) -> int:
         page.go_back()
         page.wait_for_load_state()
 
-        page.fill("input[name=ids]", extra_id)
+        # A pasted column: one ID per line, the same ID twice.
+        page.fill("textarea[name=ids]", f"{extra_id}\n{extra_id}\n")
         page.fill("input[name=note]", "seen in a box")
         page.click("text=Look up and add")
         page.wait_for_load_state()
-        check("an ID entered by hand is looked up inline", page.locator(f"li:has-text('{extra_id}: ')").count() == 1, page.inner_text("ul.notice") if page.locator("ul.notice").count() else "")
+        notes = page.inner_text("ul.notice") if page.locator("ul.notice").count() else ""
+        check("an ID entered by hand is looked up inline", page.locator(f"li:has-text('{extra_id}: ')").count() == 1, notes)
+        check("a pasted list's repeated ID is entered once", "1 repeated ID entered once" in notes, notes)
         listed = page.locator("#list table.targets-list tbody tr").count()
         check("the working list has the draws and the entry", listed in (6, 7), listed)
         page.locator("table.targets-sources tr", has_text="Draw 2").locator("input[data-include]").uncheck()

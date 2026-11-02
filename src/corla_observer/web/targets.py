@@ -28,9 +28,10 @@ counts are never on a public page):
     with ``votes=1``); as CSV; and its stored record (JSON), whose hash is
     in its ``targets.drawn`` event.
 ``POST /coord/targets/list/add``
-    Imprinted IDs entered by hand (``ids``, ``note``), each looked up in the
+    Imprinted IDs entered by hand or pasted (``ids``, ``note``), one per
+    line or separated by commas, semicolons or spaces, each looked up in the
     CVR and the manifest, as one source; what each was found as is shown
-    inline. One found in neither is not added.
+    inline. One found in neither is not added; a repeated ID is entered once.
 ``POST /coord/targets/include``
     Include a source in the working list or exclude it (``source``, ``included``).
 ``GET /coord/targets/list/csv?county=C``
@@ -90,6 +91,9 @@ MESSAGES = {
     "allowed": "Allowed total recorded.",
 }
 MAX_ADDED = 12
+#: Longest list of imprinted IDs entered at once: room for a full working list (`MAX_LIST`) pasted one per line,
+#: and under the 8 KB field limit of `coordinator.small_form`, so the page, not the form parser, explains it.
+MAX_IDS_TEXT = 8_000
 
 _STATE_RESULTS: dict[str, Results] = {}
 
@@ -541,20 +545,17 @@ async def list_add(request: Request) -> Response:
     state = get_state(request)
     session, form = await checked_form(request)
     county = _form_county(form)
-    text = str(form.get("ids") or "")[:4000]
+    text = str(form.get("ids") or "")
     note = str(form.get("note") or "")[:tg.MAX_NOTE]
 
     def run() -> tuple[int, list[str]] | str:
-        notes: list[str] = []
+        if len(text) > MAX_IDS_TEXT:
+            return f"the list of IDs is longer than {MAX_IDS_TEXT:,} characters: enter it in parts"
+        parsed = tg.parse_ids(text)
+        notes = [f"{part[:20]}: not an imprinted ID" for part in parsed.not_ids]
         data = _load(state, county)
         ids: list[str] = []
-        for part in re.split(r"[\s,;]+", text):
-            if not part:
-                continue
-            normalized = tg.normalize_id(part)
-            if normalized is None:
-                notes.append(f"{part[:20]}: not an imprinted ID")
-                continue
+        for normalized in parsed.ids:
             entry = tg.lookup(normalized, data.votes, data.locations, data.sizes)
             if not entry.found:
                 notes.append(f"{normalized}: not found in the CVR or the manifest, not added")
@@ -564,6 +565,8 @@ async def list_add(request: Request) -> Response:
             where += f", stored at {entry.location}" if entry.location else ", no storage location"
             notes.append(f"{entry.imprinted_id}: {where}")
             ids.append(entry.imprinted_id)
+        if parsed.repeated:
+            notes.append(f"{parsed.repeated} repeated ID{'' if parsed.repeated == 1 else 's'} entered once")
         if not ids and not notes:
             return "enter an imprinted ID, such as 101-12-5"
         if not ids:

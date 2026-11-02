@@ -329,6 +329,10 @@ def test_lookup_and_ids(votes: tg.CvrVotes) -> None:
     assert beyond.cvr_status is None and beyond.in_manifest and beyond.found
     assert not tg.lookup("2-1-1", votes, {}, sizes).found
     assert tg.normalize_id(" 101 - 12 - 5 ") == "101-12-5" and tg.normalize_id("hello") is None
+    # A pasted list: a spreadsheet column (CRLF lines, a header), mixed with commas and semicolons, an ID repeated.
+    parsed = tg.parse_ids("ImprintedId\r\n101-12-5\r\n102-3-40,\r\n101-12-5; 7-1-2\n\n")
+    assert parsed == tg.ParsedIds(("101-12-5", "102-3-40", "7-1-2"), ("ImprintedId",), 1)
+    assert tg.parse_ids("") == tg.ParsedIds((), (), 0)
 
 
 def _workspace(tmp_path: Path) -> tuple[Workspace, Path]:
@@ -579,6 +583,7 @@ def test_the_coordinator_pages(tmp_path: Path) -> None:
         looked = client.post("/coord/targets/list/add", data={"csrf": csrf, "county": COUNTY, "ids": "1-1-1, 9-9-9, junk", "note": "box 10 looked odd"})
         assert "1-1-1: in the CVR, in the manifest, stored at Box 10" in looked.text and "9-9-9: not found" in looked.text and "junk: not an imprinted ID" in looked.text
         assert "Added 1 to the working list" in looked.text and "box 10 looked odd" in looked.text
+        assert "enter it in parts" in client.post("/coord/targets/list/add", data={"csrf": csrf, "county": COUNTY, "ids": "1-1-1 " * 1350}).text
         with EventLog.open(root) as log:
             entry_id = next(x.id for x in tg.sources(Workspace.open(root), log, COUNTY) if x.kind == "entered")
         # Excluding a source, and including it again.

@@ -133,8 +133,9 @@ every pull list.
   RLA seed in effect when there is one, never required to be digits; Ballots is N (20 unless
   changed). Draw records the draw and adds it to the working list, included. A source row's **Draw
   again** makes another draw of the same pattern, seed and N under the next draw number.
-- **Manual ID entry** stays in place beside the working list: IDs typed in (several at once,
-  separated by spaces or commas) with an optional note; the page says inline where each was found
+- **Manual ID entry** stays in place beside the working list: IDs typed or pasted in (several at
+  once, one per line as from a spreadsheet column, or separated by commas, semicolons or spaces;
+  a repeated ID is entered once) with an optional note; the page says inline where each was found
   (in the CVR, in the manifest, its storage location) or that it was not found and not added.
 
 ## Privacy and the public view

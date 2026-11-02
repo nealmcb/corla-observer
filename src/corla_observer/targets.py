@@ -969,6 +969,37 @@ def normalize_id(text: str) -> str | None:
     return "-".join(match.groups()) if match else None
 
 
+@dataclass(frozen=True)
+class ParsedIds:
+    """Imprinted IDs typed or pasted at once: the IDs in order, each once; the pieces that are not IDs; and how many repeats were dropped."""
+
+    ids: tuple[str, ...]
+    not_ids: tuple[str, ...]
+    repeated: int
+
+
+def parse_ids(text: str) -> ParsedIds:
+    """The imprinted IDs in ``text``: one per line (a pasted spreadsheet column), or separated by commas, semicolons or spaces.
+
+    >>> parse_ids("101-12-5\\r\\n102-3-40, 101-12-5; junk")
+    ParsedIds(ids=('101-12-5', '102-3-40'), not_ids=('junk',), repeated=1)
+    """
+    ids: dict[str, None] = {}
+    not_ids: list[str] = []
+    repeated = 0
+    for part in re.split(r"[\s,;]+", text):
+        if not part:
+            continue
+        normalized = normalize_id(part)
+        if normalized is None:
+            not_ids.append(part)
+        elif normalized in ids:
+            repeated += 1
+        else:
+            ids[normalized] = None
+    return ParsedIds(tuple(ids), tuple(not_ids), repeated)
+
+
 def lookup(imprinted_id: str, votes: CvrVotes, locations: Mapping[tuple[str, str], str], sizes: Mapping[tuple[str, str], int]) -> Entry:
     """Where a ballot is: its CVR row (matched by `corla_observer.extract.id_key`) and its batch in the manifest."""
     row = votes.row_of(imprinted_id)
