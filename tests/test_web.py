@@ -441,6 +441,7 @@ def test_no_reset_on_a_real_deployment(make_client: Factory) -> None:
     home = client.get("/coord")
     assert 'action="/coord/reset"' not in home.text and "Testing mode" not in home.text
     assert client.post("/coord/reset", data={"csrf": csrf_of(home), "confirm": "yes"}).status_code == 404
+    assert client.get("/coord/reset", follow_redirects=False).status_code == 404
 
 
 def test_reset_in_testing_mode(workspace: Path, make_client: Factory, tmp_path: Path) -> None:
@@ -468,6 +469,9 @@ def test_reset_in_testing_mode(workspace: Path, make_client: Factory, tmp_path: 
     assert "reset requested by coordinator:alice" in coordinator.reset_log_path(workspace).read_text()
     # The CSRF check applies as everywhere.
     assert client.post("/coord/reset", data={"csrf": "wrong", "confirm": "yes"}).status_code == 403
+    # Reloading the "resetting" page goes back to the home page.
+    again = client.get("/coord/reset", follow_redirects=False)
+    assert again.status_code == 303 and again.headers["location"] == "/coord"
 
 
 def test_path_prefix(make_client: Factory) -> None:

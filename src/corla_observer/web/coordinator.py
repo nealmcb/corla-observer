@@ -552,6 +552,15 @@ def reset_log_path(workspace: Path) -> Path:
     return workspace.parent / f"{workspace.name}-reset.log"
 
 
+@router.get("/coord/reset")
+async def reset_page(request: Request) -> Response:
+    """The "resetting" page reloaded, or the address typed: back to the home page (404 where reset is off)."""
+    state = get_state(request)
+    if not state.config.reset_command:
+        raise HTTPException(status_code=404)
+    return RedirectResponse(state.url("/coord"), status_code=303)
+
+
 @router.post("/coord/reset")
 async def reset_deployment(request: Request) -> Response:
     """Testing mode only (`AppConfig.reset_command`): run the reset command, detached, and say the site restarts.
