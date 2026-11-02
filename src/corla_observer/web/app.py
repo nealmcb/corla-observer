@@ -164,6 +164,9 @@ class AppConfig:
     #: starts the service again, e.g. the demo's ``corla-demo-reset.sh``). None, the default and the
     #: setting for every real deployment, means there is no Reset button and ``/coord/reset`` is 404.
     reset_command: tuple[str, ...] | None = None
+    #: Testing mode only: the test data bundle (scripts/make_test_bundle.py) that "Populate test data"
+    #: uploads demonstration counties' files from (`corla_observer.quicksetup`); None offers Testland only.
+    test_data: Path | None = None
 
 
 class FetchJob:
@@ -279,6 +282,11 @@ class WebState:
         shown = context.get("county")
         county = known_county(shown) if isinstance(shown, str) else None
         coordinator = request.url.path.startswith(f"{self.prefix}/coord")
+        if coordinator and "test_counties" not in context:
+            # County choosers offer Testland and the demonstration counties this workspace has files for, not
+            # all 64 demonstration names (`corla_observer.classify.DEMO_COUNTIES`).
+            present = [row.county for row in self.cache.get().test_counties]
+            context["test_counties"] = ["Testland", *(name for name in present if name != "Testland")]
         html = self.templates.get_template(template).render(
             request=request, walkthrough_banner=self.walkthrough_banner(), remembered_county=county or remembered, **context
         )

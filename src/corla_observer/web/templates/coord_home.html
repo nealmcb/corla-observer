@@ -52,6 +52,18 @@
   </form>
   {% endif %}
   {% if reset_enabled %}
+  <form method="post" action="{{ url('/coord/populate') }}" class="card form" id="populate">
+    <h2>Testing mode: populate test data</h2>
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <p>For trying the observer pages from nothing: for the county chosen, uploads its manifest and redacted CVR (Testland's generated files, or a 2020 county's published ones), draws 10 ballots, sends them as a targeted list and makes an observer link for you. A county that already has a redacted CVR here is left as it is.</p>
+    <label>County
+      <select name="county" required>
+        <option value="" selected>Choose a county</option>
+        {% for name, has in populate_choices %}<option value="{{ name }}"{% if has %} disabled{% endif %}>{{ name }}{% if has %} (has a CVR here){% endif %}</option>{% endfor %}
+      </select>
+    </label>
+    <button type="submit">Populate</button>
+  </form>
   <form method="post" action="{{ url('/coord/reset') }}" class="card form" id="reset">
     <h2>Testing mode: start again</h2>
     <input type="hidden" name="csrf" value="{{ csrf }}">

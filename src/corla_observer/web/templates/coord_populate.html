@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Coordinator: populate test data{% endblock %}
+{% block main %}
+<h1>Populate test data{% if made %}: {{ made.county }}{% endif %}</h1>
+{% if error %}
+<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> Nothing was done: {{ error }}.</p>
+<p><a class="button secondary" href="{{ url('/coord') }}">Back</a></p>
+{% elif made.rejected %}{% set rr = made.rejected %}
+<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> <strong>{{ made.county }}'s CVR was rejected by the redaction check</strong>{% if rr.rare_group_count %}: {{ rr.rare_group_count }} group{{ '' if rr.rare_group_count == 1 else 's' }} of ballots with the same contests, precinct and ballot type {{ 'has' if rr.rare_group_count == 1 else 'have' }} fewer than {{ rr.threshold }} ballots{% endif %}{% if rr.problems %}; {{ rr.problems|join('; ') }}{% endif %}. Its manifest was uploaded; nothing was drawn. A county's real file like this would need redacting before it could be used: try another county.</p>
+<p><a class="button secondary" href="{{ url('/coord') }}">Back</a></p>
+{% else %}
+<p class="notice" role="status"><span aria-hidden="true">&#10003;</span> Uploaded {{ made.uploaded|join(' and ') }}; drew {{ made.ids|length }} ballots from any ballot with votes, and sent them as <strong>{{ made.list_name }}</strong>. Practice ballots, not part of any RLA sample.</p>
+<p class="populate-link"><strong>Observer link (board 1):</strong><br><a href="{{ observer_url }}" id="observer-link">{{ observer_url }}</a> <button type="button" data-copy="observer-link">Copy</button> <span class="copy-status" role="status" aria-live="polite"></span></p>
+<p class="meta">Open it on a phone, or another browser. For someone to read the ballots aloud, as an audit board would, there is also a practice reader link: <a href="{{ reader_url }}" id="reader-link">{{ reader_url }}</a>. Both are listed, and can be revoked, on <a href="{{ url('/coord/links') }}">Links</a>.</p>
+<p><a class="button" href="{{ list_url }}">The list on the targeted ballots page</a> <a class="button secondary" href="{{ url('/coord') }}">Back to status</a></p>
+{% endif %}
+{% endblock %}

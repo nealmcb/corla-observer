@@ -288,7 +288,7 @@ async def coord_home(request: Request) -> Response:
             message = f"Recorded {count} audit board{'' if count == '1' else 's'} for {county}."
     return state.render(
         request, "coord_home.html", snap=snapshot, message=message, fetch=state.fetch, crawl_off=_crawl_off(state),
-        reset_enabled=state.config.reset_command is not None, **_common(state, session)
+        reset_enabled=state.config.reset_command is not None, populate_choices=_populate_choices(state), **_common(state, session)
     )
 
 
@@ -547,9 +547,48 @@ async def start_fetch(request: Request) -> Response:
     return RedirectResponse(state.url("/coord?msg=fetch_started"), status_code=303)
 
 
+def _populate_choices(state: WebState) -> list[tuple[str, bool]]:
+    """Testing mode: what Populate test data offers, each with whether the county already has a redacted CVR here (then refused)."""
+    if not state.config.reset_command:
+        return []
+    from corla_observer.quicksetup import choices
+    from corla_observer.uploads import status as upload_status
+
+    statuses = upload_status(state.log)
+    return [(name, "redacted_cvr" in statuses[name].latest if name in statuses else False) for name in choices(state.config.test_data)]
+
+
 def reset_log_path(workspace: Path) -> Path:
     """Where a reset's output goes: beside the workspace, which the reset empties."""
     return workspace.parent / f"{workspace.name}-reset.log"
+
+
+@router.post("/coord/populate")
+async def populate_test_data(request: Request) -> Response:
+    """Testing mode only (`AppConfig.reset_command`): upload a test county's files, draw and send a list, make links (`corla_observer.quicksetup`)."""
+    from corla_observer.extract import ExtractError
+    from corla_observer.practice import PracticeError
+    from corla_observer.quicksetup import PopulateError, populate
+    from corla_observer.targets import DrawError
+
+    state = get_state(request)
+    if not state.config.reset_command:
+        raise HTTPException(status_code=404)
+    session, form = await checked_form(request)
+    county = str(form.get("county") or "")
+    try:
+        made = await run_in_threadpool(
+            partial(populate, state.workspace, state.log, county, session.actor, test_data=state.config.test_data, session_id=session.label)
+        )
+    except (PopulateError, DrawError, PracticeError, ExtractError) as exc:
+        return state.render(request, "coord_populate.html", 400, made=None, error=str(exc), **_common(state, session))
+    base = site_url(request, state)
+    return state.render(
+        request, "coord_populate.html", made=made, error=None, county=made.county,
+        observer_url=f"{base}/observe/{made.observer_token}" if made.observer_token else "",
+        reader_url=f"{base}/read/{made.reader_token}" if made.reader_token else "",
+        list_url=state.url("/coord/targets") + f"?county={quote(made.county)}#sent", **_common(state, session),
+    )  # fmt: skip
 
 
 @router.get("/coord/reset")

@@ -1248,6 +1248,14 @@ def serve_command(
             show_default=False,
         ),
     ] = None,
+    test_data: Annotated[
+        Path | None,
+        typer.Option(
+            "--test-data",
+            help="Testing mode only (with --reset-command): the test data bundle (scripts/make_test_bundle.py) that Populate test data uploads demonstration counties' files from.",
+            show_default=False,
+        ),
+    ] = None,
 ) -> None:
     """Run the web interface: the public dashboard and the coordinator pages."""
     import uvicorn
@@ -1270,10 +1278,14 @@ def serve_command(
             typer.echo(f"error: --reset-command {reset_command} is not an executable file", err=True)
             raise typer.Exit(2)
         typer.echo(f"TESTING MODE: the coordinator home page has a Reset button running {reset_command}", err=True)
+    if test_data is not None and (reset_command is None or not test_data.is_dir()):
+        typer.echo("error: --test-data needs --reset-command and a directory made by scripts/make_test_bundle.py", err=True)
+        raise typer.Exit(2)
     web = create_app(
         AppConfig(
             workspace=workspace, secret=secret, receipt_key=receipt_key, path_prefix=prefix, counties=tuple(county or ()),
             public_check=public_check, reset_command=(str(reset_command.resolve()),) if reset_command else None,
+            test_data=test_data.resolve() if test_data and reset_command else None,
         )
     )
     typer.echo(f"serving on http://{host}:{port}{prefix}/", err=True)

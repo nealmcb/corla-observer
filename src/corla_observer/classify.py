@@ -127,9 +127,17 @@ _COUNTY_BY_KEY = {county_key(name): name for name in COLORADO_COUNTIES}
 
 #: Demonstration counties: a real county's public files from an earlier
 #: election, under a name of their own ("Delta (2020 demo)"), kept apart from
-#: the county's current files as every test county is. Each with what to know
-#: about its file. Every one passed the redaction check with nothing to redact.
+#: the county's current files as every test county is. Every Colorado county
+#: has one, for the 2020 general election's files (the test data bundle,
+#: scripts/make_test_bundle.py, and the testing-mode "Populate test data"
+#: button, `corla_observer.quicksetup`), each with what to know about its file.
 DEMO_COUNTIES: dict[str, str] = {
+    f"{name} (2020 demo)": (
+        f"{name}'s 2020 general election CVR as published (compiled at votedatabase.com), for practice only. "
+        "It may differ from the file CORLA audited, and it may need redaction."
+    )
+    for name in COLORADO_COUNTIES
+} | {
     "Adams (2020 demo)": "Adams County's published 2020 general election CVR. This file differs slightly from the one CORLA audited: its hash does not reproduce the hash CORLA recorded.",
     "Broomfield (2020 demo)": "Broomfield's published 2020 general election CVR. This file differs slightly from the one CORLA audited: its hash does not reproduce the hash CORLA recorded.",
     "Delta (2020 demo)": "Delta County's published 2020 general election CVR, whose hash reproduces the hash CORLA recorded for the file it audited.",
