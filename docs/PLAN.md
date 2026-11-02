@@ -27,7 +27,7 @@ The tool will:
 - **Observers verify; they do not relay or overrule.** The tooling just records what observers heard against what the CVR says.
 - **An observer attests only to what they looked at.** Each observer follows the read-out on one medium, because it's hard to watch both while listening. Each record indicates which medium was used.
 - **Several observers per board, each in their own way.** One may mark paper while another enters on a phone for live coverage and a third uses a spreadsheet. Their records are independent and are compared afterwards.
-- **Software independence.** The design is intended to be able to guarantee that error in this software, and no compromise of it, may change what observers attest to without being detectable (see the section below and help review this).
+- **Software independence.** The design is intended to be able to guarantee that no error in this software, and no compromise of it, may change what observers attest to without being detectable (see the section below and help review this).
 - **Anyone can check the work.** Every derived result can be recomputed by others from committed public inputs, with published code and instructions.
 - **The project team handles the county data.** A coordinator for each county uploads what the county provides. Counties are not responsible for using or needing to understand any of this tooling.
 - **No improperly redacted CVR is ever stored.** A file that fails the redaction check is rejected and not kept anywhere, including backups.
@@ -184,6 +184,8 @@ The site is a plausible target around an election:
 - **Why not Cloudflare Workers:** they would mean rewriting the Python in JavaScript or running it in the Workers Python runtime, and the large CVR uploads (100 MB to 300 MB) would have to go through R2 storage.
 - **Staging:** a staging copy on a developer machine is used for rehearsals.
 - **TODO: setting up a deployment.** Write down how to set the whole thing up from nothing, on a Fly.io sprite or any other Linux server: the checkout and `uv sync`, the server secret and receipt key, the coordinator accounts, the workspaces and their `election.toml`, the services (web server and scheduler) and how they start on boot, the path prefix and TLS in front, the log archive and backups, `scripts/update_sprite.sh` for updates, and, for a practice or demo deployment only, `--reset-command`. Today this lives in shell history and in the demo and runbook notes.
+- **TODO: enrolment by invitation.** An existing coordinator invites a coordinator by a one-time link with an expiry; opening it lets the person choose their own password, which nobody else sees. This replaces `user add` with a password made up by someone else and sent to them.
+- **Populate test data (testing mode only).** On a deployment with `--reset-command`, one button on the coordinator home page populates a county chosen from Testland and the 2020 demonstration counties, if it has no redacted CVR there yet: it uploads the county's manifest and CVR (generated, or from the test data bundle of `--test-data`), draws 10 ballots from any ballot with votes, sends them as a targeted list and makes an observer link and a practice reader link for the coordinator who pressed it. Every step goes through the same code and event log as doing it by hand. Built: `corla_observer.quicksetup`.
 
 ## Components, in pipeline order
 
