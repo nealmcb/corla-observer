@@ -23,6 +23,10 @@ file's content):
     the evidence is recorded. An unrecognized file, or one without an audit
     board column, is stored with a warning.
 
+A file that replaces a county's latest file of its kind with other bytes (a second
+coordinator's upload, say) is stored and used, with an ``upload.warning`` of reason
+``replaces_earlier`` naming the file it replaced (`replaced_by`).
+
 `record_audit_boards` records how many audit boards a county will use, and
 `status` summarizes, per county, the latest file of each kind, the audit
 boards, rejections and warnings, and what is still missing.
@@ -359,6 +363,12 @@ def _receive_cvr(
         file_sha256=sha256,
         data={"sha256": sha256, "verdict": report.verdict, "report": report.to_dict()},
     )
+    seqs = [received, checked.seq]
+    warnings = list(report.warnings)
+    replacing = _warn_if_replacing(log, simulated, county, "redacted_cvr", received, sha256, actor)
+    if replacing:
+        warnings.insert(0, replacing[0])
+        seqs.append(replacing[1])
     return UploadResult(
         accepted=True,
         kind="redacted_cvr",
@@ -367,8 +377,8 @@ def _receive_cvr(
         sha256=sha256,
         size=staged.size,
         report=report,
-        warnings=report.warnings,
-        event_seqs=(received, checked.seq),
+        warnings=tuple(warnings),
+        event_seqs=tuple(seqs),
     )
 
 
@@ -425,6 +435,50 @@ def inspect_pull_list(data: bytes, classification: Classification) -> dict[str, 
     return result
 
 
+KIND_NAMES = {"redacted_cvr": "redacted CVR", "manifest": "manifest", "pull_list": "pull list"}
+
+
+def replaced_by(log: EventLog, county: str, kind: str, seq: int) -> Event | None:
+    """The ``file.received`` event that the one at ``seq`` replaces as the county's latest file of ``kind``, if it holds other bytes.
+
+    Two coordinators can upload different files for a county minutes apart; the later one
+    silently becomes the file used, so the upload says which file it replaced.
+    """
+    new: Event | None = None
+    previous: Event | None = None
+    for event in log.iter_events():
+        if event.kind != "file.received" or event.county != county or event.data.get("kind") != kind:
+            continue
+        if event.seq == seq:
+            new = event
+            break
+        previous = event
+    if new is None or previous is None or previous.data.get("sha256") == new.data.get("sha256"):
+        return None
+    return previous
+
+
+def _warn_if_replacing(
+    log: EventLog, simulated: Mapping[str, JSONValue] | None, county: str, kind: str, seq: int, sha256: str, actor: str
+) -> tuple[str, int] | None:
+    """Record an ``upload.warning`` (reason ``replaces_earlier``) if the file received at ``seq`` replaces another; return its text and seq."""
+    previous = replaced_by(log, county, kind, seq)
+    if previous is None:
+        return None
+    from corla_observer.localtime import colorado_time
+
+    old = str(previous.data.get("sha256") or "")
+    detail = (
+        f"this replaces the {KIND_NAMES.get(kind, kind)} received {colorado_time(previous.server_time, seconds=False)} "
+        f"from {previous.actor} ({previous.data.get('original_name')}, SHA-256 {old[:12]}): this one is used from now on"
+    )
+    event = _append(
+        log, simulated, "upload.warning", actor, county=county, file_sha256=sha256,
+        data={"kind": kind, "reason": "replaces_earlier", "detail": detail, "replaced_sha256": old, "replaced_seq": previous.seq},
+    )  # fmt: skip
+    return f"replaces_earlier: {detail}", event.seq
+
+
 def _receive_other(
     workspace: Workspace,
     log: EventLog,
@@ -440,6 +494,10 @@ def _receive_other(
     data = staged.path.read_bytes()
     classification = classify_bytes(data)
     warnings: list[str] = []
+    replacing = _warn_if_replacing(log, simulated, county, kind, received, sha256, actor)
+    if replacing:
+        warnings.append(replacing[0])
+        seqs.append(replacing[1])
 
     def warn(reason: str, detail: str) -> None:
         warnings.append(f"{reason}: {detail}")

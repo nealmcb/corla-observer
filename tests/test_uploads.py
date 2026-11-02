@@ -117,6 +117,28 @@ def test_rejected_cvr_leaves_no_bytes_in_the_workspace(ws: Workspace, log: Event
     }
 
 
+def test_a_different_file_replacing_the_latest_is_warned(ws: Workspace, log: EventLog, tmp_path: Path) -> None:
+    first = receive(ws, log, "Boulder", "redacted_cvr", source(tmp_path, GOOD_CVR, "a.csv"), "a.csv", ACTOR)
+    assert first.accepted and first.warnings == ()
+    # The same bytes again, from another coordinator: nothing replaced.
+    same = receive(ws, log, "Boulder", "redacted_cvr", source(tmp_path, GOOD_CVR, "a.csv"), "a.csv", "coordinator:c2")
+    assert same.accepted and same.warnings == ()
+    # Other bytes: stored, used, and the warning names what it replaced.
+    other_cvr = make_cvr(ballots(12, "Mayor", "Council") + ballots(11, "Mayor", precinct="102"))
+    other = receive(ws, log, "Boulder", "redacted_cvr", source(tmp_path, other_cvr, "b.csv"), "b.csv", "coordinator:c2")
+    assert other.accepted and len(other.warnings) == 1
+    assert other.warnings[0].startswith("replaces_earlier: this replaces the redacted CVR received ")
+    # It names the latest arrival of the replaced bytes: c2's.
+    assert f"from coordinator:c2 (a.csv, SHA-256 {(first.sha256 or '')[:12]})" in other.warnings[0]
+    warning = [e for e in log.iter_events() if e.kind == "upload.warning"]
+    assert [(e.county, e.data["reason"], e.data["replaced_sha256"]) for e in warning] == [("Boulder", "replaces_earlier", first.sha256)]
+    latest = status(log)["Boulder"].latest["redacted_cvr"]
+    assert latest.sha256 == other.sha256 and latest.warnings[0].startswith("replaces_earlier: ")
+    # Another county's or another kind's files are separate.
+    assert receive(ws, log, "Adams", "redacted_cvr", source(tmp_path, GOOD_CVR, "a.csv"), "a.csv", ACTOR).warnings == ()
+    assert receive(ws, log, "Boulder", "manifest", io.BytesIO(MANIFEST), "m.csv", ACTOR).warnings == ()
+
+
 def test_too_large_is_rejected_unread(ws: Workspace, log: EventLog) -> None:
     result = receive(ws, log, "Boulder", "manifest", io.BytesIO(MANIFEST), "m.csv", ACTOR, max_bytes=20)
     assert (result.accepted, result.reason, result.sha256) == (False, "too_large", None)
@@ -153,7 +175,7 @@ def test_manifest_problems_are_warnings_and_the_file_is_kept(ws: Workspace, log:
     assert [w.split(":")[0] for w in other.warnings] == ["county_mismatch"]
     junk = receive(ws, log, "Adams", "manifest", io.BytesIO(b"hello,world\r\n1,2\r\n"), "m2.csv", ACTOR)
     assert junk.accepted and ws.has(junk.sha256 or "")
-    assert [w.split(":")[0] for w in junk.warnings] == ["classified_as_other_kind", "manifest_does_not_load"]
+    assert [w.split(":")[0] for w in junk.warnings] == ["replaces_earlier", "classified_as_other_kind", "manifest_does_not_load"]
     # Server paths never reach the published log.
     assert all("staging" not in str(e.data) for e in log.iter_events())
 
@@ -186,7 +208,7 @@ def test_pull_list_warnings(ws: Workspace, log: EventLog) -> None:
     assert [w.split(":")[0] for w in no_board.warnings] == ["pull_list_without_audit_board"]
     unknown = receive(ws, log, "Adams", "pull_list", io.BytesIO(MANIFEST), "list2.csv", ACTOR)
     assert unknown.accepted
-    assert [w.split(":")[0] for w in unknown.warnings] == ["pull_list_unrecognized"]
+    assert [w.split(":")[0] for w in unknown.warnings] == ["replaces_earlier", "pull_list_unrecognized"]
 
 
 def test_audit_boards(log: EventLog) -> None:
