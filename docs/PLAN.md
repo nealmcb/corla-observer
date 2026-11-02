@@ -183,6 +183,7 @@ The site is a plausible target around an election:
 **Recommendation:** a small DigitalOcean droplet (Ubuntu, 2 GB) running the FastAPI app under systemd with SQLite on its disk, with Cloudflare in front for DNS, TLS, caching of the public dashboard and protection against denial of service. Backups go to object storage with object lock, as above.
 - **Why not Cloudflare Workers:** they would mean rewriting the Python in JavaScript or running it in the Workers Python runtime, and the large CVR uploads (100 MB to 300 MB) would have to go through R2 storage.
 - **Staging:** a staging copy on a developer machine is used for rehearsals.
+- **TODO: setting up a deployment.** Write down how to set the whole thing up from nothing, on a Fly.io sprite or any other Linux server: the checkout and `uv sync`, the server secret and receipt key, the coordinator accounts, the workspaces and their `election.toml`, the services (web server and scheduler) and how they start on boot, the path prefix and TLS in front, the log archive and backups, `scripts/update_sprite.sh` for updates, and, for a practice or demo deployment only, `--reset-command`. Today this lives in shell history and in the demo and runbook notes.
 
 ## Components, in pipeline order
 
