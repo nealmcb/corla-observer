@@ -427,7 +427,8 @@ From Neal's demo, 2026-10-29:
 4. **Printed list: Contests section starts on a new page.** A portrait printout for board 1 had
   two leading pages for Contests, though page 1 had plenty of room. Open.
 5. **Remember the county.** A coordinator normally sticks with one county; the pages should
-  remember the last county entered. Open.
+  remember the last county entered. Fixed: a coordinator page shown for a county remembers it
+  in the browser, the county choosers start on it, and the targeted ballots page opens on it.
 6. **One observer on several devices.** Every entry from every device is kept, signed and
   receipted; nothing is lost. But the observer page loads the observer's entries (from all
   devices) only when it opens, and never refreshes them, so a tab left open does not see what
