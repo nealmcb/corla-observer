@@ -1,0 +1,7 @@
+{% extends "base.html" %}
+{% block title %}Coordinator: resetting{% endblock %}
+{% block main %}
+<h1>Resetting this practice deployment</h1>
+<p class="notice" role="status"><span aria-hidden="true">&#9675;</span> The reset has started. The site stops, its workspace is archived and put back in its starting state, and the site starts again, in about a minute.</p>
+<p>Then <a href="{{ url('/login') }}">log in again</a>: your coordinator account is kept, but everyone's session ends.</p>
+{% endblock %}

@@ -159,6 +159,11 @@ class AppConfig:
     photo_limit: Limit = field(default_factory=lambda: Limit(60, 3600))
     #: Whether anyone may check a page at ``/check``, without a login or a link: only after the audit.
     public_check: bool = False
+    #: Testing mode only: a command the coordinator home page's Reset button runs, detached, to put
+    #: the deployment back in its starting state (it stops the service, resets the workspace and
+    #: starts the service again, e.g. the demo's ``corla-demo-reset.sh``). None, the default and the
+    #: setting for every real deployment, means there is no Reset button and ``/coord/reset`` is 404.
+    reset_command: tuple[str, ...] | None = None
 
 
 class FetchJob:

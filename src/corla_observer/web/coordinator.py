@@ -61,10 +61,12 @@ coordinator's actor and the session's public label as ``session_id``.
 
 from __future__ import annotations
 
+import subprocess
 import threading
 import time
 from datetime import UTC, datetime
 from functools import partial
+from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
@@ -115,6 +117,7 @@ MESSAGES = {
     "boards": "Audit boards recorded.",
     "fetch_started": "Fetch started. Its events appear on the dashboard as it runs.",
     "fetch_running": "A fetch is already running.",
+    "reset_unconfirmed": "Nothing was reset: tick the box to confirm, then press Reset.",
     "fetch_too_soon": "A fetch was requested less than a minute ago; try again shortly.",
     "logged_in": "Logged in.",
     "addressed": "Flag marked addressed.",
@@ -284,7 +287,8 @@ async def coord_home(request: Request) -> Response:
         if county and count.isdigit():
             message = f"Recorded {count} audit board{'' if count == '1' else 's'} for {county}."
     return state.render(
-        request, "coord_home.html", snap=snapshot, message=message, fetch=state.fetch, crawl_off=_crawl_off(state), **_common(state, session)
+        request, "coord_home.html", snap=snapshot, message=message, fetch=state.fetch, crawl_off=_crawl_off(state),
+        reset_enabled=state.config.reset_command is not None, **_common(state, session)
     )
 
 
@@ -541,6 +545,38 @@ async def start_fetch(request: Request) -> Response:
         job.thread = threading.Thread(target=run, name="corla-observer-fetch", daemon=True)
         job.thread.start()
     return RedirectResponse(state.url("/coord?msg=fetch_started"), status_code=303)
+
+
+def reset_log_path(workspace: Path) -> Path:
+    """Where a reset's output goes: beside the workspace, which the reset empties."""
+    return workspace.parent / f"{workspace.name}-reset.log"
+
+
+@router.post("/coord/reset")
+async def reset_deployment(request: Request) -> Response:
+    """Testing mode only (`AppConfig.reset_command`): run the reset command, detached, and say the site restarts.
+
+    The command stops this service, so it runs in a session of its own and outlives the server;
+    its output is appended to `reset_log_path`. The request is recorded first, as
+    ``coordinator.reset_requested``, so the archive the reset makes of the old workspace says who
+    asked and when.
+    """
+    state = get_state(request)
+    command = state.config.reset_command
+    if not command:
+        raise HTTPException(status_code=404)
+    session, form = await checked_form(request)
+    if form.get("confirm") != "yes":
+        return RedirectResponse(state.url("/coord?msg=reset_unconfirmed"), status_code=303)
+    state.log.append("coordinator.reset_requested", session.actor, session_id=session.label, data={"command": list(command)})
+    log_path = reset_log_path(state.workspace.root)
+    with open(log_path, "ab") as out:
+        out.write(f"\n{_now()} reset requested by {session.actor}: {' '.join(command)}\n".encode())
+        out.flush()
+        subprocess.Popen(  # noqa: S603 - a fixed command from the server's own configuration
+            list(command), stdin=subprocess.DEVNULL, stdout=out, stderr=subprocess.STDOUT, start_new_session=True, close_fds=True
+        )
+    return state.render(request, "coord_reset.html", 202, **_common(state, session))
 
 
 @router.get("/coord/stats")

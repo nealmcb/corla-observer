@@ -277,14 +277,18 @@ Not part of this demo:
 
 ## Starting again
 
-On the demo server, as the user that runs the service, the reset script installed there:
+On the coordinator home page, **Testing mode: start again**: tick the box and press **Reset**. The
+button is there only on a deployment started with `serve --reset-command`, as the demo is, and does
+what the reset script below does. The site is down for about a minute; then log in again.
+
+Or, on the demo server, as the user that runs the service, the reset script installed there:
 
 ```
 corla-demo-reset.sh
 ```
 
-It stops the web service, empties the workspace except the coordinator accounts (observer links go
-too), sets it up again empty (`scripts/demo_delta_2020.sh WORKSPACE MIRROR --reset`) and starts the
+It stops the web service, archives the workspace to `~/backups/`, empties it except the coordinator
+accounts (observer links go too), sets it up again empty (`scripts/demo_delta_2020.sh WORKSPACE MIRROR --reset`) and starts the
 service. Anyone logged in must log in again.
 
 `scripts/browser_demo_delta_2020.py` does every step above in a headless browser and checks each

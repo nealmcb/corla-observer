@@ -1236,6 +1236,18 @@ def serve_command(
             help="Let anyone check a printed page at /check, without a login or a link (only after the audit: the pages' content is kept from the audit boards during it).",
         ),
     ] = False,
+    reset_command: Annotated[
+        Path | None,
+        typer.Option(
+            "--reset-command",
+            help=(
+                "Testing mode only: give the coordinator home page a Reset button that runs this program, "
+                "which must stop the service, put the workspace back in its starting state and start the service "
+                "again (e.g. the demo's corla-demo-reset.sh). Never set it on a real deployment."
+            ),
+            show_default=False,
+        ),
+    ] = None,
 ) -> None:
     """Run the web interface: the public dashboard and the coordinator pages."""
     import uvicorn
@@ -1253,10 +1265,15 @@ def serve_command(
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(2) from None
     typer.echo(f"receipt key {receipt_key.key_id}", err=True)
+    if reset_command is not None:
+        if not (reset_command.is_file() and os.access(reset_command, os.X_OK)):
+            typer.echo(f"error: --reset-command {reset_command} is not an executable file", err=True)
+            raise typer.Exit(2)
+        typer.echo(f"TESTING MODE: the coordinator home page has a Reset button running {reset_command}", err=True)
     web = create_app(
         AppConfig(
             workspace=workspace, secret=secret, receipt_key=receipt_key, path_prefix=prefix, counties=tuple(county or ()),
-            public_check=public_check,
+            public_check=public_check, reset_command=(str(reset_command.resolve()),) if reset_command else None,
         )
     )
     typer.echo(f"serving on http://{host}:{port}{prefix}/", err=True)

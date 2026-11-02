@@ -435,6 +435,41 @@ def test_fetch_reports_a_skipped_or_failing_cycle(make_client: Factory) -> None:
         assert expected in page, re.findall(r"Last web fetch.{0,300}", page)
 
 
+def test_no_reset_on_a_real_deployment(make_client: Factory) -> None:
+    client = make_client()
+    login(client)
+    home = client.get("/coord")
+    assert 'action="/coord/reset"' not in home.text and "Testing mode" not in home.text
+    assert client.post("/coord/reset", data={"csrf": csrf_of(home), "confirm": "yes"}).status_code == 404
+
+
+def test_reset_in_testing_mode(workspace: Path, make_client: Factory, tmp_path: Path) -> None:
+    import sys
+
+    marker = tmp_path / "reset-ran"
+    command = (sys.executable, "-c", f"open({str(marker)!r}, 'w').write('ran')")
+    client = make_client(reset_command=command)
+    login(client)
+    home = client.get("/coord")
+    assert 'action="/coord/reset"' in home.text and "Testing mode: start again" in home.text
+    csrf = csrf_of(home)
+    # Without the box ticked, nothing runs.
+    unticked = client.post("/coord/reset", data={"csrf": csrf}, follow_redirects=False)
+    assert unticked.status_code == 303 and "msg=reset_unconfirmed" in unticked.headers["location"]
+    assert not marker.exists() and ("coordinator.reset_requested", "coordinator:alice") not in events(workspace)
+    # Ticked: recorded first, then the command runs on its own, its output beside the workspace.
+    started = client.post("/coord/reset", data={"csrf": csrf, "confirm": "yes"})
+    assert started.status_code == 202 and "The reset has started" in started.text
+    assert ("coordinator.reset_requested", "coordinator:alice") in events(workspace)
+    deadline = time.monotonic() + 10
+    while not marker.exists() and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert marker.read_text() == "ran"
+    assert "reset requested by coordinator:alice" in coordinator.reset_log_path(workspace).read_text()
+    # The CSRF check applies as everywhere.
+    assert client.post("/coord/reset", data={"csrf": "wrong", "confirm": "yes"}).status_code == 403
+
+
 def test_path_prefix(make_client: Factory) -> None:
     client = make_client(path_prefix="/x7Gq2")
     page = client.get("/x7Gq2/")
