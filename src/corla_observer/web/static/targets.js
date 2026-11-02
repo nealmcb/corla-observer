@@ -41,6 +41,27 @@
     });
   }
 
+  // The contest search form and its result links were drawn with the selection the page loaded
+  // with: give them the boxes checked since, so a search keeps the pattern.
+  function carry(values) {
+    document.querySelectorAll("form.target-add").forEach(function (f) {
+      f.querySelectorAll("input[type=hidden][name=v]").forEach(function (h) { h.remove(); });
+      values.forEach(function (v) {
+        var h = document.createElement("input");
+        h.type = "hidden";
+        h.name = "v";
+        h.value = v;
+        f.appendChild(h);
+      });
+    });
+    document.querySelectorAll(".target-found a").forEach(function (a) {
+      var u = new URL(a.href);
+      u.searchParams.delete("v");
+      values.forEach(function (v) { u.searchParams.append("v", v); });
+      a.href = u.toString();
+    });
+  }
+
   function update() {
     var values = chosen();
     var params = new URLSearchParams();
@@ -56,6 +77,7 @@
       .then(function (data) {
         if (mine !== pending) return;
         show(data);
+        carry(values);
         if (window.history && history.replaceState) history.replaceState(null, "", "?" + params.toString());
       })
       .catch(function () {
