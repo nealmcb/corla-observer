@@ -522,11 +522,17 @@ async def start_fetch(request: Request) -> Response:
             return RedirectResponse(state.url("/coord?msg=fetch_too_soon"), status_code=303)
         job.last_request = time.monotonic()
         state.log.append("coordinator.fetch_requested", session.actor, session_id=session.label, data={"source": "web"})
-        job.started, job.finished, job.error = _now(), None, None
+        job.started, job.finished, job.error, job.skipped = _now(), None, None, None
 
         def run() -> None:
             try:
-                state.config.crawl(state.workspace, state.log)
+                report = state.config.crawl(state.workspace, state.log)
+                # A cycle that found another running (the scheduler's, or a sprint's) did nothing: say so, not "finished".
+                if getattr(report, "ran", True) is False:
+                    job.skipped = "another cycle (the scheduler's or a sprint's) was running, and it fetches the same files"
+                errors = getattr(report, "errors", None)
+                if errors:
+                    job.error = "; ".join(str(e) for e in errors)[:500]
             except Exception as exc:
                 job.error = f"{type(exc).__name__}: {exc}"[:500]
             finally:

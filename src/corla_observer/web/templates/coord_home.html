@@ -45,7 +45,7 @@
     {% if fetch.running %}
       <p>{{ badge('warning', 'running') }} since {{ fetch.started|local }}</p>
     {% elif fetch.started %}
-      <p>Last web fetch {{ fetch.started|local }} to {{ fetch.finished|local }}{% if fetch.error %}: {{ badge('error', 'failed') }} {{ fetch.error }}{% else %} {{ badge('ok', 'finished') }}{% endif %}</p>
+      <p>Last web fetch {{ fetch.started|local }} to {{ fetch.finished|local }}{% if fetch.error %}: {{ badge('error', 'failed') }} {{ fetch.error }}{% elif fetch.skipped %}: {{ badge('warning', 'skipped') }} {{ fetch.skipped }}{% else %} {{ badge('ok', 'finished') }}{% endif %}</p>
     {% endif %}
     <button type="submit"{% if fetch.running %} disabled{% endif %}>Fetch now</button>
     <p class="meta">Runs a full cycle: {% if crawl_off and crawl_off.mode == 'mirror' %}the next update from the mirror, {% elif crawl_off %}(no crawl) {% else %}the crawl, {% endif %}the results, flags, estimates and, after the roll, the prediction and interim extracts. The scheduler does the same on its <a href="{{ url('/coord/schedule') }}">schedule</a>.</p>

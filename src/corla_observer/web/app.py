@@ -169,6 +169,8 @@ class FetchJob:
         self.started: str | None = None
         self.finished: str | None = None
         self.error: str | None = None
+        #: Why the last fetch did nothing, when its cycle was skipped.
+        self.skipped: str | None = None
         self.last_request = 0.0
 
     @property

@@ -411,6 +411,30 @@ def test_path_prefix(make_client: Factory) -> None:
     assert 'href="/x7Gq2/coord"' in page.text and "/x7Gq2/static/app.js" in page.text
     assert client.get("/").status_code == 404
     assert client.get("/coord", follow_redirects=False).status_code == 404
+def test_fetch_reports_a_skipped_or_failing_cycle(make_client: Factory) -> None:
+    from corla_observer.schedule import CycleReport
+
+    # A cycle skipped because another held the cycle lock, then one that ran with an error: neither is "finished".
+    reports = [CycleReport(ran=False), CycleReport(errors=["results: the results could not be read"])]
+    done = threading.Event()
+
+    def crawl(ws: Workspace, log: EventLog) -> CycleReport:
+        report = reports.pop(0)
+        done.set()
+        return report
+
+    client = make_client(crawl=crawl, fetch_interval=0)
+    login(client)
+    for expected in ("skipped</span> another cycle", "failed</span> results: the results could not be read"):
+        done.clear()
+        assert client.post("/coord/fetch", data={"csrf": csrf_of(client.get("/coord"))}).status_code == 200
+        assert done.wait(5)
+        deadline = time.monotonic() + 5
+        while expected not in (page := client.get("/coord").text) and time.monotonic() < deadline:
+            time.sleep(0.05)
+        assert expected in page, re.findall(r"Last web fetch.{0,300}", page)
+
+
     assert client.get("/x7Gq2", follow_redirects=False).status_code == 308
     script = client.get("/x7Gq2/static/app.js")
     assert script.status_code == 200 and "javascript" in script.headers["content-type"]
