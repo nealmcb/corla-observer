@@ -152,7 +152,7 @@ def commit_evidence_record(
     name = "SHA256SUMS.txt" if version == 1 else f"SHA256SUMS.v{version}.txt"
     lines = [f"# version: {version}", "# time: 2026-11-15T20:00:00Z", *(f"{sha}  {path}" for path, sha in sorted(files.items()))]
     sums = ws.put_bytes(("\n".join(lines) + "\n").encode())
-    subdir = "2026/general/observerfiles/evidence"
+    subdir = "2026/general/observerfiles"
     log.append(
         "evidence.committed",
         ACTOR,

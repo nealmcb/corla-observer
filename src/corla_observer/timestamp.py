@@ -533,12 +533,12 @@ def check_election(election: str) -> str:
 def check_subdir(subdir: str) -> str:
     parts = [p for p in subdir.strip("/").split("/") if p]
     if subdir.startswith("/") or any(p in (".", "..") or not _SUBDIR_PART_RE.match(p) for p in parts):
-        raise TimestampError(f"--subdir must be a plain relative path such as observerfiles/evidence: {subdir!r}")
+        raise TimestampError(f"--subdir must be a plain relative path such as observerfiles: {subdir!r}")
     return "/".join(parts)
 
 
 def default_subdir(election: str) -> str:
-    return f"{election}/observerfiles/evidence"
+    return f"{election}/observerfiles"
 
 
 def stamp_ots(path: Path, *, timeout: float, echo: Echo | None = None) -> Step:

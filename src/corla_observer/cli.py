@@ -1448,7 +1448,7 @@ def commit_evidence_command(
     ],
     subdir: Annotated[
         str | None,
-        typer.Option("--subdir", help="Directory within --out-repo (default: ELECTION/observerfiles/evidence).", show_default=False),
+        typer.Option("--subdir", help="Directory within --out-repo (default: ELECTION/observerfiles).", show_default=False),
     ] = None,
     actor: Annotated[str, typer.Option("--actor", help="Who is responsible, as coordinator:ID.")] = "system",
     log_path: LogOption = None,

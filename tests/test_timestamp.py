@@ -40,7 +40,7 @@ from synthetic import ballots, make_cvr
 
 ACTOR = "coordinator:c1"
 ELECTION = "2026/general"
-SUBDIR = "2026/general/observerfiles/evidence"
+SUBDIR = "2026/general/observerfiles"
 GOOD_CVR = make_cvr(ballots(10, "Mayor", "Council") + ballots(11, "Mayor", precinct="102"))
 BAD_CVR = make_cvr(ballots(10, "Mayor", "Council") + ballots(3, "Mayor", "Fire", precinct="7"))
 MANIFEST = b"County,Tabulator,Batch,# of Ballots,Location\r\nBoulder,101,1,25,Box 1\r\n,101,2,30,Box 1\r\n"
