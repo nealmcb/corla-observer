@@ -12,7 +12,7 @@
 #
 # What it does, stopping at the first failure:
 #   1. refuses if the checkout has uncommitted changes to tracked files;
-#   2. stops every service whose name starts with corla-observer, so no workspace is written meanwhile;
+#   2. stops every service that runs from the checkout, so no workspace is written meanwhile;
 #   3. archives each workspace to ~/backups/NAME-TIME-OLDCOMMIT.tgz;
 #   4. points origin at the public repository, fetches it and checks out REF as the branch main;
 #   5. installs the locked dependencies (uv sync --frozen) and prints the new version;
@@ -39,9 +39,11 @@ fi
 old=$(git rev-parse --short=12 HEAD)
 stamp=$(date -u +%Y%m%dT%H%M%SZ)
 
-# The service list is JSON; each service's own entry starts with its "name". (No python here: the
-# sprite's python3 is a pyenv shim that fails inside `bash -s`.)
-services=$("$SPRITE_ENV" services list | grep -o '{"name":"corla-observer[^"]*"' | cut -d'"' -f4 | sort -u | tr '\n' ' ')
+# The services that run from this checkout, whatever their names: the service list is JSON, one
+# object per service with its "name" first and its working directory as "dir". (No python here:
+# the sprite's python3 is a pyenv shim that fails inside `bash -s`.)
+services=$("$SPRITE_ENV" services list | sed 's/},{"name"/}\n{"name"/g' | grep -F "\"dir\":\"$CHECKOUT\"" \
+    | grep -o '^\[\?{"name":"[^"]*"' | cut -d'"' -f4 | sort -u | tr '\n' ' ')
 echo "services: ${services:-none}"
 for s in $services; do "$SPRITE_ENV" services stop "$s" >/dev/null && echo "stopped $s"; done
 
