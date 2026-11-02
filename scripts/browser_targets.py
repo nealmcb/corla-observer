@@ -68,7 +68,8 @@ def main(argv: list[str]) -> int:
         page.click("button[type=submit]")
         page.goto(f"{base}/coord/targets?county={quote(county)}")
         check("the page opens", page.locator("#targets-grid").count() == 1)
-        check("the Draw button waits for a candidate", page.get_attribute("#draw-button", "disabled") is not None, page.inner_text("#draw-row"))
+        check("with nothing checked, Draw draws from any ballot with votes", page.get_attribute("#draw-button", "disabled") is None
+              and "any ballot with votes" in page.inner_text("#draw-row"), page.inner_text("#draw-row"))  # fmt: skip
         before = page.inner_text("#target-matching")
         box = page.locator("input[name=v]").first
         box.check()

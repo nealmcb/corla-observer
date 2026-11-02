@@ -30,11 +30,11 @@
     var hidden = document.getElementById("target-selection");
     if (hidden) hidden.value = data.selection;
     var rowText = document.getElementById("draw-description");
-    if (rowText) rowText.textContent = data.selection ? data.description : "No candidate checked yet";
+    if (rowText) rowText.textContent = data.description;
     var rowCount = document.getElementById("draw-matching");
     if (rowCount) rowCount.textContent = data.matching;
     var button = document.getElementById("draw-button");
-    if (button) button.disabled = !data.selection || !data.matching;
+    if (button) button.disabled = !data.matching;
     Object.keys(data.grid).forEach(function (key) {
       var span = form.querySelector('[data-count="' + key + '"]');
       if (span) span.textContent = (key.slice(-4) === ":any" ? "" : "→ ") + data.grid[key];

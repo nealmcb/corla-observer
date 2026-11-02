@@ -610,6 +610,10 @@ def requirement_of(definition: Sequence[Mapping[str, Any]], votes: CvrVotes) -> 
     return found
 
 
+#: The pattern with no requirement, in words: a draw from it is a draw from every ballot with votes.
+ANY_BALLOT = "any ballot with votes"
+
+
 def describe(definition: Sequence[Mapping[str, Any]], parties: Mapping[tuple[str, str], str | None] | None = None) -> str:
     """A pattern in words: "United States Senator: Jane Doe (DEM); Governor: John Roe (REP)"."""
     parts = []
@@ -619,7 +623,7 @@ def describe(definition: Sequence[Mapping[str, Any]], parties: Mapping[tuple[str
             p = (parties or {}).get((str(item["contest"]), str(c)))
             names.append(f"{c} ({p})" if p else str(c))
         parts.append(f"{item['contest']}: {' and '.join(names)}")
-    return "; ".join(parts) or "(no requirement)"
+    return "; ".join(parts) or ANY_BALLOT
 
 
 @dataclass(frozen=True)
@@ -667,11 +671,8 @@ class Pattern:
 def pattern_of(county: str, definition: Sequence[Mapping[str, Any]]) -> Pattern:
     """The pattern with this definition, named by `describe` and identified by the SHA-256 of its record.
 
-    Raises:
-        DrawError: for an empty definition.
+    An empty definition is the pattern with no requirement: any ballot with votes (`ANY_BALLOT`).
     """
-    if not definition:
-        raise DrawError("choose at least one candidate first")
     record = {"kind": "targeted_pattern", "format": 2, "county": county, "definition": list(definition)}
     return Pattern(hashlib.sha256(canonical_json(record)).hexdigest(), county, describe(definition), [dict(d) for d in definition])
 

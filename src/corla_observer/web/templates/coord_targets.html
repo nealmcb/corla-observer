@@ -82,11 +82,11 @@
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="county" value="{{ county }}">
     <input type="hidden" name="selection" value="{{ selection_text }}" id="target-selection">
-    <span class="target-row-pattern"><strong id="draw-description">{% if selection %}{{ description }}{% else %}No candidate checked yet{% endif %}</strong></span>
+    <span class="target-row-pattern"><strong id="draw-description">{{ description }}</strong></span>
     <span class="target-row-count"><strong id="draw-matching">{{ matching }}</strong> matching</span>
     <label>Seed <input type="text" name="seed" maxlength="{{ max_seed }}" size="18" value="{{ seed }}" placeholder="any text" aria-describedby="seed-help"></label>
     <label>Ballots <input type="number" name="size" value="{{ draw_size }}" min="1" max="{{ max_draw }}" inputmode="numeric" class="target-size"></label>
-    <button type="submit" id="draw-button"{% if not selection or not matching %} disabled{% endif %}>Draw</button>
+    <button type="submit" id="draw-button"{% if not matching %} disabled{% endif %}>Draw</button>
   </form>
   <p class="meta" id="seed-help">The draw takes the ballots at random from the seed (any text, hashed{% if seed %}; the RLA seed in effect, {{ seed }}, unless changed{% endif %}), the pattern, the CVR and the draw's number, so anyone can redo it; ballots already on the working list, on a sent list or in the RLA sample are skipped and more are taken instead. The draw joins the working list below as a source, included; each draw is recorded in the event log by the hash of its record.</p>
 </section>

@@ -209,8 +209,7 @@ def test_selection_and_pattern_round_trip(votes: tg.CvrVotes) -> None:
     assert tg.describe(definition) == "Governor: Hal Gov; United States Senator: Ann Senate"
     pattern = tg.pattern_of(COUNTY, definition)
     assert pattern.name == tg.describe(definition) and pattern.sha256 == tg.pattern_of(COUNTY, definition).sha256
-    with pytest.raises(tg.DrawError, match="at least one"):
-        tg.pattern_of(COUNTY, [])
+    assert tg.pattern_of(COUNTY, []).name == tg.ANY_BALLOT  # no requirement: any ballot with votes
 
 
 def _pattern(votes: tg.CvrVotes) -> tg.Pattern:
@@ -288,6 +287,14 @@ def test_no_draw_without_a_match(votes: tg.CvrVotes) -> None:
     rare = tg.pattern_of(COUNTY, tg.pattern_definition({s.index: [2]}, votes))
     record = _draw(votes, pattern=rare)
     assert record.matching == 2 and len(record.ballots) == 2  # a rare pattern is fine
+
+
+def test_the_empty_pattern_draws_from_any_ballot_with_votes(votes: tg.CvrVotes) -> None:
+    anything = tg.pattern_of(COUNTY, tg.pattern_definition({}, votes))
+    assert anything.definition == [] and anything.name == tg.ANY_BALLOT
+    record = _draw(votes, pattern=anything)
+    assert record.matching == votes.ballots.bit_count() and len(record.ballots) == min(tg.DRAW_SIZE, record.matching)
+    assert _draw(votes, pattern=anything).ballots == record.ballots  # reproducible like any draw
 
 
 def test_email_text_and_csv(votes: tg.CvrVotes) -> None:
@@ -572,7 +579,7 @@ def test_the_coordinator_pages(tmp_path: Path) -> None:
         assert login(client).status_code == 303
         page = client.get(f"/coord/targets?county={COUNTY}")
         assert page.status_code == 200 and "United States Senator" in page.text and "Split tickets" in page.text
-        assert "Demonstration county" in page.text and "No results are loaded" in page.text and "No candidate checked yet" in page.text
+        assert "Demonstration county" in page.text and "No results are loaded" in page.text and "any ballot with votes" in page.text
         votes = tg.load_votes(tmp_path / "files" / "cvr.csv")
         s, g, local = contest(votes, SENATE), contest(votes, GOVERNOR), contest(votes, LOCAL)
         counted = client.get(f"/coord/targets/count?county={COUNTY}&v={s.index}:0&v={g.index}:1").json()
