@@ -34,7 +34,7 @@ So the file here is the one CORLA used, and its SHA-256 says so independently of
 obtained.
 
 **Redaction.** Delta's CVR needs none: no group of ballots with the same contests and precinct has
-fewer than 10 ballots, by Lori Stevens's anonymizer (`anonymize_cvr.py --redact-on-precinct`) and by
+fewer than 10 ballots, by the anonymizer `anonymize_cvr.py` (`--redact-on-precinct`) and by
 corla-observer's own redaction check, which accepts the file on upload.
 
 Git keeps these files' bytes, line endings included (`.gitattributes`), so the hashes hold in any
