@@ -29,11 +29,14 @@ Times are rough. The whole demo takes about 30 minutes.
   whoever set the demo up (the steps below use the name `neal`). The site starts empty, as below;
   to start it again, see "Starting again" at the end.
 - On your laptop, in a folder outside the repository (your download folder will do), the two files
-  from Delta County:
+  from Delta County, from this repository's
+  [`tests/fixtures/delta-2020/`](../../tests/fixtures/delta-2020/) (its README says where they come
+  from and how to check them):
   - `Modified CVR_Export_20201113093409.csv` (4.6 MB, the redacted CVR)
   - `Modified 2020 General Ballot Manifest.csv` (7.7 KB, the ballot manifest)
 
-  Their names are the ones CORLA's upload status records for Delta's uploads.
+  Their names are the ones CORLA's upload status records for Delta's uploads. On GitHub, open each
+  file and use **Download raw file**, so the bytes, and the SHA-256, stay the same.
 - A phone, or a second browser, for the observer.
 - Don't click **Fetch now** before step 5: the demo depends on the audit center arriving after the
   county's files.

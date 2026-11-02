@@ -1,0 +1,2 @@
+# Delta 2020 test data: keep every byte, line endings included (the SHA-256 of each file is what CORLA recorded).
+tests/fixtures/delta-2020/*.csv -text
