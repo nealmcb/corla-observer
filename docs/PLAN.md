@@ -428,8 +428,19 @@ From Neal's demo, 2026-10-29:
   two leading pages for Contests, though page 1 had plenty of room. Open.
 5. **Remember the county.** A coordinator normally sticks with one county; the pages should
   remember the last county entered. Open.
-6. **One observer on several devices.** Check what happens when the same observer's entries
-  collide across devices. Open.
+6. **One observer on several devices.** Every entry from every device is kept, signed and
+  receipted; nothing is lost. But the observer page loads the observer's entries (from all
+  devices) only when it opens, and never refreshes them, so a tab left open does not see what
+  another device entered meanwhile. For each ballot, the "latest" entry is whichever reached the
+  server last, not whichever was made last. The practice workspace shows both effects: in a
+  demo, a second device re-entered a ballot contest by contest two minutes after the first
+  device had entered one contest as unclear, so the second device's "confirmed" replaced it;
+  seven hours later the first device, still open, entered contest by contest a ballot the
+  second had already matched. Opening a link in another browser, or after clearing site data,
+  makes a new device: observers there used 7, 8 and 14 devices, most with one event each. To
+  decide: whether the page should refresh entries from the observer's other devices (the
+  dashboard's live updates could carry them), and how a ballot entered on two devices should
+  be shown. Open.
 7. **Updating the software during an audit.** Preserve all data, record the update as an event
   in the live run, and test and save the data before and after the change. Open; see open
   question 8.
@@ -442,12 +453,28 @@ From a coordinator's practice session, 2026-11-02:
   the county "is not one of this workspace's counties" in a notice box above the redaction
   details, and did not list the small groups, so the warning read as the reason. The page
   should lead with the reason for a rejection and name the small groups (size, precinct,
-  ballot type), and the county warning should say that the file was still taken. Open.
+  ballot type), and the county warning should say that the file was still taken. Fixed: a
+  rejected CVR's card now opens with the rule it fails, a table of the small groups, what to
+  do next (ask the county for a file with those groups redacted; never edit the county's file),
+  and a counts-only text to send the county; the county warning says it does not stop the file.
 
 From Neal, 2026-11-02:
 
 10. **Targeting: paste a list of imprinted IDs**, separated by newlines or commas. Fixed: the
   field is a text area, since a one-line field drops a pasted column's line breaks.
+
+From a review of what several coordinators can do at once, 2026-11-02 (`tests/test_concurrency.py`
+runs parallel fetches, uploads and draws against a live server):
+
+11. **A skipped web fetch looked like a fetch.** When the scheduler's cycle was running, a
+  coordinator's Fetch now was skipped, but the page said it finished. Fixed: it says skipped,
+  and why; a cycle's own errors are shown as a failure too.
+12. **The draw and send locks hold within one process.** They serialize the web server's
+  requests, which run in one process, but not a draw or send made from the command line at the
+  same moment. Open: a file lock, as for cycles, if that ever matters.
+13. **A second CVR for a county replaced the first silently.** Fixed: a file that replaces a
+  county's latest file of its kind with other bytes is kept and used, with a `replaces_earlier`
+  warning naming the file it replaced.
 
 ## Open questions
 
