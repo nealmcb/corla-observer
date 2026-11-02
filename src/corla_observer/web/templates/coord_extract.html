@@ -14,7 +14,7 @@
 <form method="post" action="{{ url('/coord/extract/build') }}" class="card form">
   <h2>Build an extract</h2>
   <input type="hidden" name="csrf" value="{{ csrf }}">
-  <label>County {{ county_select("") }}</label>
+  <label>County {{ county_select(remembered_county) }}</label>
   <label>Audit boards, to split a predicted order (default: the recorded count) <input name="boards" type="number" min="1" max="{{ max_extract_boards }}" inputmode="numeric"></label>
   <label>A test county's sample count, when its selections are predicted (no pull list; default {{ test_sample_count }}) <input name="sample_count" type="number" min="1" max="10000" inputmode="numeric"></label>
   <button type="submit">Build and record</button>

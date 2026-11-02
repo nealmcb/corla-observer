@@ -540,6 +540,29 @@ def test_lists_built_by_the_first_design_read_as_sent_lists(tmp_path: Path) -> N
         assert not set(fourth.ids) & (set(second.ids) | set(third.ids) | {"1-7-5"})
 
 
+def test_the_county_last_worked_on_is_remembered(tmp_path: Path) -> None:
+    _, root = _workspace(tmp_path)
+    app = create_app(AppConfig(workspace=root, secret=b"s" * 32, counties=("Boulder",), crawl=lambda ws, log: None))
+    with TestClient(app, base_url="https://testserver") as client:
+        assert login(client).status_code == 303
+        # Before any county page, nothing is remembered: the targeted ballots page asks.
+        assert "No county has a redacted CVR yet" not in (first := client.get("/coord/targets").text)
+        assert "Choose a pattern" not in first
+        assert '<option value="" selected>Choose a county</option>' in client.get("/coord/links").text
+        # A county's page remembers it, in a cookie for the app's path only.
+        shown = client.get(f"/coord/targets?county={COUNTY}")
+        assert shown.status_code == 200 and "corla_county=" in shown.headers.get("set-cookie", "")
+        assert "Path=/;" in shown.headers["set-cookie"] and "HttpOnly" in shown.headers["set-cookie"]
+        # The bare page now opens on that county, and the county choosers start on it.
+        assert f"Targeted ballots: {COUNTY}" in client.get("/coord/targets").text
+        assert f"<option selected>{COUNTY}</option>" in client.get("/coord/links").text
+        assert f"<option selected>{COUNTY}</option>" in client.get("/coord").text
+        # Asking for no county explicitly still asks; a county no longer valid is forgotten.
+        assert "Choose a pattern" not in client.get("/coord/targets?county=").text
+        client.cookies.set("corla_county", "Atlantis")
+        assert '<option value="" selected>Choose a county</option>' in client.get("/coord/links").text
+
+
 def test_the_coordinator_pages(tmp_path: Path) -> None:
     _, root = _workspace(tmp_path)
     app = create_app(AppConfig(workspace=root, secret=b"s" * 32, counties=("Boulder",), crawl=lambda ws, log: None))

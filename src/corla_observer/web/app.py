@@ -51,6 +51,7 @@ import base64
 import hashlib
 import re
 import threading
+from urllib.parse import quote, unquote
 from collections.abc import Awaitable, Callable, MutableMapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
@@ -64,7 +65,7 @@ from jinja2 import Environment, FileSystemLoader, select_autoescape
 
 from corla_observer import __version__
 from corla_observer.version import current as software_identity
-from corla_observer.classify import COLORADO_COUNTIES, TEST_COUNTIES
+from corla_observer.classify import COLORADO_COUNTIES, TEST_COUNTIES, known_county
 from corla_observer.events import EventLog
 from corla_observer.localtime import colorado_time
 from corla_observer.photoimage import MAX_PHOTO_BYTES, too_large_message
@@ -264,8 +265,25 @@ class WebState:
         return f"WALKTHROUGH of the {walk.election} audit ({walk.county}), replayed from the public mirror. Simulated time: {when}{nxt}."
 
     def render(self, request: Request, template: str, status_code: int = 200, **context: Any) -> HTMLResponse:
-        html = self.templates.get_template(template).render(request=request, walkthrough_banner=self.walkthrough_banner(), **context)
-        return HTMLResponse(html, status_code=status_code)
+        """A page from ``template``; a coordinator page shown for a county remembers it (`COUNTY_COOKIE`).
+
+        Every page gets ``remembered_county``: the county of this page, else the last one a
+        coordinator page was shown for in this browser, so a county chooser can start on it.
+        """
+        remembered = remembered_county(request)
+        shown = context.get("county")
+        county = known_county(shown) if isinstance(shown, str) else None
+        coordinator = request.url.path.startswith(f"{self.prefix}/coord")
+        html = self.templates.get_template(template).render(
+            request=request, walkthrough_banner=self.walkthrough_banner(), remembered_county=county or remembered, **context
+        )
+        response = HTMLResponse(html, status_code=status_code)
+        if coordinator and county and county != remembered:
+            response.set_cookie(
+                COUNTY_COOKIE, quote(county), max_age=COUNTY_COOKIE_AGE, path=self.prefix or "/",
+                httponly=True, secure=self.config.secure_cookies, samesite="strict",
+            )  # fmt: skip
+        return response
 
     def close(self) -> None:
         self.log.close()
@@ -280,6 +298,16 @@ def _size(n: object) -> str:
             return f"{n} bytes" if unit == "bytes" else f"{value:.1f} {unit}"
         value /= 1024
     return f"{n} bytes"
+
+
+#: The cookie holding the county a coordinator last worked on: coordinators normally stick with one.
+COUNTY_COOKIE = "corla_county"
+COUNTY_COOKIE_AGE = 90 * 24 * 3600
+
+
+def remembered_county(request: Request) -> str | None:
+    """The county this browser's coordinator last had a page shown for, if it is still a county."""
+    return known_county(unquote(request.cookies.get(COUNTY_COOKIE, "")))
 
 
 def get_state(request: Request) -> WebState:

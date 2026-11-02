@@ -24,7 +24,7 @@
     </select>
   </label>
   <label>Name (letters, digits, '.', '_' or '-'; for an observer it becomes their observer ID, such as observer:ann) <input name="name" required maxlength="64" pattern="[A-Za-z0-9._\-]{1,64}" spellcheck="false" autocapitalize="none"></label>
-  <label>County {{ county_select("") }}</label>
+  <label>County {{ county_select(remembered_county) }}</label>
   <label>Audit board <input name="board" type="number" min="1" max="{{ max_link_boards }}" value="1" required inputmode="numeric"></label>
   <button type="submit">Make the link</button>
 </form>

@@ -73,7 +73,7 @@ from corla_observer.enr import Results, contest_label, latest_details, read_resu
 from corla_observer.extract import MAX_BOARDS, ExtractError, county_manifest, layouts
 from corla_observer.seeds import seed_state
 from corla_observer.uploads import status as upload_status
-from corla_observer.web.app import WebState, get_state
+from corla_observer.web.app import WebState, get_state, remembered_county
 from corla_observer.web.coordinator import _common, _login_redirect, checked_form, current_session
 from corla_observer.web.extracts import layout_label
 from corla_observer.web.sessions import Session
@@ -245,6 +245,10 @@ def _sent_views(state: WebState, county: str, lists: list[pulllists.PullList]) -
 
 def _page(state: WebState, request: Request, session: Session, county: str | None, status_code: int = 200, error: str | None = None, **extra: Any) -> Response:
     with_cvr = [c for c, e in upload_status(state.log).items() if "redacted_cvr" in e.latest]
+    if county is None and "county" not in request.query_params:
+        # No county asked for: open on the one this coordinator last worked on, if it has a CVR.
+        last = remembered_county(request)
+        county = last if last in with_cvr else None
     if county is None:
         return state.render(request, "coord_targets.html", status_code, county=None, counties=with_cvr, error=error, message=None, **_common(state, session))
     added = _added(request)

@@ -18,7 +18,7 @@
   <form method="post" action="{{ url('/coord/audit-boards') }}" class="card form">
     <h2>Audit boards</h2>
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <label>County {{ county_select("") }}</label>
+    <label>County {{ county_select(remembered_county) }}</label>
     <label>Number of audit boards <input name="count" type="number" min="1" max="{{ max_boards }}" required inputmode="numeric"></label>
     <label class="check"><input type="checkbox" name="placeholder" value="yes"> Placeholder: not yet known</label>
     <label>Note (where the number came from) <input name="note" maxlength="500"></label>
