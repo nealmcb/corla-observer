@@ -453,7 +453,14 @@ From Neal's demo, 2026-10-29:
   a different verdict, or a different outcome for the same contest). The page warns about each,
   with every device's entry; nothing is chosen between them, and all stay in the event log.
 7. **Updating the software during an audit.** Preserve all data, record the update as an event
-  in the live run, and test and save the data before and after the change. Open; see open
+  in the live run, and test and save the data before and after the change. Fixed: every start
+  of the web server is recorded as `server.started` (its version, the one at the start before,
+  and whether they differ) and every graceful stop as `server.stopped`, so restarts and updates
+  are both in the log; the scheduler records its starts and stops (with the reason, a SIGTERM
+  included) and each change in what it is doing, schedule file errors and the keep-awake hold; `scripts/update_sprite.sh` archives each workspace first; `tests/test_update.py`
+  serves a workspace in use with one version and then another and checks that every event,
+  link, list and entry is kept and the hash chain is intact; the runbook says how to update
+  (docs/RUNBOOK-2026-GENERAL.md, "Updating the software during the audit"). See also open
   question 8.
 8. **Loading the audit center is slow.** Found: the demo's fetch took about 3.5 minutes, nearly
   all in its first git reads of the sprite's mirror checkout, 18 minutes after the service had
@@ -518,7 +525,7 @@ From Neal, 2026-11-03, on the demo deployment:
 5. How many observers can each board have in November, and will any of them work on paper?
 6. What do observers do with their records afterwards?
 7. ~~We need a plan for when the auditcenter is checked for new data.~~ Decided: the schedule above (`docs/RUNBOOK-2026-GENERAL.md`), with sprints on roll morning. Still open: whether to keep the sprite awake from now (the default) or only near the windows.
-8. We may need some contingency options for restarting after code is revised etc. The git hash of the deployed software should be part of the appropriate evidence or other hashes or whatever as appropriate. *Partly addressed:* the running software names itself with its git commit (`corla-observer 0.1.0 (f855b1a1c2d3)`, `+dirty` for uncommitted changes; `corla_observer.version`) in every event's `software` field (`extract.built`, `photo.checked`), each evidence SUMS file's header, the printout's provenance sheet (so a PDF's bytes identify the commit that drew it) and every web page's footer, which links to a `/version` page with the full hash, the commit's log entry and its page on GitHub. Restarting after a revision remains open.
+8. We may need some contingency options for restarting after code is revised etc. The git hash of the deployed software should be part of the appropriate evidence or other hashes or whatever as appropriate. *Partly addressed:* the running software names itself with its git commit (`corla-observer 0.1.0 (f855b1a1c2d3)`, `+dirty` for uncommitted changes; `corla_observer.version`) in every event's `software` field (`extract.built`, `photo.checked`), each evidence SUMS file's header, the printout's provenance sheet (so a PDF's bytes identify the commit that drew it) and every web page's footer, which links to a `/version` page with the full hash, the commit's log entry and its page on GitHub. Restarting after a revision: `scripts/update_sprite.sh` (workspaces archived first, a sprite checkpoint before), every start recorded as a `server.started` event, an update marked `updated`, and the runbook's "Updating the software during the audit".
 9. How should we publish and compare our hash of each received file with any hash the county publishes, and with CORLA's recorded hash when the file needed no redaction?
 10. Contest-by-contest entry assumes each reading goes through the whole ballot before the next starts. If a board reads contest by contest (one member reads a contest, the other confirms it, then the next contest), the page would need a "both readings at once" setting. Which do the November boards do?
 

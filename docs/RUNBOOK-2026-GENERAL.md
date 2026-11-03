@@ -144,6 +144,22 @@ The server (a Fly.io sprite, which has no systemd: long-running programs are its
 
 To point the web server at the general election's workspace, change `--workspace` in `~/bin/corla-observer-serve.sh` to the general election's workspace (`~/workspaces/2026-general`) (and the `--county` options to the pilot counties), then restart the `corla-observer` service. The practice workspace stays as it is.
 
+### Updating the software during the audit
+
+An update keeps every workspace as it is: the event log, the stored files, the accounts and the observer links. From your own machine:
+
+1. **Pick a quiet moment.** The coordinators' **Activity** page shows the latest events: avoid a moment when a coordinator is uploading or drawing, or a fetch is running. A restart logs every coordinator out (sessions are kept in memory), so tell them first. Observers are not logged out: their links keep working, and an entry made while the server restarts waits on the device and is sent when it is back (it retries every few seconds, up to every 30).
+2. **Keep copies.** Archive the sprite's logs, and take a checkpoint: `sprite checkpoint create -s NAME --comment "before updating corla-observer to REF"`.
+3. **Update.** `scripts/update_sprite.sh` stops the services that run from the checkout, archives each workspace to `~/backups/`, checks out REF, installs the locked dependencies and starts the services again (see the script's header):
+
+```
+ssh NAME.sprite-app -- bash -s REF WORKSPACE... < scripts/update_sprite.sh
+```
+
+4. **Check.** The footer's version link (`/version`) names the new commit. Every start of the web server is recorded as a `server.started` event, with its version and the one at the start before, and `updated` true when they differ, and every graceful stop as `server.stopped`; the scheduler does the same (`schedule.started`, `schedule.stopped` with its reason), and records each change in what it is doing (`schedule.state`), errors in `schedule.toml` and the keep-awake hold. So every restart and every update is in the published log, and on the Activity page. A start you did not cause, or a start with no stop before it, means a crash, a reboot or a sprite waking from sleep. The schedule page says whether the scheduler is running again.
+
+If anything goes wrong, restore the checkpoint (`sprite restore VERSION`), or unpack the workspace archive the script made.
+
 ## Rehearsing it
 
 `corla-observer walkthrough init --workspace DIR --county Weld` makes a workspace that replays the July 2026 primary in the general election's order, one step at a time from `/coord/walkthrough` (docs/REHEARSAL.md).
