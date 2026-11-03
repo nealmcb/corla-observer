@@ -439,18 +439,12 @@ From Neal's demo, 2026-10-29:
   remember the last county entered. Fixed: a coordinator page shown for a county remembers it
   in the browser, the county choosers start on it, and the targeted ballots page opens on it.
 6. **One observer on several devices.** Every entry from every device is kept, signed and
-  receipted; nothing is lost. But the observer page loads the observer's entries (from all
-  devices) only when it opens, and never refreshes them, so a tab left open does not see what
-  another device entered meanwhile. For each ballot, the "latest" entry is whichever reached the
-  server last, not whichever was made last. The practice workspace shows both effects: in a
-  demo, a second device re-entered a ballot contest by contest two minutes after the first
-  device had entered one contest as unclear, so the second device's "confirmed" replaced it;
-  seven hours later the first device, still open, entered contest by contest a ballot the
-  second had already matched. Opening a link in another browser, or after clearing site data,
-  makes a new device: observers there used 7, 8 and 14 devices, most with one event each. To
-  decide: whether the page should refresh entries from the observer's other devices (the
-  dashboard's live updates could carry them), and how a ballot entered on two devices should
-  be shown. Open.
+  receipted. Fixed: the observer page now picks up the entries made on the observer's other
+  devices when the observer moves on to another ballot (and when the page comes back into
+  view; never in the middle of a ballot, nor while this device still has entries to send), and
+  `data.json` reports the ballots their devices entered differently (`corla_observer.devices`:
+  a different verdict, or a different outcome for the same contest). The page warns about each,
+  with every device's entry; nothing is chosen between them, and all stay in the event log.
 7. **Updating the software during an audit.** Preserve all data, record the update as an event
   in the live run, and test and save the data before and after the change. Open; see open
   question 8.

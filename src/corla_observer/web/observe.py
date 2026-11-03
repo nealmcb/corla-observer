@@ -86,6 +86,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from corla_observer.contests import fold as fold_contests
+from corla_observer.devices import disagreements
 from corla_observer.contests import latest_mode, page_state
 from corla_observer.extract import (
     IN_RLA_MARK,
@@ -484,6 +485,8 @@ async def observe_data(request: Request, token: str) -> Response:
             "entries": entries,
             "contests": page_state(contests),
             "mode": latest_mode(mode_events, link.actor, link.county, board),
+            # Ballots this observer's devices entered differently (corla_observer.devices): warned about, never resolved here.
+            "disagreements": {str(p): [v.to_dict() for v in views] for p, views in disagreements(events, link).items()},
         }
 
     return JSONResponse(await run_in_threadpool(load))

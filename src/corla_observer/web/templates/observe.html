@@ -29,6 +29,7 @@
 <main class="obs">
   <noscript><p class="notice">This page needs JavaScript. Paper works too: ask your coordinator for a printout.</p></noscript>
   <p id="obs-error" class="notice notice-error" hidden></p>
+  <div id="obs-devices" class="notice notice-error" role="alert" hidden><p><span aria-hidden="true">&#9650;</span> <strong>Your devices disagree on <span id="obs-devices-count"></span>.</strong> You entered these ballots on more than one device, differently. Both entries are kept; tell your coordinator which is right, or enter the ballot again.</p><ul id="obs-devices-list"></ul></div>
   <p id="obs-rla-missing" class="notice obs-rla-missing" role="note"{% if not rla_notice %} hidden{% endif %}><span aria-hidden="true">&#9675;</span> <span id="obs-rla-missing-text">{{ rla_notice or '' }}</span></p>
   <section id="obs-intro" class="obs-intro" aria-labelledby="obs-intro-title" hidden>
     <h1 id="obs-intro-title">Before you start</h1>

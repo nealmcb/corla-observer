@@ -184,6 +184,7 @@
 
   var ballots = [];
   var current = null;      // the ballot shown
+  var lastShown = null;    // the position of the ballot shown at the last render, to notice moving on
   // "next": the first ballot not yet done; "edit": changing an entry;
   // "jump": a ballot the board read out of order; "chosen": a ballot not
   // read yet, tapped to enter it now.
@@ -870,6 +871,13 @@
       else if (!next) next = ballot;
     });
     if (mode === "next") current = next;
+    // Moving on to another ballot: fetch what the observer's other devices entered meanwhile, between ballots,
+    // never in the middle of one (refreshFromServer's render shows the same ballot, so this does not repeat).
+    if (current && current.position !== lastShown) {
+      var moved = lastShown !== null;
+      lastShown = current.position;
+      if (moved) setTimeout(refreshFromServer, 0);
+    }
     // Every ballot up to the furthest one done, except the one shown below:
     // done ones, and ones skipped (not read yet).
     ballots.forEach(function (ballot) {
@@ -1305,6 +1313,76 @@
     });
   }
 
+  // The server's record (entries from all of this observer's devices), then this device's queued entries on top;
+  // and the ballots on which the observer's devices disagree (data.json's "disagreements", corla_observer.devices).
+  function mergeServer(data) {
+    // The server's record, then this device's queued entries on top.
+    var queued = {};
+    pending().forEach(function (r) { if ((r.payload.type === "entry" || r.payload.type === "other_board") && inList(r)) queued[String(r.payload.position)] = true; });
+    Object.keys(data.entries).forEach(function (position) {
+      if (!local.entries[position] || !queued[position]) {
+        var mine = local.entries[position];
+        var theirs = data.entries[position];
+        local.entries[position] = theirs;
+        // Keep this device's receipt code if the server's latest entry is the one it is for.
+        if (mine && mine.receipt && mine.receipt.split("-")[0] === String(theirs.seq)) theirs.receipt = mine.receipt;
+      }
+    });
+    // IDs heard that are not on the list: the server's, then this device's not yet recorded.
+    var server = data.not_on_list || [];
+    var old = local.offlist || [];
+    function same(a, b) { return a.device_seq === b.device_seq && a.heard === b.heard; }
+    local.offlist = server.map(function (o) {
+      var m = old.filter(function (x) { return same(x, o); })[0];
+      return { heard: o.heard, at: o.at, device_seq: o.device_seq, seq: o.seq, receipt: m ? m.receipt : "" };
+    });
+    old.forEach(function (m) { if (!server.some(function (o) { return same(o, m); })) local.offlist.push(m); });
+    save(listStore, local);
+    showDisagreements(data.disagreements || {});
+  }
+
+  function showDisagreements(found) {
+    var box = el("obs-devices");
+    if (!box) return;
+    var positions = Object.keys(found);
+    box.hidden = positions.length === 0;
+    if (!positions.length) return;
+    var mine = device && device.device_id ? device.device_id.slice(0, 8) : "";
+    var list = el("obs-devices-list");
+    list.textContent = "";
+    positions.sort(function (a, b) { return Number(a) - Number(b); }).forEach(function (position) {
+      var b = ballots.filter(function (x) { return String(x.position) === position; })[0];
+      var li = document.createElement("li");
+      li.textContent = "Ballot " + position + (b ? " (" + b.id + ")" : "") + ": " + found[position].map(function (v) {
+        return (v.device === mine ? "this device" : "device " + v.device) + " " + v.says;
+      }).join("; ");
+      list.appendChild(li);
+    });
+    el("obs-devices-count").textContent = positions.length === 1 ? "1 ballot" : positions.length + " ballots";
+  }
+
+  // Entries made on the observer's other devices: fetched again when the observer moves on to another ballot
+  // (render), and when the page comes back into view. Only the same list and extract are merged; anything else
+  // waits for a reload.
+  function refreshFromServer() {
+    if (document.visibilityState !== "visible" || !meta) return;
+    // While this device still has entries to send, skip: the server's record would lag this device's own. The next
+    // move to another ballot tries again (never a delayed retry, which could land in the middle of a ballot).
+    if (pending().length) return;
+    fetch(base + "/data.json" + listQuery, { credentials: "same-origin", cache: "no-store" })
+      .then(function (response) { return response.ok ? response.json() : null; })
+      .then(function (data) {
+        if (!data || data.error || data.list !== meta.list || data.extract_sha256 !== meta.extract_sha256) return;
+        serverContests = data.contests || {};
+        save(listStore + ":contests", serverContests);
+        if (perContest) perContest.rebuild(serverContests);
+        mergeServer(data);
+        render();
+      })
+      .catch(function () { /* offline: the next try will do */ });
+  }
+  document.addEventListener("visibilitychange", function () { if (document.visibilityState === "visible") refreshFromServer(); });
+
   fetch(base + "/data.json" + listQuery, { credentials: "same-origin", cache: "no-store" })
     .then(function (response) {
       if (!response.ok) throw new Error("HTTP " + response.status);
@@ -1330,35 +1408,15 @@
       save(listStore + ":contests", serverContests);
       if (!entryMode) entryMode = MODES.indexOf(data.mode) >= 0 ? data.mode : DEFAULT_MODE;
       if (lookupMode) entryMode = "per_contest";
-      // The server's record, then this device's queued entries on top.
-      var queued = {};
-      pending().forEach(function (r) { if ((r.payload.type === "entry" || r.payload.type === "other_board") && inList(r)) queued[String(r.payload.position)] = true; });
-      Object.keys(data.entries).forEach(function (position) {
-        if (!local.entries[position] || !queued[position]) {
-          var mine = local.entries[position];
-          var theirs = data.entries[position];
-          local.entries[position] = theirs;
-          // Keep this device's receipt code if the server's latest entry is the one it is for.
-          if (mine && mine.receipt && mine.receipt.split("-")[0] === String(theirs.seq)) theirs.receipt = mine.receipt;
-        }
-      });
-      // IDs heard that are not on the list: the server's, then this device's not yet recorded.
-      var server = data.not_on_list || [];
-      var old = local.offlist || [];
-      function same(a, b) { return a.device_seq === b.device_seq && a.heard === b.heard; }
-      local.offlist = server.map(function (o) {
-        var m = old.filter(function (x) { return same(x, o); })[0];
-        return { heard: o.heard, at: o.at, device_seq: o.device_seq, seq: o.seq, receipt: m ? m.receipt : "" };
-      });
-      old.forEach(function (m) { if (!server.some(function (o) { return same(o, m); })) local.offlist.push(m); });
-      save(listStore, local);
+      mergeServer(data);
       if (needsIntro()) introOpen = true;
       if (introOpen) { showIntroMode(); el("obs-intro").hidden = false; }
       render();
       begin();
       if (introOpen) el("obs-intro-start").focus({ preventScroll: true });
     })
-    .catch(function () {
+    .catch(function (error) {
+      if (window.console) console.error("observer page: loading from the server failed", error);
       ballots = load(listStore + ":ballots", []);
       if (!entryMode) entryMode = DEFAULT_MODE;
       if (ballots.length && meta) {
