@@ -515,6 +515,12 @@ From Neal, 2026-11-03, on the demo deployment:
 17. **No way to watch what the server is doing.** Fixed: the coordinators' Activity page lists the
   latest events, newest first, filterable by kind, and updates itself as events arrive.
 18. **Next steps: the RLA sample path first**, on the left. Fixed.
+19. **A reset left no trace in the new log.** After a testing-mode Reset the new event log began
+  again at event 1, with nothing to say a reset happened or which log came before; the request
+  was only in the archived copy. Fixed: `corla-observer workspace reset` (`corla_observer.reset`)
+  archives the workspace, empties it but for the coordinator accounts, and starts the new log
+  with `workspace.reset`, naming the old log's head, its event count, the archive and its hash,
+  and who asked; the demo's reset and `scripts/reset_practice_workspace.sh` both use it.
 
 ## Open questions
 

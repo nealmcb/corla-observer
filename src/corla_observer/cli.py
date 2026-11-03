@@ -1151,6 +1151,31 @@ def main() -> None:
 # ---------------------------------------------------------------------------
 # The web interface (corla_observer.web): coordinator accounts and the server.
 
+workspace_app = typer.Typer(help="A workspace as a whole: resetting a practice one.", no_args_is_help=True)
+app.add_typer(workspace_app, name="workspace")
+
+
+@workspace_app.command("reset")
+def workspace_reset(
+    workspace: WorkspaceOption,
+    backups: Annotated[Path, typer.Option("--backups", help="Directory for the archive of the workspace.", show_default=False)],
+    confirm: Annotated[bool, typer.Option("--confirm", help="Required: this deletes everything in the workspace but the coordinator accounts.")] = False,
+) -> None:
+    """Reset a practice workspace: archive it, empty it but for the coordinator accounts, and start its new log with workspace.reset naming the old log's head and the archive (corla_observer.reset). Stop the web server first. Never on a real audit's workspace."""
+    from corla_observer.reset import reset_workspace
+
+    if not confirm:
+        typer.echo("error: a reset deletes everything in the workspace but the coordinator accounts; add --confirm", err=True)
+        raise typer.Exit(2)
+    try:
+        report = reset_workspace(workspace, backups)
+    except FileNotFoundError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"archived {workspace} to {report.archive} (sha256 {report.archive_sha256})")
+    typer.echo(f"reset: the new log starts with workspace.reset, after the old log's {report.previous_events} events (head {report.previous_head_seq} {report.previous_head_hash or '-'})")
+
+
 user_app = typer.Typer(help="Coordinator accounts for the web interface.", no_args_is_help=True)
 app.add_typer(user_app, name="user")
 

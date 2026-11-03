@@ -18,8 +18,10 @@
 #
 # --reset works only on a workspace this script made (it holds demo-delta-2020.json): it archives the
 # whole workspace to ${BACKUP_DIR:-~/backups}/NAME-TIME.tgz, deletes everything in it but the coordinator
-# accounts (accounts/coordinators.json; observer and reader links go too), then sets it up again. Stop
-# the web server first, and start it again after (it keeps the old event log open).
+# accounts (accounts/coordinators.json; observer and reader links go too), starts its new event log
+# with workspace.reset naming the old log's head and the archive (`corla-observer workspace reset`),
+# then sets it up again. Stop the web server first, and start it again after (it keeps the old event
+# log open).
 #
 # Add a coordinator once, after the first run:
 #   uv run corla-observer user add NAME --workspace WORKSPACE
@@ -37,19 +39,8 @@ co() { (cd "$REPO" && "$UV" run --quiet corla-observer "$@"); }
 
 if [ -n "$RESET" ]; then
   [ -f "$WS/$MARKER" ] || { echo "error: $WS was not made by this script (no $MARKER): refusing to touch it" >&2; exit 2; }
-  backups=${BACKUP_DIR:-$HOME/backups}
-  mkdir -p "$backups"
-  archive="$backups/$(basename "$WS")-$(date -u +%Y%m%dT%H%M%SZ).tgz"
-  tar -C "$(dirname "$WS")" -czf "$archive" "$(basename "$WS")"
-  echo "archived $WS to $archive"
-  keep=$(mktemp -d)
-  [ -f "$WS/accounts/coordinators.json" ] && cp -p "$WS/accounts/coordinators.json" "$keep/"
-  find "$WS" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
-  if [ -f "$keep/coordinators.json" ]; then
-    mkdir -m 700 "$WS/accounts"
-    cp -p "$keep/coordinators.json" "$WS/accounts/"
-  fi
-  rm -rf "$keep"
+  # Archive, empty but for the coordinator accounts, and start the new log with workspace.reset (corla_observer.reset).
+  co workspace reset --workspace "$(cd "$WS" && pwd)" --backups "${BACKUP_DIR:-$HOME/backups}" --confirm
 elif [ -e "$WS" ]; then
   echo "error: $WS exists; to start it again, add --reset" >&2; exit 2
 fi
