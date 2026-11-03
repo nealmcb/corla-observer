@@ -424,11 +424,17 @@ From Neal's demo, 2026-10-29:
 1. **Next steps.** The pages should recommend what to do next, e.g. "upload a CVR". Open.
 2. **The data map early in an election** is distracting and suggests the wrong things. Before
   there is data to audit it should not expect or suggest a seed, warn about missing contests,
-  expect a pull list before the seed, or report that there are no selections. Open.
+  expect a pull list before the seed, or report that there are no selections. Fixed for
+  replayed elections: the data map judged a replayed 2020 election by today's date, so every
+  2020 deadline looked past. A mirror update now has a `time` (Colorado time) and the data map
+  judges at the last applied update's time; the Delta demo's stands at 2020-11-13 15:00, where
+  the seed, CORLA's lists and the pull lists are "not yet expected".
 3. **Targeting: searching for a contest resets the pattern.** The search form and its result
   links carried the selection the page was loaded with, not the boxes checked since. Fixed.
 4. **Printed list: Contests section starts on a new page.** A portrait printout for board 1 had
-  two leading pages for Contests, though page 1 had plenty of room. Open.
+  two leading pages for Contests, though page 1 had plenty of room. Fixed: seven two-line
+  entries in two columns of seven lines left one over, which started a new page; the share now
+  grows while the page has room.
 5. **Remember the county.** A coordinator normally sticks with one county; the pages should
   remember the last county entered. Fixed: a coordinator page shown for a county remembers it
   in the browser, the county choosers start on it, and the targeted ballots page opens on it.
@@ -448,7 +454,11 @@ From Neal's demo, 2026-10-29:
 7. **Updating the software during an audit.** Preserve all data, record the update as an event
   in the live run, and test and save the data before and after the change. Open; see open
   question 8.
-8. **Loading the audit center is slow.** Find out why. Open.
+8. **Loading the audit center is slow.** Found: the demo's fetch took about 3.5 minutes, nearly
+  all in its first git reads of the sprite's mirror checkout, 18 minutes after the service had
+  started; the same cycle takes 6.8 seconds on the same sprite now. Likely a sprite just woken
+  from sleep reading its disk slowly. Before a demo, open the site and fetch once a few minutes
+  ahead. Not a code problem.
 
 From a coordinator's practice session, 2026-11-02:
 
