@@ -122,11 +122,12 @@ def test_dashboard_renders_sample_events(workspace: Path, make_client: Factory, 
         record_audit_boards(log, "Boulder", 3, "coordinator:alice")
         enter_and_confirm(log, SEED, "coordinator:alice", "announced at the dice roll", second_actor="coordinator:bob")
         log.append("fetch.crawl_finished", "system", data={"url": "https://www.coloradosos.gov/pubs/elections/auditCenter.html", "counts": {"new": 2}})
-        head_seq, head_hash = log.head()
     client = make_client()
     response = client.get("/")
     assert response.status_code == 200
     page = response.text
+    with EventLog.open(workspace, read_only=True) as log:  # the head after the server started (it records its start)
+        head_seq, head_hash = log.head()
     assert "Boulder" in page and "PASS" in page and SEED in page and head_hash in page
     assert f"{head_seq} events" in page
     assert "21 ballots" in page  # counts only

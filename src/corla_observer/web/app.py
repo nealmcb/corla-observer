@@ -49,6 +49,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import re
 import threading
 from urllib.parse import quote, unquote
@@ -473,6 +474,26 @@ ROUTER_MODULES = (
 )
 
 
+def _record_start(state: WebState) -> None:
+    """Record this start and the running software in the log (`corla_observer.version.record_start`); never stops the server."""
+    from corla_observer.version import record_start
+
+    try:
+        record_start(state.log)
+    except Exception as exc:  # noqa: BLE001 - a read-only or broken log must not keep the site down
+        logging.getLogger(__name__).warning("could not record the server's start: %s", exc)
+
+
+def _record_stop(state: WebState) -> None:
+    """Record a graceful stop (``server.stopped``), so a start with none before it shows a crash or a kill; never raises."""
+    from corla_observer.version import STOPPED_KIND
+
+    try:
+        state.log.append(STOPPED_KIND, "system", data={"reason": "stopped"})
+    except Exception as exc:  # noqa: BLE001 - stopping must go on
+        logging.getLogger(__name__).warning("could not record the server's stop: %s", exc)
+
+
 def create_app(config: AppConfig) -> FastAPI:
     """The web app for one workspace; see the module documentation."""
     import importlib
@@ -484,9 +505,11 @@ def create_app(config: AppConfig) -> FastAPI:
         from corla_observer.web.targets import warm
 
         threading.Thread(target=warm, args=(state,), name="corla-observer-targets-warm", daemon=True).start()
+        _record_start(state)
         try:
             yield
         finally:
+            _record_stop(state)
             state.close()
 
     app = FastAPI(

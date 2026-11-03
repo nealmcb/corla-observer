@@ -19,6 +19,20 @@ printout's provenance sheet): ``corla-observer 0.1.0 (f855b1a1c2d3)``, with
 ``+dirty`` after the commit when the tree is dirty, or ``(commit unknown)``.
 The web app's footer links it to ``/version``, which shows the full commit,
 the dirty flag, the log entry and a link to the commit on GitHub (`REPOSITORY`).
+
+**Starts and updates in the log** (`record_start`). Every time the web
+server starts on a workspace it appends a ``server.started`` event:
+``data`` ``software``, ``commit``, ``dirty``, ``subject`` (the commit's
+subject line), ``previous`` and ``previous_commit`` (the software at the
+last start, null the first time) and ``updated`` (whether they differ). A
+restart is an event in itself (coordinators are logged out; an unplanned
+one means a crash, a reboot or a sprite waking), and an update is a start
+with ``updated`` true: every one made during the audit, by
+`scripts/update_sprite.sh` or by hand, is in the published log at the moment
+the new software began serving. A graceful stop (a service manager's
+SIGTERM included) is recorded as ``server.stopped``; a ``server.started``
+with none since the last start means the server crashed, was killed, or the
+machine went down.
 """
 
 from __future__ import annotations
@@ -138,3 +152,36 @@ def current() -> SoftwareIdentity:
 def software() -> str:
     """The running software's name, as recorded: ``corla-observer 0.1.0 (f855b1a1c2d3)``."""
     return current().software
+
+
+#: The event recording each start of the web server, with its software.
+STARTED_KIND = "server.started"
+#: The event recording a graceful stop of the web server (a SIGTERM from its service manager included).
+STOPPED_KIND = "server.stopped"
+
+
+def record_start(
+    log: Any, identity: SoftwareIdentity | None = None, actor: str = "system", *, kind: str = STARTED_KIND, extra: dict[str, Any] | None = None
+) -> Any:
+    """Append a ``kind`` event (``server.started`` by default) for ``identity`` (the running software), compared with the log's last ``kind``; return it.
+
+    ``log`` is a `corla_observer.events.EventLog`; ``extra`` is added to the
+    event's data. The scheduler records its own starts as ``schedule.started``
+    (`corla_observer.schedule.run_loop`). See the module documentation.
+    """
+    running = identity or current()
+    last = None
+    for event in log.iter_events():
+        if event.kind == kind:
+            last = event
+    previous = last.data.get("software") if last is not None else None
+    previous_commit = last.data.get("commit") if last is not None else None
+    return log.append(
+        kind,
+        actor,
+        data={
+            "software": running.software, "commit": running.commit, "dirty": running.dirty, "subject": running.log.get("subject"),
+            "previous": previous, "previous_commit": previous_commit,
+            "updated": last is not None and (previous != running.software or previous_commit != running.commit),
+        } | (extra or {}),
+    )  # fmt: skip
