@@ -376,6 +376,16 @@ class _Flow:
         return self.sheet.width - 2 * MARGIN
 
 
+def _columns_needed(blocks: Sequence[Sequence[object]], per: int) -> int:
+    """How many columns of ``per`` lines the entries take, filled in order without splitting an entry."""
+    columns, count = 1, 0
+    for block in blocks:
+        if count and count + len(block) > per:
+            columns, count = columns + 1, 0
+        count += len(block)
+    return columns
+
+
 def provenance_sheets(extract: Mapping[str, Any], sha256: str, prov: Provenance, lay: Layout) -> list[Sheet]:
     """The provenance sheet(s): the notices and identification beside the extract's QR code, the facts, the key, the contests printed shorter, and how to check a page."""
     notices = [(KEEP_OUT_OF_SIGHT, True)]
@@ -420,6 +430,11 @@ def provenance_sheets(extract: Mapping[str, Any], sha256: str, prov: Provenance,
                 fresh = True
                 continue
             per = max(len(blocks[0]), min(room, -(-total // columns)))
+            # Entries are not split, so an even share of lines can leave one over (seven two-line entries in two
+            # columns of seven lines take three each): raise the share while the sheet has room, rather than
+            # starting a new sheet for the one left over.
+            while per < room and _columns_needed(blocks, per) > columns:
+                per += 1
             fresh = False
             top = flow.y
             used = 0

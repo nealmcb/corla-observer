@@ -173,3 +173,13 @@ def test_qr_items_are_the_pages_hashes() -> None:
     first = codes[1][0]
     assert first.x + first.side == pytest.approx(lay.pagesize[0] - printlayout.MARGIN)
     assert first.y + first.side == pytest.approx(lay.pagesize[1] - printlayout.MARGIN)
+
+
+def test_a_list_of_two_line_entries_is_not_split_off_for_one_left_over() -> None:
+    from corla_observer.pdfextract import _columns_needed
+
+    # Seven two-line entries ("Contests printed shorter" in the Delta demo): an even share of 7 lines a
+    # column holds three each and leaves one over, which used to start a new sheet; 8 lines hold them all.
+    blocks = [["a", "b"]] * 7
+    assert _columns_needed(blocks, 7) == 3 and _columns_needed(blocks, 8) == 2
+    assert _columns_needed([["a"]] * 4, 2) == 2 and _columns_needed([], 5) == 1
