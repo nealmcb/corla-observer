@@ -339,7 +339,8 @@ def mirror_update(workspace: Workspace, log: EventLog, setup: MirrorSetup, *, ac
     """Apply the next update of an audit center replayed from the public mirror (after the last, the last again).
 
     Records ``audit_center.mirror_update`` (its ``index`` from 0, ``title``,
-    ``repository``, ``commit``, ``election`` and ``exclude``), then fetches
+    ``repository``, ``commit``, ``election``, ``exclude`` and, if the update
+    has one, the replayed ``time``), then fetches
     the election's files as the mirror held them at the update's commit, less
     its exclusions (`stage_fetch`): ordinary fetch events, each marked
     ``simulated`` with the mirror's repository and commit. The checkout is
@@ -362,7 +363,8 @@ def mirror_update(workspace: Workspace, log: EventLog, setup: MirrorSetup, *, ac
     log.append(
         "audit_center.mirror_update", actor,
         data={"index": index, "title": update.title, "repository": setup.repository, "commit": full,
-              "election": setup.election, "exclude": list(update.exclude), "again": done >= len(setup.updates)},
+              "election": setup.election, "exclude": list(update.exclude), "again": done >= len(setup.updates),
+              **({"time": update.time} if update.time else {})},
     )  # fmt: skip
     return stage_fetch(workspace, log, mirror, full, election=setup.election, repository=setup.repository, exclude=update.exclude)
 

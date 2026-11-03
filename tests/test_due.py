@@ -186,3 +186,23 @@ def test_the_dashboard_snapshot_is_staged_and_rebuilt_at_the_due_time(ws: Worksp
     assert cache.get() is first and len(built) == 1
     first.valid_until = "2000-01-01T00:00:00.000Z"
     assert cache.get() is not first and len(built) == 2
+
+
+def test_a_replayed_audit_center_is_judged_at_its_own_time(ws: Workspace, log: EventLog) -> None:
+    from corla_observer.due import clock
+    from corla_observer.election import GENERAL_2020_SETUP, SETUP_FILENAME
+
+    (ws.root / SETUP_FILENAME).write_text(GENERAL_2020_SETUP, encoding="utf-8")
+    first = parse_setup(GENERAL_2020_SETUP).mirror.updates[0]  # type: ignore[union-attr]
+    assert first.time == parse_time("2020-11-13 15:00")
+    # Before the first update: its time, not today's (which would make every 2020 deadline overdue).
+    before = clock(ws, log)
+    assert before.now == first.time and "before its first update" in before.source
+    # After an update: the time it recorded.
+    log.append("audit_center.mirror_update", "system", data={"index": 0, "title": first.title, "commit": first.commit, "time": "2020-11-14T00:00:00.000Z"})
+    assert clock(ws, log).now == "2020-11-14T00:00:00.000Z"
+    # Asked for a time, that time wins; without times in the setup, the real time.
+    assert clock(ws, log, now="2020-11-20T00:00:00.000Z").source == "the time asked for"
+    (ws.root / SETUP_FILENAME).write_text(GENERAL_2020_SETUP.replace('time = "2020-11-13 15:00"\n', ""), encoding="utf-8")
+    with EventLog.open(ws.root / "other") as fresh:
+        assert clock(ws, fresh).source == "now"

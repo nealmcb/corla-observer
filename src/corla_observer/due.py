@@ -18,7 +18,9 @@ Election night results are never due: they are only status.
 
 **The clock.** In a walkthrough (`corla_observer.walkthrough`) the
 simulated time of the last step applied (before the first, the first
-step's); otherwise the real time (`clock`).
+step's); for an audit center replayed from the public mirror whose updates
+have a ``time``, the time of the last update applied (before the first,
+the first update's); otherwise the real time (`clock`).
 
 **Staging** (`stage`). Before its due time, a missing input is not a
 problem: its problems (`Expected.codes`) are held back and it is listed in a
@@ -249,11 +251,39 @@ class Clock:
     source: str
 
 
+def _replay_clock(workspace: Workspace, log: EventLog | None) -> Clock | None:
+    """For an election replayed from the public mirror whose updates have times: the time of the last update
+    applied, or the first update's before any is applied. None otherwise (a live election: the real time)."""
+    from corla_observer.election import SetupError, load_setup
+
+    try:
+        setup = load_setup(workspace)
+    except (SetupError, OSError, ValueError):
+        return None
+    if setup is None or setup.mirror is None or not setup.mirror.updates:
+        return None
+    applied = None
+    if log is not None:
+        for event in log.iter_events():
+            if event.kind == "audit_center.mirror_update" and isinstance(event.data.get("time"), str):
+                applied = event
+    if applied is not None:
+        return Clock(str(applied.data["time"]), f"the replayed audit center's time ({applied.data.get('title')})")
+    first = setup.mirror.updates[0]
+    if first.time:
+        return Clock(first.time, "the replayed audit center's time, before its first update")
+    return None
+
+
 def clock(workspace: Workspace, log: EventLog | None = None, *, now: str | None = None) -> Clock:
-    """The time to judge problems at: ``now`` if given, a walkthrough's simulated time, or the real time."""
+    """The time to judge problems at: ``now`` if given, a walkthrough's simulated time, a replayed audit center's time, or the real time."""
     if now is not None:
         return Clock(now, "the time asked for")
     from corla_observer.walkthrough import WalkthroughError, is_walkthrough, state
+
+    replayed = _replay_clock(workspace, log)
+    if replayed is not None:
+        return replayed
 
     if log is not None and is_walkthrough(workspace):
         try:

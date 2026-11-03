@@ -263,6 +263,9 @@ repository = "https://github.com/nealmcb/auditcenter"
 [[audit_center_mirror.updates]]
 title = "Before the roll: the target contest list, the 63 county manifests, CORLA's upload status (13 November 2020)"
 commit = "382a035fe0ff90291382a6dfb33bf583032d1605"
+# The moment this state stands for (Colorado time): after the upload deadline, before the roll. The data map
+# judges what is missing at this time, not today's.
+time = "2020-11-13 15:00"
 exclude = [
 {_quoted(GENERAL_2020_AFTER_ROLL)}
 ]
@@ -334,6 +337,10 @@ class MirrorUpdate:
     title: str
     commit: str
     exclude: tuple[str, ...] = ()
+    #: When this state of the audit center stands for (UTC, from ``time``, Colorado time, in the setup): the
+    #: replay's clock (`corla_observer.due.clock`), so that the data map judges what is missing at the replayed
+    #: moment, not today. None: the real time.
+    time: str | None = None
 
 
 @dataclass(frozen=True)
@@ -444,7 +451,8 @@ def _mirror_setup(raw: Any, errors: list[str]) -> MirrorSetup | None:
         if not isinstance(exclude, list) or not all(isinstance(x, str) and x for x in exclude):
             errors.append(f"audit_center_mirror.updates {n}: exclude must be a list of paths")
             exclude = []
-        updates.append(MirrorUpdate(str(item.get("title") or f"update {n}"), str(item["commit"]).strip(), tuple(exclude)))
+        when = _time(item["time"], f"audit_center_mirror.updates {n}: time", errors) if "time" in item else None
+        updates.append(MirrorUpdate(str(item.get("title") or f"update {n}"), str(item["commit"]).strip(), tuple(exclude), when))
     if not updates:
         errors.append("[audit_center_mirror] needs at least one [[audit_center_mirror.updates]]")
     return MirrorSetup(str(election or ""), str(repository), tuple(updates))
