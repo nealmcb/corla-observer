@@ -74,7 +74,7 @@ def _mark(steps: list[Step]) -> list[Step]:
 
 
 def next_steps(county: str, facts: Facts) -> list[Path]:
-    """The two paths for ``county``, each step marked (see the module documentation)."""
+    """The two paths for ``county``, the RLA sample's first, each step marked (see the module documentation)."""
     q = "?county=" + quote(county)
     links = Step(
         "Make observer links for the county's boards", facts.observer_links > 0, "/coord/links",
@@ -115,9 +115,9 @@ def next_steps(county: str, facts: Facts) -> list[Path]:
             Step(links.text, links.done, links.path, links.detail),
         ],
     )
-    for p in (targeted, rla):
+    for p in (rla, targeted):
         _mark(p.steps)
-    return [targeted, rla]
+    return [rla, targeted]
 
 
 def facts_for(workspace: Workspace, log: EventLog, county: str, *, observer_links: int) -> Facts:

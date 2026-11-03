@@ -7,10 +7,12 @@
 
 <p><a href="{{ url('/coord/flags') }}">Change flags</a>: {{ snap.open_flags|length }} open, {{ snap.high_flags }} of them high severity. The problems below leave out what a flag already reports.</p>
 
+{% if snap.waiting or snap.status_lines %}
 <section>
   <h2>Not yet expected</h2>
   {{ waiting_list(snap) }}
 </section>
+{% endif %}
 
 <section>
   <h2>Problems ({{ snap.problems|length }})</h2>

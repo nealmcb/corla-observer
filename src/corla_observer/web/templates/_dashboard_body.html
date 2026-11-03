@@ -98,10 +98,12 @@
     {% endif %}
   </section>
 
+  {% if snap.waiting or snap.status_lines %}
   <section>
     <h2>Not yet expected</h2>
     {{ waiting_list(snap) }}
   </section>
+  {% endif %}
 
   <section>
     <h2>Data map problems</h2>

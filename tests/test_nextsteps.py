@@ -30,7 +30,7 @@ def test_nothing_yet_then_each_path_moves_on() -> None:
         "Targeted sample": ["done", "done", "done", "done", "done", "next"],
         "RLA sample": ["done", "next", "later", "later", "done"],
     }
-    targeted, rla = next_steps("Delta (2020 demo)", before_seed)
+    rla, targeted = next_steps("Delta (2020 demo)", before_seed)
     assert targeted.steps[-1].path == "/coord/targets?county=Delta%20%282020%20demo%29#drafts" and "1 open draft" in targeted.steps[3].detail
     assert "2 observer links so far" in rla.steps[-1].detail and not targeted.finished
     # Sending a list straight from the working list also finishes the draft step; an RLA extract finishes the pull-list step.
