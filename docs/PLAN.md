@@ -491,6 +491,24 @@ runs parallel fetches, uploads and draws against a live server):
   county's latest file of its kind with other bytes is kept and used, with a `replaces_earlier`
   warning naming the file it replaced.
 
+From Neal, 2026-11-03, on the demo deployment:
+
+14. **The public dashboard showed "no seed" and "no contests" as blocking errors** before they
+  were due. The staging already holds both back until due; the demo's `election.toml` predated
+  the replay clock's `time` and was judged at today's date. A Reset rebuilds it. Fixed besides:
+  the dashboard opens with "Where the audit is", the statewide stages (contests chosen,
+  counties' files in CORLA, seed, selections, audit rounds with a floor and a high marker),
+  each done, now or later (`corla_observer.progress`), also in `dashboard.json`.
+15. **"Nothing is still to come before its due time"** was the empty "Not yet expected" list.
+  Fixed: the section is left out when empty.
+16. **A sprint on the demo did nothing, without saying so.** The demo runs no scheduler, and on a
+  replay each cycle applies the next mirror update. Fixed: the scheduler writes a heartbeat;
+  the schedule page says whether one is running and explains a replay, and a sprint is refused
+  where it would do nothing. The note on results now says a sprint crawls the Audit Center only.
+17. **No way to watch what the server is doing.** Fixed: the coordinators' Activity page lists the
+  latest events, newest first, filterable by kind, and updates itself as events arrive.
+18. **Next steps: the RLA sample path first**, on the left. Fixed.
+
 ## Open questions
 
 1. When will each county's pull list reach the coordinator: after the drawing on 16 Nov, or only on audit day?
