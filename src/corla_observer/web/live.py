@@ -11,10 +11,13 @@
     (`corla_observer.totals`), one line per difference, the flagged ones
     first.
 ``GET /coord/schedule``
-    The crawl schedule's windows, what the scheduler would do now, any
-    sprint, the latest cycles, and when each audit center file was first
-    seen (`corla_observer.schedule`); forms to start and stop a sprint
-    (``POST /coord/schedule/sprint``, ``/coord/schedule/stop``).
+    The crawl schedule's windows, whether a scheduler is running for the
+    workspace (its heartbeat), what it would do now, any sprint, the latest
+    cycles, and when each audit center file was first seen
+    (`corla_observer.schedule`); forms to start and stop a sprint
+    (``POST /coord/schedule/sprint``, ``/coord/schedule/stop``). A sprint
+    is refused where no scheduler runs, and on a past election replayed
+    from the public mirror, where each cycle steps to the next update.
 ``GET /coord/walkthrough``
     In a walkthrough workspace (`corla_observer.walkthrough`), its steps
     with their simulated times, and a button that applies the next step
@@ -27,6 +30,8 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
@@ -84,7 +89,8 @@ async def coord_estimates(request: Request) -> Response:
 
 
 def _schedule_view(state: Any) -> dict[str, Any]:
-    from corla_observer.schedule import ScheduleError, active_sprint, decide, last_cycle_start, load_schedule
+    from corla_observer.schedule import ScheduleError, active_sprint, decide, last_cycle_start, load_schedule, scheduler_running, scheduler_seen
+    from corla_observer.web.coordinator import _crawl_off
 
     now = format_server_time(datetime.now(UTC))
     try:
@@ -108,6 +114,9 @@ def _schedule_view(state: Any) -> dict[str, Any]:
         "sprint": sprint,
         "decision": decide(schedule, sprint, last_cycle_start(state.log), now),
         "cycles": cycles[-12:][::-1],
+        "scheduler_seen": scheduler_seen(state.workspace),
+        "scheduler_running": scheduler_running(state.workspace, now),
+        "crawl_off": _crawl_off(state),
         "first_seen": sorted(first_seen.items(), key=lambda kv: kv[1]),
     }
 
@@ -130,6 +139,9 @@ async def start_sprint(request: Request) -> Response:
     session, form = await checked_form(request)
     if state.walkthrough:
         return RedirectResponse(state.url("/coord/schedule?msg=A+walkthrough+never+crawls."), status_code=303)
+    refusal = await run_in_threadpool(_sprint_refusal, state)
+    if refusal:
+        return RedirectResponse(state.url("/coord/schedule?" + urlencode({"msg": refusal})), status_code=303)
     try:
         minutes = int(str(form.get("minutes") or "180"))
         every = int(str(form.get("every") or "60"))
@@ -137,6 +149,19 @@ async def start_sprint(request: Request) -> Response:
     except ValueError as exc:
         return RedirectResponse(state.url(f"/coord/schedule?msg={str(exc)[:80]}"), status_code=303)
     return RedirectResponse(state.url("/coord/schedule?msg=Sprint+requested:+the+scheduler+picks+it+up+within+20+seconds."), status_code=303)
+
+
+def _sprint_refusal(state: Any) -> str | None:
+    """Why a sprint would do nothing here, or None."""
+    from corla_observer.schedule import scheduler_running
+    from corla_observer.web.coordinator import _crawl_off
+
+    off = _crawl_off(state)
+    if off and off.get("mode") == "mirror":
+        return "No sprint on a replayed election: each cycle applies the next mirror update. Use Fetch now on the home page to step through it."
+    if not scheduler_running(state.workspace, format_server_time(datetime.now(UTC))):
+        return "No sprint: no scheduler is running for this workspace, so nothing would carry it out. Fetch now on the home page runs one cycle."
+    return None
 
 
 @router.post("/coord/schedule/stop")

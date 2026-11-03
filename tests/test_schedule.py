@@ -157,6 +157,13 @@ def test_loop_is_idle_before_the_first_window_then_runs(tmp_path: Path) -> None:
         cycles = [e for e in log.iter_events() if e.kind == "schedule.cycle"]
     assert len(cycles) == 1 and cycles[0].data["window"] == "target list"
     assert any("idle" in line for line in lines)
+    # The loop's heartbeat: the time it last looked, so the pages know a scheduler is running.
+    from corla_observer.events import format_server_time
+    from corla_observer.schedule import scheduler_running, scheduler_seen
+
+    seen = scheduler_seen(ws)
+    assert seen is not None and seen <= format_server_time(clock()) and scheduler_running(ws, format_server_time(clock()))
+    assert not scheduler_running(ws, format_server_time(clock() + timedelta(hours=1)))
 
 
 def test_cli(tmp_path: Path) -> None:

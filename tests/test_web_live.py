@@ -3,13 +3,15 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi.testclient import TestClient
 
 from corla_observer.election import init_setup
 from corla_observer.events import EventLog
-from corla_observer.schedule import init_schedule
+from corla_observer.events import format_server_time
+from corla_observer.schedule import beat, init_schedule
 from corla_observer.workspace import Workspace
 from synthetic import election_files
 from test_datamap import fetch
@@ -45,6 +47,15 @@ def test_schedule_page_and_sprint(workspace: Path, make_client: Factory) -> None
     login(client)
     page = client.get("/coord/schedule")
     assert page.status_code == 200 and "roll day" in page.text and "idle" in page.text
+    # No scheduler has looked at the workspace: the page says so, and a sprint is refused.
+    assert "never seen for this workspace" in page.text and "Start the sprint</button>" in page.text and " disabled>Start the sprint" in page.text
+    refused = client.post("/coord/schedule/sprint", data={"csrf": csrf_of(page), "minutes": "30", "every": "60"}, follow_redirects=False)
+    assert "no+scheduler+is+running" in refused.headers["location"]
+    assert "every 60 s until" not in client.get("/coord/schedule").text
+    # A scheduler's heartbeat: running, and the sprint is taken.
+    beat(Workspace.open(workspace), format_server_time(datetime.now(UTC)))
+    page = client.get("/coord/schedule")
+    assert "running" in page.text and " disabled>Start the sprint" not in page.text
     started = client.post("/coord/schedule/sprint", data={"csrf": csrf_of(page), "minutes": "30", "every": "60"}, follow_redirects=False)
     assert started.status_code == 303
     assert "every 60 s until" in client.get("/coord/schedule").text

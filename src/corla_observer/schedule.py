@@ -56,6 +56,12 @@ interval (at least `MIN_SPRINT_SECONDS`) until the time given, whatever
 the schedule says; ``schedule.sprint_stopped`` ends it early. `sprint`
 runs one in the foreground instead, for when no loop is running.
 
+**Heartbeat.** The loop writes the workspace's ``scheduler.heartbeat``
+(`HEARTBEAT_FILENAME`: its process ID and the time) each time it looks,
+at least every `MAX_SLEEP_SECONDS` while idle, so the web pages can tell
+whether a scheduler is running for the workspace (`scheduler_seen`): a
+sprint requested where none runs would do nothing.
+
 **Keeping a sprite awake.** On a Fly.io sprite, which pauses when idle,
 the loop holds a Sprites "task" (``/.sprite/api.sock``, refreshed every
 minute with a 5-minute expiry) while ``keep_awake`` (in the schedule file)
@@ -104,6 +110,10 @@ ACTOR = "system"
 MIN_SPRINT_SECONDS = 30
 #: Longest the loop sleeps before looking again (so edits and sprint requests are seen soon).
 MAX_SLEEP_SECONDS = 20.0
+#: The loop's heartbeat file in the workspace.
+HEARTBEAT_FILENAME = "scheduler.heartbeat"
+#: A heartbeat at most this old means a scheduler is running (a cycle may take a few minutes without one).
+HEARTBEAT_FRESH_SECONDS = 600
 SPRITE_SOCKET = "/.sprite/api.sock"
 SPRITE_TASK = "corla-observer-schedule"
 KEEP_AWAKE = ("always", "windows", "never")
@@ -667,6 +677,30 @@ def _wants_awake(schedule: Schedule | None, sprint: Sprint | None, now: str) -> 
     return schedule.window_at(now) is not None or (schedule.next_start(now) or "~") <= soon
 
 
+def beat(workspace: Workspace, now: str) -> None:
+    """Write the loop's heartbeat (its process ID and ``now``), replacing the last."""
+    path = workspace.root / HEARTBEAT_FILENAME
+    temporary = path.with_suffix(".tmp")
+    temporary.write_text(json.dumps({"pid": os.getpid(), "time": now}) + "\n", encoding="utf-8")
+    temporary.replace(path)
+
+
+def scheduler_seen(workspace: Workspace) -> str | None:
+    """When a scheduler loop last looked at this workspace (UTC, as recorded), or None if never."""
+    try:
+        found = json.loads((workspace.root / HEARTBEAT_FILENAME).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    moment = found.get("time") if isinstance(found, dict) else None
+    return moment if isinstance(moment, str) else None
+
+
+def scheduler_running(workspace: Workspace, now: str) -> bool:
+    """Whether a scheduler loop looked at this workspace within `HEARTBEAT_FRESH_SECONDS` of ``now``."""
+    seen = scheduler_seen(workspace)
+    return seen is not None and _seconds_between(seen, now) <= HEARTBEAT_FRESH_SECONDS
+
+
 def run_loop(
     workspace_dir: Path,
     *,
@@ -684,6 +718,7 @@ def run_loop(
     last_reason = None
     while not stop():
         now = format_server_time(clock())
+        beat(workspace, now)
         try:
             schedule = load_schedule(workspace)
             error = None

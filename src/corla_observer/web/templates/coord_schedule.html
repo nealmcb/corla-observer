@@ -6,6 +6,8 @@
 {% if message %}<p class="notice" role="status">{{ message }}</p>{% endif %}
 {% if schedule_error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> schedule.toml: {{ schedule_error }}</p>{% endif %}
 <p>The scheduler (<code>corla-observer schedule run</code>, a service of its own) runs a cycle whenever this schedule or a sprint says: the crawl, the results, flags, estimates and, after the roll, the prediction and interim extracts. Edit the workspace's <code>schedule.toml</code> to change it.</p>
+{% if crawl_off and crawl_off.mode == 'mirror' %}<p class="notice"><span aria-hidden="true">&#9675;</span> A past election replayed from the public mirror: each cycle applies the <em>next</em> mirror update ({{ crawl_off.applied }} of {{ crawl_off.total }} applied), so a schedule or a sprint would step through the replay on its own. Use <strong>Fetch now</strong> on the <a href="{{ url('/coord') }}">home page</a> to step one update at a time; sprints are off here.</p>{% endif %}
+<p><strong>Scheduler:</strong> {% if scheduler_running %}{{ badge('ok', 'running') }} last looked {{ scheduler_seen|local }}{% else %}{{ badge('missing', 'not running') }} {% if scheduler_seen %}last seen {{ scheduler_seen|local }}{% else %}never seen for this workspace{% endif %}: the schedule and sprints do nothing here; <strong>Fetch now</strong> on the home page runs one cycle.{% endif %}</p>
 <p><strong>Now:</strong> {% if decision.due %}{{ badge('ok', 'a cycle is due') }}{% else %}{{ badge('normal', 'idle') }}{% endif %} {{ decision.reason }}</p>
 {% if sprint %}<p>{{ badge('warning', 'sprint') }} every {{ sprint.every_seconds }} s until {{ sprint.until|local }}, requested by {{ sprint.actor }}</p>{% endif %}
 
@@ -13,10 +15,10 @@
   <form method="post" action="{{ url('/coord/schedule/sprint') }}" class="card form">
     <h2>Sprint (roll morning)</h2>
     <input type="hidden" name="csrf" value="{{ csrf }}">
-    <p>Crawl continuously, whatever the schedule says (results are not fetched in a sprint).</p>
+    <p>Crawl the Audit Center over and over, every so many seconds, whatever the schedule says; for roll morning, to see CORLA's postings as soon as they appear. A sprint crawls the Audit Center only: the election night results are not gathered during one.</p>
     <label>For (minutes) <input name="minutes" type="number" min="1" max="1440" value="180" inputmode="numeric"></label>
     <label>Every (seconds, at least 30) <input name="every" type="number" min="30" value="60" inputmode="numeric"></label>
-    <button type="submit">Start the sprint</button>
+    <button type="submit"{% if not scheduler_running or (crawl_off and crawl_off.mode == 'mirror') %} disabled{% endif %}>Start the sprint</button>
   </form>
   <form method="post" action="{{ url('/coord/schedule/stop') }}" class="card form">
     <h2>Stop a sprint</h2>
