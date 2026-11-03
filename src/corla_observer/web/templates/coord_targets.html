@@ -93,7 +93,7 @@
 
 <section id="list">
   <h2>The working list</h2>
-  <p class="meta">The union of the sources checked below, each ballot once, in CORLA's pull order (storage location, tabulator, batch, record). Uncheck a source to leave its ballots out; it stays on record. <strong>Send to county</strong> freezes the list as Targeted list {{ next_number }}; what is added afterwards goes into the next list.</p>
+  <p class="meta">The union of the sources checked below, each ballot once, in CORLA's pull order (storage location, tabulator, batch, record). Uncheck a source to leave its ballots out; it stays on record. <strong>Send to county</strong> freezes the list as Targeted list {{ next_number }}; <strong>Make draft</strong> freezes it as Draft {{ next_draft }} instead, with its extract and printouts, to decide later. What is added afterwards goes into the next list.</p>
   <h3>Sources</h3>
   {% if sources %}
   <div class="table-wrap"><table class="data targets-table targets-sources">
@@ -142,8 +142,44 @@
     <label>Audit boards <input type="number" name="boards" min="1" max="{{ max_extract_boards }}" value="1"></label>
     <button type="submit">Send to county: make Targeted list {{ next_number }}</button>
   </form>
+  <p class="meta">Press <strong>Send to county</strong> when you send the list to the county. Not sure yet? <strong>Make draft</strong> gives these ballots an extract, printouts and a spreadsheet as <strong>Draft {{ next_draft }}</strong>, without sending anything: {% if drafts_shown %}observers see it too (testing mode or a test county){% else %}only coordinators see it, not observers or the public{% endif %}, it counts toward no total, and later draws skip its ballots. Send it or discard it under Drafts.</p>
+  <form method="post" action="{{ url('/coord/targets/draft') }}" class="actions">
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}">
+    <label>Audit boards <input type="number" name="boards" min="1" max="{{ max_extract_boards }}" value="1"></label>
+    <button type="submit" class="secondary">Make Draft {{ next_draft }} (not sent)</button>
+  </form>
   {% else %}<p class="muted">Empty: check a source above, draw from a pattern, or enter imprinted IDs.</p>{% endif %}
 </section>
+
+{% if drafts %}
+<section id="drafts">
+  <h2>Drafts</h2>
+  <p class="meta">Lists made but not sent to the county. {% if drafts_shown %}Observers see them in the list at the top of their page (testing mode or a test county); the public dashboard shows them as "Draft N".{% else %}Only coordinators see them.{% endif %} Their ballots are held: draws skip them until a draft is discarded. Sending one makes it the next Targeted list, with its extract built again under that name.</p>
+  {% for v in drafts %}{% set x = v.item %}
+  <article class="card target-sent target-draft" id="{{ x.key }}">
+    <h3>{{ x.name }} {{ badge('warning', 'not sent') }}</h3>
+    <p class="meta">Made <span class="nowrap">{{ x.built|local }}</span> by {{ x.actor }} &middot; {{ x.ballots }} ballot{{ '' if x.ballots == 1 else 's' }}{% if v.entries|selectattr('in_rla')|list %}, {{ v.entries|selectattr('in_rla')|list|length }} also in the RLA sample{% endif %} &middot; extract <code class="hash">{{ x.sha256|h12 }}</code>{% if x.record_sha256 %} &middot; record <code class="hash">{{ x.record_sha256|h12 }}</code> (<a href="{{ url('/coord/targets/sent/record') }}?county={{ county|urlencode }}&amp;list={{ x.key }}">download</a>){% endif %}</p>
+    {% if v.sources %}<p class="meta">Sources: {% for s in v.sources %}{% if s.kind == 'draw' %}draw {{ s.draw }} ({{ s.description }}){% else %}entered by ID ({{ s.ballots }}{% if s.note %}: {{ s.note }}{% endif %}){% endif %}{% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
+    <p class="actions">{% for b in x.boards %}{% for layout in v.layouts %}<a class="nowrap" href="{{ url('/coord/extract/pdf') }}?county={{ county|urlencode }}&amp;board={{ b }}&amp;layout={{ layout }}&amp;list={{ x.key }}" download>PDF{% if x.boards|length > 1 %} board {{ b }}{% endif %}, {{ layout_label(layout) }}</a>{% if not loop.last %} &middot; {% endif %}{% endfor %}{% if not loop.last %} &middot; {% endif %}{% endfor %} &middot; <a href="{{ url('/coord/targets/sent/csv') }}?county={{ county|urlencode }}&amp;list={{ x.key }}">CSV</a></p>
+    <details><summary>Ballots ({{ v.entries|length }})</summary>
+      <div class="table-wrap"><table class="data targets-table">
+        <thead><tr><th class="num">#</th><th>Imprinted ID</th><th>Storage location</th><th>From</th></tr></thead>
+        <tbody>{% for e in v.entries %}<tr><td class="num">{{ loop.index }}</td><td class="nowrap"><code>{{ e.imprinted_id }}</code>{% if e.in_rla %} {{ badge('warning', 'also in the RLA sample') }}{% endif %}</td><td>{{ e.location or '' }}</td><td class="nowrap">{{ e.sources|join(', ') }}</td></tr>{% endfor %}</tbody>
+      </table></div>
+    </details>
+    <form method="post" action="{{ url('/coord/targets/send') }}" class="actions">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="draft" value="{{ x.key }}">
+      <label>Audit boards <input type="number" name="boards" min="1" max="{{ max_extract_boards }}" value="{{ x.boards|length or 1 }}"></label>
+      <button type="submit">Send to county: make Targeted list {{ next_number }}</button>
+    </form>
+    <form method="post" action="{{ url('/coord/targets/draft/discard') }}" class="actions">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="draft" value="{{ x.key }}">
+      <button type="submit" class="secondary small">Discard {{ x.name }}</button> <span class="meta">Its sources go back to the working list, excluded, and stay on record.</span>
+    </form>
+  </article>
+  {% endfor %}
+</section>
+{% endif %}
 
 <section id="sent">
   <h2>Sent lists</h2>

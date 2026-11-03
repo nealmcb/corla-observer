@@ -421,7 +421,13 @@ Each item names its source and its state: open, fixed (with the commit) or decid
 
 From Neal's demo, 2026-10-29:
 
-1. **Next steps.** The pages should recommend what to do next, e.g. "upload a CVR". Open.
+1. **Next steps.** The pages should recommend what to do next, e.g. "upload a CVR". Before the
+  seed, coordinators will explore targeted patterns, extracts and observer links, so the pages
+  should guide two paths, the targeted sample and the RLA sample, and making an extract must not
+  commit to sending it. Drafts done (docs/TARGETING.md, "Drafts"): a draft has an extract and
+  printouts, is seen only by coordinators (and observers in testing mode or for a test county),
+  and is later sent as Targeted list N or discarded, freeing its ballots. The next-step guidance
+  on the coordinator pages is open.
 2. **The data map early in an election** is distracting and suggests the wrong things. Before
   there is data to audit it should not expect or suggest a seed, warn about missing contests,
   expect a pull list before the seed, or report that there are no selections. Fixed for

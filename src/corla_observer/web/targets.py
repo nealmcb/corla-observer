@@ -37,11 +37,19 @@ counts are never on a public page):
 ``GET /coord/targets/list/csv?county=C``
     The working list as CSV.
 ``POST /coord/targets/send``
-    Send the working list to the county (`corla_observer.targets.send`):
-    Targeted list N, with its extract, printouts, CSV and email text; the
-    sources sent leave the working list. Sends run one at a time.
+    Send the working list to the county (`corla_observer.targets.send`),
+    or a draft (``draft``, its key): Targeted list N, with its extract,
+    printouts, CSV and email text; the sources sent leave the working list.
+    Sends run one at a time.
+``POST /coord/targets/draft``
+    Make the working list a draft (`corla_observer.targets.make_draft`):
+    Draft N, with its extract, printouts and CSV, not sent to the county;
+    observers see it only in testing mode (`AppConfig.reset_command`) or
+    for a test county.
+``POST /coord/targets/draft/discard``
+    Discard a draft (``draft``): its sources return to the working list, excluded.
 ``GET /coord/targets/sent/csv?county=C&list=KEY``, ``.../sent/record``
-    A sent list as CSV, and its stored list record.
+    A sent list or a draft as CSV, and its stored list record.
 ``POST /coord/targets/lists``
     Retire or restore a sent list (hidden from observers' switchers and the
     public dashboard), or publish or withdraw its details on the public
@@ -89,6 +97,8 @@ MESSAGES = {
     "published": "The list's details are published on the public dashboard.",
     "withdrawn": "The list's details are off the public dashboard (the log keeps them).",
     "allowed": "Allowed total recorded.",
+    "drafted": "Draft made: its extract and printouts are below, under Drafts. Nothing has been sent to the county.",
+    "discarded": "Draft discarded: its sources are back in the working list, excluded, and its ballots can be drawn again.",
 }
 MAX_ADDED = 12
 #: Longest list of imprinted IDs entered at once: room for a full working list (`MAX_LIST`) pasted one per line,
@@ -235,7 +245,7 @@ def _sent_views(state: WebState, county: str, lists: list[pulllists.PullList]) -
                     seen.add(b["position"])
                     entries.append(tg.Entry(str(b["imprinted_id"]), location=b.get("location"), in_rla=bool(b.get("in_rla"))))
         details = [f"Extract {item.sha256[:12]}" + (f"; record {item.record_sha256[:16]}" if item.record_sha256 else "")]
-        email = tg.list_email(county, item.label, entries, f"sent {item.built[:10]}", details)
+        email = tg.list_email(county, item.label, entries, f"{'drafted' if item.draft else 'sent'} {item.built[:10]}", details)
         sources = list((record or {}).get("sources") or []) if record and int(record.get("format") or 1) >= 2 else [
             {"kind": "draw", "description": f"{p.get('name')}: {p.get('description')}", "draw": p.get("draw")} for p in (record or {}).get("patterns") or []
         ]
@@ -265,9 +275,10 @@ def _page(state: WebState, request: Request, session: Session, county: str | Non
     entries = tg.working_list(found, data.votes, data.locations, data.sizes, rla)
     today = datetime.now(UTC).strftime("%Y-%m-%d")
     every = pulllists.county_lists(state.log.iter_events(), county, retired=True)
-    lists = [x for x in every if x.targeted]
+    lists = [x for x in every if x.targeted and not x.draft]
     active = [x for x in lists if not x.retired]
     sent = _sent_views(state, county, lists)
+    drafts = _sent_views(state, county, pulllists.open_drafts(state.log.iter_events(), county))
     just_sent_key = request.query_params.get("list", "")
     just_sent = next((v for v in sent if v.item.key == just_sent_key), None) if request.query_params.get("msg") == "sent" else None
     distinct = {e.imprinted_id for v in sent if not v.item.retired for e in v.entries}
@@ -277,6 +288,7 @@ def _page(state: WebState, request: Request, session: Session, county: str | Non
         for p in tg.presets(data.shown)
     ]
     number, _ = tg.next_list_number(state.log, county)
+    draft_number, _ = tg.next_draft_number(state.log, county)
     return state.render(
         request,
         "coord_targets.html",
@@ -301,7 +313,10 @@ def _page(state: WebState, request: Request, session: Session, county: str | Non
         list_email=tg.list_email(county, "Working targeted list (not yet sent)", entries, today) if entries else "",
         sent=sent,
         just_sent=just_sent,
+        drafts=drafts,
+        drafts_shown=_drafts_shown(state, county),
         next_number=number,
+        next_draft=draft_number,
         has_rla=any(not x.targeted for x in every),
         layout_label=layout_label,
         active_total=sum(x.ballots for x in active),
@@ -321,6 +336,11 @@ def _page(state: WebState, request: Request, session: Session, county: str | Non
         **extra,
         **_common(state, session),
     )
+
+
+def _drafts_shown(state: WebState, county: str) -> bool:
+    """Whether observers see a draft made now: in testing mode, or for a test county."""
+    return state.config.reset_command is not None or is_test_county(county)
 
 
 def warm(state: WebState) -> None:
@@ -636,6 +656,9 @@ async def send_list(request: Request) -> Response:
     session, form = await checked_form(request)
     county = _form_county(form)
     boards_text = str(form.get("boards") or "1").strip()
+    draft = str(form.get("draft") or "") or None
+    if draft is not None and not re.fullmatch(r"t-[0-9a-f]{12}", draft):
+        raise HTTPException(status_code=400, detail="No such draft.")
 
     def run() -> tg.SentList | str:
         try:
@@ -645,7 +668,7 @@ async def send_list(request: Request) -> Response:
         data = _load(state, county)
         try:
             return tg.send(state.workspace, state.log, county, session.actor, votes=data.votes, locations=data.locations, sizes=data.sizes,
-                           boards=boards, session_id=session.label)  # fmt: skip
+                           boards=boards, session_id=session.label, draft=draft)  # fmt: skip
         except (tg.DrawError, ExtractError) as exc:
             return str(exc)
 
@@ -655,12 +678,59 @@ async def send_list(request: Request) -> Response:
     return RedirectResponse(_url(state, "/coord/targets", county=county, msg="sent", list=outcome.key) + "#sent", status_code=303)
 
 
+@router.post("/coord/targets/draft")
+async def make_draft(request: Request) -> Response:
+    state = get_state(request)
+    session, form = await checked_form(request)
+    county = _form_county(form)
+    boards_text = str(form.get("boards") or "1").strip()
+
+    def run() -> tg.SentList | str:
+        try:
+            boards = _boards(boards_text)
+        except ValueError:
+            return f"the audit boards must be 1 to {MAX_BOARDS}"
+        data = _load(state, county)
+        try:
+            return tg.make_draft(state.workspace, state.log, county, session.actor, votes=data.votes, locations=data.locations, sizes=data.sizes,
+                                 boards=boards, shown=_drafts_shown(state, county), session_id=session.label)  # fmt: skip
+        except (tg.DrawError, ExtractError) as exc:
+            return str(exc)
+
+    outcome = await run_in_threadpool(run)
+    if isinstance(outcome, str):
+        return await run_in_threadpool(_problem, state, request, session, county, outcome)
+    return RedirectResponse(_url(state, "/coord/targets", county=county, msg="drafted") + f"#{outcome.key}", status_code=303)
+
+
+@router.post("/coord/targets/draft/discard")
+async def discard_draft(request: Request) -> Response:
+    state = get_state(request)
+    session, form = await checked_form(request)
+    county = _form_county(form)
+    key = str(form.get("draft") or "")
+    if not re.fullmatch(r"t-[0-9a-f]{12}", key):
+        raise HTTPException(status_code=400, detail="No such draft.")
+
+    def run() -> str | None:
+        try:
+            tg.discard_draft(state.log, county, key, session.actor, session_id=session.label)
+        except tg.DrawError as exc:
+            return str(exc)
+        return None
+
+    problem = await run_in_threadpool(run)
+    if problem is not None:
+        return await run_in_threadpool(_problem, state, request, session, county, problem)
+    return RedirectResponse(_url(state, "/coord/targets", county=county, msg="discarded") + "#list", status_code=303)
+
+
 def _sent_list(state: WebState, request: Request) -> tuple[str, pulllists.PullList]:
     county = _county(request)
     key = request.query_params.get("list", "")
     if county is None or not re.fullmatch(r"t-[0-9a-f]{12}", key):
         raise HTTPException(status_code=404, detail="No such list.")
-    item = pulllists.find_list(state.log.iter_events(), county, key, retired=True)
+    item = pulllists.find_list(state.log.iter_events(), county, key, retired=True, drafts=True)
     if item is None or not item.targeted:
         raise HTTPException(status_code=404, detail="No such list.")
     return county, item

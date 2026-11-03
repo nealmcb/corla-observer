@@ -435,6 +435,56 @@ def test_sources_the_working_list_and_sending(tmp_path: Path) -> None:
         assert all("Hal Gov" not in json.dumps(e.data) for e in log.iter_events())
 
 
+def test_drafts_made_discarded_and_sent(tmp_path: Path) -> None:
+    store, root = _workspace(tmp_path)
+    votes = tg.load_votes(tmp_path / "files" / "cvr.csv")
+    s, g = contest(votes, SENATE), contest(votes, GOVERNOR)
+    kw: dict[str, Any] = {}
+    with EventLog.open(root) as log:
+        manifest = county_manifest(store, log, COUNTY)
+        kw = {"votes": votes, "locations": manifest.locations, "sizes": manifest.sizes}
+        first = _recorded_draw(store, log, votes, {s.index: [0], g.index: [1]}, size=3)
+        draft = tg.make_draft(store, log, COUNTY, ACTOR, **kw)
+        assert draft.number == 1 and draft.name == "Draft 1" and draft.sources == ["draw 1"] and len(draft.entries) == 3
+        record = json.loads(store.get_bytes(draft.record_sha256))
+        assert record["draft"] is True and "not sent to the county" in record["note"]
+        # A draft: out of the working list, off observers' lists (not shown), held from later draws, not a numbered list.
+        assert tg.working_sources(tg.sources(store, log, COUNTY)) == [] and tg.working_list(tg.sources(store, log, COUNTY), **kw) == []
+        assert pulllists.county_lists(log.iter_events(), COUNTY) == [] and pulllists.all_lists(log.iter_events()) == {}
+        (item,) = pulllists.open_drafts(log.iter_events(), COUNTY)
+        assert item.draft and not item.shown and item.label == "Draft 1 (not sent)" and item.number == 1
+        with pytest.raises(tg.DrawError, match="in Draft 1"):
+            tg.set_included(log, COUNTY, "draw 1", False, ACTOR)
+        second = _recorded_draw(store, log, votes, {s.index: [0], g.index: [1]}, size=2)
+        assert not set(second.ids) & set(first.ids) and {c["held_by"] for c in second.collisions} <= {"Draft 1"}
+        assert tg.next_list_number(log, COUNTY) == (1, "Targeted list 1")
+        # A second draft alongside; discarding the first frees its ballots and returns its source, excluded.
+        other = tg.make_draft(store, log, COUNTY, ACTOR, **kw)
+        assert other.name == "Draft 2" and other.sources == ["draw 2"]
+        tg.discard_draft(log, COUNTY, draft.key, ACTOR)
+        with pytest.raises(tg.DrawError, match="no such draft"):
+            tg.discard_draft(log, COUNTY, draft.key, ACTOR)
+        assert [x.name for x in pulllists.open_drafts(log.iter_events(), COUNTY)] == ["Draft 2"]
+        (back,) = tg.working_sources(tg.sources(store, log, COUNTY))
+        assert back.id == "draw 1" and not back.included and back.drafted_in is None
+        assert not set(first.ids) & set(tg.holders(store, log, COUNTY, tg.sources(store, log, COUNTY)))
+        # Sending Draft 2: Targeted list 1, its extract built again under that name; the draft is closed.
+        sent = tg.send(store, log, COUNTY, ACTOR, draft=other.key, **kw)
+        assert sent.name == "Targeted list 1" and sent.sources == ["draw 2"] and [e.imprinted_id for e in sent.entries] == [e.imprinted_id for e in other.entries]
+        assert [e for e in log.iter_events() if e.kind == "targets.sent"][-1].data["draft"] == other.key
+        assert pulllists.open_drafts(log.iter_events(), COUNTY) == []
+        assert [x.label for x in pulllists.county_lists(log.iter_events(), COUNTY)] == ["Targeted list 1"]
+        with pytest.raises(tg.DrawError, match="no such draft"):
+            tg.send(store, log, COUNTY, ACTOR, draft=other.key, **kw)
+        # The excluded source is still in the working list; a shown draft is on observers' lists while open.
+        tg.set_included(log, COUNTY, "draw 1", True, ACTOR)
+        shown = tg.make_draft(store, log, COUNTY, ACTOR, shown=True, **kw)
+        assert shown.name == "Draft 3" and [x.label for x in pulllists.county_lists(log.iter_events(), COUNTY)] == ["Targeted list 1", "Draft 3 (not sent)"]
+        # An RLA extract built now marks the sent list's ballots as previously targeted, never a draft's.
+        rla = build_extract(store, log, COUNTY, actor=ACTOR, sample_count=6)
+        assert {x["list"] for x in rla.extract["checks"].get("previously_targeted") or []} <= {"Targeted list 1"}
+
+
 def test_overlaps_are_marked_both_ways(tmp_path: Path) -> None:
     store, root = _workspace(tmp_path)
     votes = tg.load_votes(tmp_path / "files" / "cvr.csv")
@@ -568,6 +618,43 @@ def test_the_county_last_worked_on_is_remembered(tmp_path: Path) -> None:
         assert "Choose a pattern" not in client.get("/coord/targets?county=").text
         client.cookies.set("corla_county", "Atlantis")
         assert '<option value="" selected>Choose a county</option>' in client.get("/coord/links").text
+
+
+def test_drafts_on_the_coordinator_page(tmp_path: Path) -> None:
+    _, root = _workspace(tmp_path)
+    app = create_app(AppConfig(workspace=root, secret=b"s" * 32, crawl=lambda ws, log: None))
+    votes = tg.load_votes(tmp_path / "files" / "cvr.csv")
+    s, g = contest(votes, SENATE), contest(votes, GOVERNOR)
+    with TestClient(app, base_url="https://testserver") as client:
+        assert login(client).status_code == 303
+        csrf = csrf_of(client.get(f"/coord/targets?county={COUNTY}"))
+        selection = client.get(f"/coord/targets/count?county={COUNTY}&v={s.index}:0&v={g.index}:1").json()["selection"]
+        draw = {"csrf": csrf, "county": COUNTY, "selection": selection, "seed": "x", "size": "3"}
+        assert client.post("/coord/targets/draw", data=draw, follow_redirects=False).status_code == 303
+        assert "Make Draft 1 (not sent)" in client.get(f"/coord/targets?county={COUNTY}").text
+        made = client.post("/coord/targets/draft", data={"csrf": csrf, "county": COUNTY, "boards": "1"}, follow_redirects=False)
+        key = targeted_key("Draft 1")
+        assert made.status_code == 303 and "msg=drafted" in made.headers["location"] and made.headers["location"].endswith(f"#{key}")
+        page = client.get(made.headers["location"]).text
+        assert "Draft made" in page and '<section id="drafts">' in page and "Observers see them" in page  # a test county
+        assert "Empty: check a source above" in page and f"list={key}\" download>PDF, portrait" in page
+        assert client.get(f"/coord/extract/pdf?county={COUNTY}&board=1&layout=portrait-2&list={key}").content.startswith(b"%PDF")
+        assert len(client.get(f"/coord/targets/sent/csv?county={COUNTY}&list={key}").content.decode("utf-8-sig").splitlines()) == 4
+        assert "Draft 1" not in client.get("/coord/extract").text  # drafts are on this page only
+        # Discard: the source returns, excluded; then draft again and send the draft.
+        gone = client.post("/coord/targets/draft/discard", data={"csrf": csrf, "county": COUNTY, "draft": key}, follow_redirects=False)
+        assert gone.status_code == 303 and "msg=discarded" in gone.headers["location"]
+        page = client.get(gone.headers["location"]).text
+        assert "Draft discarded" in page and '<section id="drafts">' not in page and 'class="is-excluded"' in page
+        assert client.post("/coord/targets/draft/discard", data={"csrf": csrf, "county": COUNTY, "draft": key}).status_code == 400
+        assert client.post("/coord/targets/include", data={"csrf": csrf, "county": COUNTY, "source": "draw 1", "included": "1"}, follow_redirects=False).status_code == 303
+        assert client.post("/coord/targets/draft", data={"csrf": csrf, "county": COUNTY, "boards": "1"}, follow_redirects=False).status_code == 303
+        second = targeted_key("Draft 2")
+        sent = client.post("/coord/targets/send", data={"csrf": csrf, "county": COUNTY, "boards": "1", "draft": second}, follow_redirects=False)
+        assert sent.status_code == 303 and f"list={targeted_key('Targeted list 1')}" in sent.headers["location"]
+        page = client.get(sent.headers["location"]).text
+        assert "Targeted list 1 sent to the county" in page and "(3 ballots" in page and '<section id="drafts">' not in page
+        assert client.post("/coord/targets/send", data={"csrf": csrf, "county": COUNTY, "boards": "1", "draft": "nonsense"}).status_code == 400
 
 
 def test_the_coordinator_pages(tmp_path: Path) -> None:

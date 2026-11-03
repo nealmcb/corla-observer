@@ -783,6 +783,8 @@ def build_extract(
     list_name: str | None = None,
     source_lists: Mapping[str, str] | None = None,
     list_record: str | None = None,
+    draft: bool = False,
+    shown: bool = False,
 ) -> BuiltExtract:
     """Build, store and record a county's extract from the workspace; see the module documentation.
 
@@ -814,7 +816,9 @@ def build_extract(
     ``source_lists`` tags a combined list's ballots with the list each came
     from (`make_extract`'s ``sources``), and ``list_record`` is the hash of the stored
     list record (`corla_observer.targets.list_record`), named in the
-    event as ``list_record_sha256``.
+    event as ``list_record_sha256``. ``draft`` marks a targeted extract as a
+    draft, not sent to the county (`corla_observer.pulllists`), recorded in
+    the event as ``draft``, with ``shown`` (observers may see it).
 
     The overlaps are marked both ways (docs/TARGETING.md): a targeted
     extract's ballots that the county's RLA extract holds are marked
@@ -941,6 +945,7 @@ def build_extract(
         }
         | (
             {"list": targeted_key(clean_list_name(list_name)), "list_name": clean_list_name(list_name), "list_record_sha256": list_record, "combined": bool(source_lists)}
+            | ({"draft": True, "shown": shown} if draft else {})
             if targeted_sha is not None
             else {}
         ),
@@ -954,7 +959,7 @@ def overlaps(workspace: Workspace, log: EventLog, county: str, *, targeted: bool
     For a targeted extract: the IDs the county's RLA extract holds (and no
     ``targeted_in``). For an RLA extract: each ID an earlier sent targeted
     list holds, with that list's label ("Targeted list 1"), the earliest
-    list first (and no ``in_rla``).
+    list first (and no ``in_rla``). A draft, not sent to the county, marks nothing.
     """
     if targeted:
         found = latest_extract(workspace, log, county)
@@ -963,7 +968,7 @@ def overlaps(workspace: Workspace, log: EventLog, county: str, *, targeted: bool
 
     held: dict[str, str] = {}
     for item in county_lists(log.iter_events(), county, retired=True):
-        if not item.targeted:
+        if not item.targeted or item.draft:
             continue
         try:
             ballots = load(workspace, item)["ballots"]

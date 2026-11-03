@@ -27,6 +27,17 @@ the log never built, or without a hash, counts for the RLA sample), and
 `events_for` keeps a list's entries apart from every other list's, for the
 progress counts, statistics, comparisons and the observer page.
 
+A coordinator may also make a **draft** (`corla_observer.targets.make_draft`):
+the working list's extract, built under the name "Draft N" before deciding to
+send it, so it can be printed and checked. A draft is `PullList.draft`,
+numbered among the drafts, and is not a targeted list: it counts toward no
+total, marks no RLA ballot as previously targeted, and is left out of
+`all_lists` and `county_lists` (so off observers' switchers, the statistics
+and the public dashboard) unless asked for with ``drafts``, or unless it was
+made ``shown`` (in testing mode, or for a test county). Once sent (it then
+becomes the next Targeted list N, with its own extract) or discarded, it is
+`PullList.closed` and hidden everywhere but the coordinator's record.
+
 A coordinator can **retire** a targeted list (`retire`), which hides it from
 observers' switchers and from the public dashboard until it is restored
 (`restore`) or built again under the same name.
@@ -49,6 +60,10 @@ Events:
     ``ids``, the imprinted IDs), ``list_record_sha256``.
 ``extract.details_withdrawn``
     ``county``; ``data``: ``list``, ``list_name``.
+
+Read from `corla_observer.targets` for drafts: ``targets.draft_discarded``
+(``data.list``) closes a draft, and a ``targets.sent`` with ``data.draft``
+closes the draft it was sent from.
 
 Standard library only.
 """
@@ -75,6 +90,7 @@ RESTORED_KIND = "extract.restored"
 PUBLISHED_KIND = "extract.details_published"
 WITHDRAWN_KIND = "extract.details_withdrawn"
 LIST_KINDS = frozenset({RETIRED_KIND, RESTORED_KIND, PUBLISHED_KIND, WITHDRAWN_KIND})
+DISCARDED_KIND = "targets.draft_discarded"
 
 
 @dataclass
@@ -104,18 +120,34 @@ class PullList:
     combined: bool = False
     #: The details a coordinator published (`publish`), shown on the public dashboard, or None.
     published: dict[str, Any] | None = None
+    #: A draft ("Draft N"): built, not sent to the county (see the module documentation).
+    draft: bool = False
+    #: A draft observers and the dashboards may see (made in testing mode or for a test county).
+    shown: bool = False
+    #: A draft discarded, or the key of the targeted list it was sent as.
+    discarded: bool = False
+    sent_as: str | None = None
+
+    @property
+    def closed(self) -> bool:
+        """A draft sent or discarded."""
+        return self.draft and (self.discarded or self.sent_as is not None)
 
     @property
     def label(self) -> str:
-        """How observers and coordinators see it: "RLA sample", "Targeted list N", or "Targeted list N (NAME)" for a list named by the first design."""
+        """How observers and coordinators see it: "RLA sample", "Targeted list N", "Targeted list N (NAME)" for a list named by the first design, or "Draft N (not sent)"."""
         if not self.targeted:
             return RLA_NAME
+        if self.draft:
+            return f"{self.name} (not sent)"
         default = f"Targeted list {self.number}"
         return default if self.name == default else f"{default} ({self.name})"
 
     @property
     def public_label(self) -> str:
-        """How the public dashboard names it, without the name: "RLA sample" or "Targeted list N"."""
+        """How the public dashboard names it, without the name: "RLA sample", "Targeted list N" or "Draft N"."""
+        if self.draft:
+            return f"Draft {self.number}"
         return f"Targeted list {self.number}" if self.targeted else RLA_NAME
 
     def board_ballots(self, board: int) -> int:
@@ -135,8 +167,15 @@ def _name(event: Event) -> str:
     return str(name) if isinstance(name, str) and name else DEFAULT_TARGETED_NAME
 
 
-def all_lists(events: Iterable[Event]) -> dict[str, list[PullList]]:
-    """Every county's pull lists, retired ones too: the RLA sample first, then the targeted lists in the order first built."""
+def _visible(item: PullList, drafts: bool) -> bool:
+    return not item.draft or drafts or (item.shown and not item.closed)
+
+
+def all_lists(events: Iterable[Event], *, drafts: bool = False) -> dict[str, list[PullList]]:
+    """Every county's pull lists, retired ones too: the RLA sample first, then the targeted lists in the order first built, then the drafts.
+
+    Drafts only with ``drafts``, except a shown draft not yet sent or discarded.
+    """
     found: dict[str, dict[str, PullList]] = {}
     for event in events:
         county = event.county
@@ -148,6 +187,7 @@ def all_lists(events: Iterable[Event]) -> dict[str, list[PullList]]:
             before = lists.get(key)
             boards = event.data.get("boards")
             ballots = event.data.get("ballots")
+            draft = key != RLA and bool(event.data.get("draft"))
             item = PullList(
                 county=county,
                 key=key,
@@ -160,12 +200,21 @@ def all_lists(events: Iterable[Event]) -> dict[str, list[PullList]]:
                 order=str(event.data.get("order") or ""),
                 ballots=ballots if isinstance(ballots, int) else 0,
                 boards={str(b): int(n) for b, n in boards.items() if isinstance(n, int)} if isinstance(boards, dict) else {},
-                number=before.number if before else (0 if key == RLA else 1 + sum(1 for x in lists.values() if x.targeted)),
+                number=before.number if before else (0 if key == RLA else 1 + sum(1 for x in lists.values() if x.targeted and x.draft == draft)),
                 shas=[*(before.shas if before else []), event.file_sha256],
                 record_sha256=str(event.data["list_record_sha256"]) if isinstance(event.data.get("list_record_sha256"), str) else None,
                 combined=bool(event.data.get("combined")),
+                draft=draft,
+                shown=draft and bool(event.data.get("shown")),
             )
             lists[key] = item
+        elif event.kind == DISCARDED_KIND or (event.kind == "targets.sent" and isinstance(event.data.get("draft"), str)):
+            closing = found.get(county, {}).get(str(event.data.get("draft") if event.kind == "targets.sent" else event.data.get("list")))
+            if closing is not None and closing.draft:
+                if event.kind == DISCARDED_KIND:
+                    closing.discarded = True
+                else:
+                    closing.sent_as = str(event.data.get("list"))
         elif event.kind in LIST_KINDS:
             item_or_none = found.get(county, {}).get(str(event.data.get("list")))
             if item_or_none is not None and item_or_none.targeted:
@@ -176,17 +225,30 @@ def all_lists(events: Iterable[Event]) -> dict[str, list[PullList]]:
                     item_or_none.published = dict(shown) if isinstance(shown, dict) else None
                 else:
                     item_or_none.published = None
-    return {county: sorted(lists.values(), key=lambda x: (x.targeted, x.number)) for county, lists in found.items()}
+    visible = {county: sorted((x for x in lists.values() if _visible(x, drafts)), key=lambda x: (x.targeted, x.draft, x.number)) for county, lists in found.items()}
+    return {county: lists for county, lists in visible.items() if lists}
 
 
-def county_lists(events: Iterable[Event], county: str, *, board: int | None = None, retired: bool = False) -> list[PullList]:
-    """A county's pull lists (those with ballots on ``board``, if given), without retired ones unless asked."""
-    lists = all_lists(e for e in events if e.county == county).get(county, [])
-    return [x for x in lists if (retired or not x.retired) and (board is None or x.board_ballots(board) > 0)]
+def county_lists(
+    events: Iterable[Event], county: str, *, board: int | None = None, retired: bool = False, drafts: bool = False
+) -> list[PullList]:
+    """A county's pull lists (those with ballots on ``board``, if given), without retired ones unless asked, and drafts as in `all_lists`.
+
+    A draft sent or discarded counts as retired: with ``drafts`` but not ``retired``, the open drafts only.
+    """
+    lists = all_lists((e for e in events if e.county == county), drafts=drafts).get(county, [])
+    return [x for x in lists if (retired or not (x.retired or x.closed)) and (board is None or x.board_ballots(board) > 0)]
 
 
-def find_list(events: Iterable[Event], county: str, key: str, *, board: int | None = None, retired: bool = False) -> PullList | None:
-    return next((x for x in county_lists(events, county, board=board, retired=retired) if x.key == key), None)
+def find_list(
+    events: Iterable[Event], county: str, key: str, *, board: int | None = None, retired: bool = False, drafts: bool = False
+) -> PullList | None:
+    return next((x for x in county_lists(events, county, board=board, retired=retired, drafts=drafts) if x.key == key), None)
+
+
+def open_drafts(events: Iterable[Event], county: str) -> list[PullList]:
+    """The county's drafts not yet sent or discarded, oldest first."""
+    return [x for x in county_lists(events, county, drafts=True) if x.draft]
 
 
 def extract_lists(events: Iterable[Event]) -> dict[str, str]:
@@ -246,7 +308,7 @@ def extract_by_sha(workspace: Workspace, events: Iterable[Event], county: str, s
 def _mark(log: EventLog, kind: str, county: str, key: str, actor: str, session_id: str | None) -> PullList:
     check_actor(actor)
     item = find_list(log.iter_events(), county, key, retired=True)
-    if item is None or not item.targeted:
+    if item is None or not item.targeted or item.draft:
         raise ValueError("no such targeted list")
     log.append(kind, actor, county=county, session_id=session_id, data={"list": key, "list_name": item.name})
     if kind in (RETIRED_KIND, RESTORED_KIND):
@@ -289,7 +351,7 @@ def publish(workspace: Workspace, log: EventLog, county: str, key: str, actor: s
     """
     check_actor(actor)
     item = find_list(log.iter_events(), county, key, retired=True)
-    if item is None or not item.targeted:
+    if item is None or not item.targeted or item.draft:
         raise ValueError("no such targeted list")
     shown = details(workspace, item)
     log.append(

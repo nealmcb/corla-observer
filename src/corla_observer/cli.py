@@ -2037,7 +2037,7 @@ def targets_list(
         county_name, (_, votes), manifest = _targets_county(store, log, county)
         found = tg.sources(store, log, county_name)
         for s in found:
-            where = f"sent in Targeted list {s.sent_in}" if s.sent_in else ("included" if s.included else "excluded")
+            where = f"sent in Targeted list {s.sent_in}" if s.sent_in else (f"in {s.drafted_in} (not sent)" if s.drafted_in else ("included" if s.included else "excluded"))
             typer.echo(f"{s.id}: {s.title}, {len(s.ids)} ballots, {where}: {s.description}")
         entries = tg.working_list(found, votes, manifest.locations, manifest.sizes, tg.rla_ids(store, log, county_name))
     typer.echo(tg.list_email(county_name, "Working targeted list (not yet sent)", entries, datetime.now(UTC).strftime("%Y-%m-%d")), nl=False)

@@ -84,6 +84,19 @@ targeted extract is built (`corla_observer.extract.build_extract` with
 working list. A ballot of the list that the RLA sample also holds is marked
 ``in_rla``, on the record and on the extract.
 
+**Drafts** (`make_draft`, `discard_draft`). To have a list's extract,
+printouts and links before deciding to send it, the working list can be
+made a draft instead: "Draft N" (N counting the county's drafts), with a
+list record and a targeted extract marked ``draft``, and a
+``targets.drafted`` event naming its sources, which leave the working list.
+A draft is not a targeted list (`corla_observer.pulllists`): observers and
+the public do not see it, unless it was made ``shown`` (testing mode, or a
+test county), and it counts toward no total. Its ballots stay held, so
+other draws skip them. Sending a draft (`send` with ``draft``) makes it the
+next Targeted list N, with its extract built again under that name;
+discarding it frees its sources, which return to the working list
+excluded.
+
 **Privacy.** The counts, the patterns and the IDs are shown to coordinators
 only, never on a public page, until a coordinator publishes a sent list's
 details (`corla_observer.pulllists.publish`). A pattern matched by a few
@@ -105,7 +118,12 @@ the events the first design recorded and this module still reads):
 ``targets.sent``
     ``data``: ``list`` (the list's key), ``list_name``, ``number``,
     ``sources``, ``ballots``, ``in_rla``, ``extract_sha256``,
-    ``list_record_sha256``.
+    ``list_record_sha256``; ``draft``, the draft's key, if sent from one.
+``targets.drafted``
+    ``data`` as for ``targets.sent``, with the draft's ``list``, ``list_name``
+    ("Draft N") and ``number``.
+``targets.draft_discarded``
+    ``data``: ``list``, ``list_name``, ``sources``.
 ``targets.allowed_set``
     ``data``: ``allowed``, the most targeted ballots the county allows in
     all (a coordinator's note, or null), shown beside the running total of
@@ -1031,7 +1049,7 @@ def enter_ids(workspace: Workspace, log: EventLog, county: str, ids: Sequence[st
     new = list(dict.fromkeys(ids))
     if not new:
         raise DrawError("enter an imprinted ID, such as 101-12-5")
-    held = {id_key(i) for s in sources(workspace, log, county) if s.sent_in is None and s.included for i in s.ids}
+    held = {id_key(i) for s in sources(workspace, log, county) if s.working and s.included for i in s.ids}
     if len(held | {id_key(i) for i in new}) > MAX_LIST:
         raise DrawError(f"a working list holds at most {MAX_LIST} ballots")
     text = " ".join(_CONTROL_RE.sub(" ", note).split())[:MAX_NOTE]
@@ -1063,6 +1081,14 @@ class Source:
     #: The number of the targeted list it was sent in, and that list's key; None while in the working list.
     sent_in: int | None = None
     sent_key: str | None = None
+    #: The draft holding it ("Draft N" and its key), while not sent; None in the working list.
+    drafted_in: str | None = None
+    drafted_key: str | None = None
+
+    @property
+    def working(self) -> bool:
+        """In the working list: neither sent nor in a draft."""
+        return self.sent_in is None and self.drafted_key is None
 
     @property
     def description(self) -> str:
@@ -1097,7 +1123,14 @@ def _list_numbers(log: EventLog, county: str) -> dict[str, tuple[int, str]]:
     """Each targeted list key of the county, with its number and name (`corla_observer.pulllists`)."""
     from corla_observer.pulllists import county_lists
 
-    return {x.key: (x.number, x.name) for x in county_lists(log.iter_events(), county, retired=True) if x.targeted}
+    return {x.key: (x.number, x.name) for x in county_lists(log.iter_events(), county, retired=True) if x.targeted and not x.draft}
+
+
+def _draft_numbers(log: EventLog, county: str) -> dict[str, tuple[int, str]]:
+    """Each draft key of the county, with its number and name."""
+    from corla_observer.pulllists import county_lists
+
+    return {x.key: (x.number, x.name) for x in county_lists(log.iter_events(), county, retired=True, drafts=True) if x.draft}
 
 
 def sources(workspace: Workspace | None, log: EventLog, county: str) -> list[Source]:
@@ -1154,6 +1187,19 @@ def sources(workspace: Workspace | None, log: EventLog, county: str) -> list[Sou
             if flagged is not None:
                 flagged.included = bool(data.get("included"))
                 decided.add(flagged.id)
+        elif event.kind in ("targets.drafted", "targets.draft_discarded"):
+            drafted_key, drafted_name = str(data.get("list") or ""), str(data.get("list_name") or "")
+            listed_sources = data.get("sources")
+            for sid in listed_sources if isinstance(listed_sources, list) else []:
+                held = found.get(str(sid))
+                if held is None:
+                    continue
+                if event.kind == "targets.drafted":
+                    held.drafted_in, held.drafted_key = drafted_name, drafted_key
+                elif held.drafted_key == drafted_key:
+                    held.drafted_in = held.drafted_key = None
+                    held.included = False
+                    decided.add(held.id)
         elif event.kind == "targets.sent":
             key = str(data.get("list") or "")
             sent_keys.add(key)
@@ -1215,22 +1261,30 @@ def set_included(log: EventLog, county: str, source_id: str, included: bool, act
         raise DrawError("no such source")
     if source.sent_in is not None:
         raise DrawError(f"that source was sent in Targeted list {source.sent_in}")
+    if source.drafted_in is not None:
+        raise DrawError(f"that source is in {source.drafted_in}; discard the draft to change it")
     log.append("targets.included", actor, county=county, session_id=session_id, data={"source": source_id, "included": included})
 
 
 def working_sources(found: Sequence[Source]) -> list[Source]:
-    """The sources not sent yet, included or not."""
-    return [s for s in found if s.sent_in is None]
+    """The sources in the working list (not sent, not in a draft), included or not."""
+    return [s for s in found if s.working]
 
 
 def working_list(
     found: Sequence[Source], votes: CvrVotes, locations: Mapping[tuple[str, str], str], sizes: Mapping[tuple[str, str], int],
-    rla: Collection[str] = (),
+    rla: Collection[str] = (), draft: str | None = None,
 ) -> list[Entry]:
-    """The working list: each ballot of the included, unsent sources once, looked up (`lookup`), in CORLA's pull order; ``rla`` are the RLA sample's IDs by `id_key`."""
+    """The working list: each ballot of the included sources in it once, looked up (`lookup`), in CORLA's pull order; ``rla`` are the RLA sample's IDs by `id_key`.
+
+    With ``draft`` (a draft's key), that draft's ballots instead: its sources', as when it was made.
+    """
     entries: dict[str, Entry] = {}
     for source in found:
-        if source.sent_in is not None or not source.included:
+        if draft is not None:
+            if source.sent_in is not None or source.drafted_key != draft:
+                continue
+        elif not source.working or not source.included:
             continue
         for imprinted in source.ids:
             key = id_key(imprinted)
@@ -1254,21 +1308,21 @@ def rla_ids(workspace: Workspace, log: EventLog, county: str) -> set[str]:
 
 
 def holders(workspace: Workspace, log: EventLog, county: str, found: Sequence[Source]) -> dict[str, str]:
-    """Where each ballot a draw must skip is held, by `id_key`: the RLA sample, an earlier sent list ("Targeted list N"), or the working list."""
+    """Where each ballot a draw must skip is held, by `id_key`: the RLA sample, an earlier sent list ("Targeted list N"), a draft not discarded ("Draft N"), or the working list."""
     from corla_observer.pulllists import county_lists, load
 
     held: dict[str, str] = {}
-    for item in county_lists(log.iter_events(), county, retired=True):
-        if not item.targeted:
+    for item in county_lists(log.iter_events(), county, retired=True, drafts=True):
+        if not item.targeted or item.closed:
             continue
         try:
             ballots = load(workspace, item)["ballots"]
         except Exception:
             continue
         for b in ballots:
-            held.setdefault(id_key(str(b["imprinted_id"])), f"Targeted list {item.number}")
+            held.setdefault(id_key(str(b["imprinted_id"])), item.name if item.draft else f"Targeted list {item.number}")
     for source in found:
-        if source.sent_in is None and source.included:
+        if source.working and source.included:
             for i in source.ids:
                 held.setdefault(id_key(i), "the working list")
     for key in rla_ids(workspace, log, county):
@@ -1287,6 +1341,15 @@ def next_list_number(log: EventLog, county: str) -> tuple[int, str]:
     while targeted_key(list_name(number)) in taken:
         number += 1
     return number, list_name(number)
+
+
+def next_draft_number(log: EventLog, county: str) -> tuple[int, str]:
+    """The number and name ("Draft N") of the county's next draft, under a name no list or draft of the county has."""
+    taken = _draft_numbers(log, county) | _list_numbers(log, county)
+    number = 1 + max((n for n, _ in _draft_numbers(log, county).values()), default=0)
+    while targeted_key(f"Draft {number}") in taken:
+        number += 1
+    return number, f"Draft {number}"
 
 
 def list_record(county: str, name: str, number: int, entries: Sequence[Entry], found: Sequence[Source]) -> dict[str, Any]:
@@ -1346,43 +1409,89 @@ class SentList:
 
 
 _send_lock = threading.Lock()
+DRAFT_NOTE = "A draft of targeted ballots: not sent to the county, not part of the RLA sample."
 
 
 def send(
     workspace: Workspace, log: EventLog, county: str, actor: str, *, votes: CvrVotes, locations: Mapping[tuple[str, str], str],
-    sizes: Mapping[tuple[str, str], int], boards: int = 1, session_id: str | None = None,
+    sizes: Mapping[tuple[str, str], int], boards: int = 1, session_id: str | None = None, draft: str | None = None,
 ) -> SentList:
-    """Send the working list to the county: freeze it as the next Targeted list (its record, its extract and ``targets.sent``).
+    """Send the working list to the county, or the draft with key ``draft``: freeze it as the next Targeted list (its record, its extract and ``targets.sent``).
+
+    Raises:
+        DrawError: for an empty working list, or a draft the county does not have open.
+        ExtractError: if the extract can't be built.
+    """
+    check_actor(actor)
+    with _send_lock:
+        return _freeze(workspace, log, county, actor, votes=votes, locations=locations, sizes=sizes, boards=boards, session_id=session_id, draft=draft)
+
+
+def make_draft(
+    workspace: Workspace, log: EventLog, county: str, actor: str, *, votes: CvrVotes, locations: Mapping[tuple[str, str], str],
+    sizes: Mapping[tuple[str, str], int], boards: int = 1, shown: bool = False, session_id: str | None = None,
+) -> SentList:
+    """Make the working list a draft, not sent to the county: "Draft N", with its record, its extract and ``targets.drafted``.
+
+    ``shown`` lets observers and the dashboards see it (for testing mode, or a test county).
 
     Raises:
         DrawError: for an empty working list.
         ExtractError: if the extract can't be built.
     """
-    from corla_observer.extract import build_extract
+    check_actor(actor)
+    with _send_lock:
+        return _freeze(workspace, log, county, actor, votes=votes, locations=locations, sizes=sizes, boards=boards, session_id=session_id,
+                       making_draft=True, shown=shown)  # fmt: skip
+
+
+def discard_draft(log: EventLog, county: str, key: str, actor: str, *, session_id: str | None = None) -> None:
+    """Discard a draft (``targets.draft_discarded``): its sources return to the working list, excluded, and its ballots are free again.
+
+    Raises:
+        DrawError: for a draft the county does not have, or one already sent or discarded.
+    """
+    from corla_observer.pulllists import open_drafts
 
     check_actor(actor)
     with _send_lock:
-        found = sources(workspace, log, county)
-        rla = rla_ids(workspace, log, county)
-        entries = working_list(found, votes, locations, sizes, rla)
-        if not entries:
-            raise DrawError("the working list is empty: nothing to send")
-        number, name = next_list_number(log, county)
-        used = sorted({sid for e in entries for sid in e.sources})
-        record = list_record(county, name, number, entries, found)
-        record_sha = store_list_record(workspace, record)
-        body = pull_list_bytes(county, entries, boards)
-        built = build_extract(workspace, log, county, boards=boards, actor=actor, targeted=body, list_name=name, list_record=record_sha)
-        event = log.append(
-            "targets.sent",
-            actor,
-            county=county,
-            session_id=session_id,
-            data={
-                "list": targeted_key(name), "list_name": name, "number": number, "sources": used, "ballots": len(entries),
-                "in_rla": sum(1 for e in entries if e.in_rla), "extract_sha256": built.sha256, "list_record_sha256": record_sha,
-            },  # fmt: skip
-        )
+        item = next((x for x in open_drafts(log.iter_events(), county) if x.key == key), None)
+        if item is None:
+            raise DrawError("no such draft, or it was already sent or discarded")
+        held = [s.id for s in sources(None, log, county) if s.drafted_key == key and s.sent_in is None]
+        log.append("targets.draft_discarded", actor, county=county, session_id=session_id, data={"list": key, "list_name": item.name, "sources": held})
+
+
+def _freeze(
+    workspace: Workspace, log: EventLog, county: str, actor: str, *, votes: CvrVotes, locations: Mapping[tuple[str, str], str],
+    sizes: Mapping[tuple[str, str], int], boards: int, session_id: str | None, draft: str | None = None, making_draft: bool = False,
+    shown: bool = False,
+) -> SentList:
+    """`send` or `make_draft`, under the lock."""
+    from corla_observer.extract import build_extract
+    from corla_observer.pulllists import open_drafts
+
+    found = sources(workspace, log, county)
+    rla = rla_ids(workspace, log, county)
+    if draft is not None and not any(x.key == draft for x in open_drafts(log.iter_events(), county)):
+        raise DrawError("no such draft, or it was already sent or discarded")
+    entries = working_list(found, votes, locations, sizes, rla, draft=draft)
+    if not entries:
+        raise DrawError("the draft has no ballots" if draft else f"the working list is empty: nothing to {'draft' if making_draft else 'send'}")
+    number, name = next_draft_number(log, county) if making_draft else next_list_number(log, county)
+    used = sorted({sid for e in entries for sid in e.sources})
+    record = list_record(county, name, number, entries, found) | ({"draft": True, "note": DRAFT_NOTE} if making_draft else {})
+    record_sha = store_list_record(workspace, record)
+    body = pull_list_bytes(county, entries, boards)
+    built = build_extract(workspace, log, county, boards=boards, actor=actor, targeted=body, list_name=name, list_record=record_sha,
+                          draft=making_draft, shown=shown)  # fmt: skip
+    data = {
+        "list": targeted_key(name), "list_name": name, "number": number, "sources": used, "ballots": len(entries),
+        "in_rla": sum(1 for e in entries if e.in_rla), "extract_sha256": built.sha256, "list_record_sha256": record_sha,
+    }  # fmt: skip
+    if draft is not None:
+        data["draft"] = draft
+    event = log.append("targets.drafted" if making_draft else "targets.sent", actor, county=county, session_id=session_id, data=data)
     return SentList(number, name, targeted_key(name), built.sha256, record_sha, entries, used, event.seq)
 
 

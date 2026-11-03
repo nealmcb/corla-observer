@@ -180,7 +180,7 @@ def _extract_rows(state: WebState) -> list[dict[str, Any]]:
         found = latest_extract(state.workspace, state.log, county)
         row: dict[str, Any] = {"county": county, "status": entry, "extract": None, "targeted": []}
         for item in county_lists(state.log.iter_events(), county, retired=True):
-            if not item.targeted:
+            if not item.targeted or item.draft:  # a draft is on the targeted ballots page
                 continue
             extract = load_list(state.workspace, item)
             row["targeted"].append(
@@ -255,7 +255,7 @@ def _chosen(state: WebState, request: Request, board_required: bool = True) -> t
     if county and key == RLA:
         found = latest_extract(state.workspace, state.log, county)
     elif county:
-        item = next((x for x in county_lists(state.log.iter_events(), county, retired=True) if x.key == key), None)
+        item = next((x for x in county_lists(state.log.iter_events(), county, retired=True, drafts=True) if x.key == key), None)
         found = (load_list(state.workspace, item), item.sha256) if item is not None else None
     if found is None:
         raise HTTPException(status_code=404, detail="No extract for that county.")

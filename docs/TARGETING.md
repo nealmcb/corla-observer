@@ -58,6 +58,26 @@ union of its sources.
 The county's **allowed total** (the most targeted ballots it agreed to pull, a coordinator's note)
 is shown beside the running total of the sent lists' distinct ballots, with a warning above it.
 
+### Drafts
+
+Press **Send to county** when the list is sent to the county. To have a list's extract, printouts
+and spreadsheet before deciding, for instance to explore patterns before the seed is rolled, **Make
+draft** freezes the working list as **Draft N** instead (N counts the county's drafts from 1):
+the same list record and extract as a sent list, marked as a draft, and a `targets.drafted` event
+naming its sources, which leave the working list. Several drafts may be open at once, so more than
+one line of inquiry can be kept.
+
+A draft is not a targeted list. Observers, readers and the public dashboard do not see it, since
+offering a list the county never heard of would only confuse; in testing mode (a deployment with a
+Reset button) or for a test county they do, so the whole flow can be tried. A draft counts toward
+no total and marks no RLA ballot as previously targeted. Its ballots are held, though: later draws
+skip them, so two drafts never share a ballot by accident.
+
+Each draft is then **sent** or **discarded**. Sending it makes it the next Targeted list N, its
+extract built again under that name, and the `targets.sent` event names the draft. Discarding it
+(`targets.draft_discarded`) returns its sources to the working list, excluded and on record, and
+frees its ballots for later draws.
+
 ## Duplicates and overlaps
 
 Targeting never samples with replacement and never counts multiplicity. Each ballot appears on a
@@ -175,8 +195,10 @@ publishes a list's details.
 | `targets.drawn` | `file_sha256`: the draw's record (the pattern's definition, the seed, the derived seed, N, the counts matching, the ballots in pull order with locations, the collisions skipped, the actor); `data`: `draw` (its number), `ballots` (how many), `size` (N), `collisions` (how many were skipped), `sha256` (the record's), `pattern_sha256` (the pattern's definition, hashed). |
 | `targets.listed` | A manual entry: `data`: `ids` (the imprinted IDs added, as looked up), `source` `entered`, `note` (the coordinator's note, may be empty). |
 | `targets.included` | A source included or excluded: `data`: `source` (`draw N` or `entry SEQ`, the `targets.listed` event's seq), `included` (true or false). |
-| `targets.sent` | A working list sent as Targeted list N: `data`: `list` (the list's key), `list_name`, `number` (N), `sources` (the source IDs frozen), `ballots` (how many), `in_rla` (how many are also in the RLA sample), `extract_sha256`, `list_record_sha256`. |
-| `extract.built` (order `targeted`) | The sent list's extract (docs/EXTRACT.md): `list`, `list_name`, `list_record_sha256`. |
+| `targets.sent` | A working list sent as Targeted list N: `data`: `list` (the list's key), `list_name`, `number` (N), `sources` (the source IDs frozen), `ballots` (how many), `in_rla` (how many are also in the RLA sample), `extract_sha256`, `list_record_sha256`; `draft`, the draft's key, when a draft was sent. |
+| `targets.drafted` | A working list made Draft N: `data` as for `targets.sent`, with the draft's `list`, `list_name` and `number`. |
+| `targets.draft_discarded` | A draft discarded: `data`: `list`, `list_name`, `sources` (returned to the working list, excluded). |
+| `extract.built` (order `targeted`) | The sent list's or draft's extract (docs/EXTRACT.md): `list`, `list_name`, `list_record_sha256`; for a draft, `draft` (true) and `shown` (whether observers see it). |
 | `extract.retired`, `extract.restored` | A sent list hidden from or shown to observers again: `list`, `list_name`. |
 | `extract.details_published`, `extract.details_withdrawn` | A list's details put on or taken off the public dashboard; the former carries them (`details`: `name`, `patterns`: each draw's `draw`, `name` and `description`, and `ids`). |
 | `targets.allowed_set` | `data`: `allowed`, the most targeted ballots the county allows in all, or null. |
@@ -189,7 +211,8 @@ source), `targets.parties_set` (party labels entered by hand). A `targets.listed
 source `draw N` includes that draw in the working list, as the first design's "add the draw to
 the pull list" did.
 
-**The list record** (`corla_observer.targets.list_record`, format 2) is stored when a list is sent:
+**The list record** (`corla_observer.targets.list_record`, format 2) is stored when a list is sent
+or drafted (a draft's has `draft: true`):
 the county, the name, the number, each source (its ID, kind, description, seed, N, draw number,
 note and ballot count) and each ballot (imprinted ID, location, its sources, whether it is also in
 the RLA sample). Its hash is in the `targets.sent` and `extract.built` events; publishing a list's
