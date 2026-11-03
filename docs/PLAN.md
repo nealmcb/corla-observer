@@ -426,8 +426,9 @@ From Neal's demo, 2026-10-29:
   should guide two paths, the targeted sample and the RLA sample, and making an extract must not
   commit to sending it. Drafts done (docs/TARGETING.md, "Drafts"): a draft has an extract and
   printouts, is seen only by coordinators (and observers in testing mode or for a test county),
-  and is later sent as Targeted list N or discarded, freeing its ballots. The next-step guidance
-  on the coordinator pages is open.
+  and is later sent as Targeted list N or discarded, freeing its ballots. Fixed: the coordinator
+  home page shows "Next steps" for the remembered or chosen county along both paths, each step
+  done, next or later from what the log records (`corla_observer.nextsteps`).
 2. **The data map early in an election** is distracting and suggests the wrong things. Before
   there is data to audit it should not expect or suggest a seed, warn about missing contests,
   expect a pull list before the seed, or report that there are no selections. Fixed for

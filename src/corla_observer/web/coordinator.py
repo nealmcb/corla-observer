@@ -105,6 +105,7 @@ from corla_observer.web.app import (
     SESSION_COOKIE,
     WebState,
     get_state,
+    remembered_county,
 )
 from corla_observer.web.forms import FormError, parse_upload
 from corla_observer.web.sessions import SESSION_LIFETIME, Session
@@ -286,10 +287,21 @@ async def coord_home(request: Request) -> Response:
         county, count = known_county(request.query_params.get("county", "")), request.query_params.get("count", "")
         if county and count.isdigit():
             message = f"Recorded {count} audit board{'' if count == '1' else 's'} for {county}."
+    steps_county = known_county(request.query_params.get("county", "")) or remembered_county(request)
+    steps = await run_in_threadpool(_next_steps, state, steps_county) if steps_county else None
     return state.render(
         request, "coord_home.html", snap=snapshot, message=message, fetch=state.fetch, crawl_off=_crawl_off(state),
-        reset_enabled=state.config.reset_command is not None, populate_choices=_populate_choices(state), **_common(state, session)
-    )
+        reset_enabled=state.config.reset_command is not None, populate_choices=_populate_choices(state),
+        steps=steps, steps_county=steps_county, **_common(state, session)
+    )  # fmt: skip
+
+
+def _next_steps(state: WebState, county: str) -> list[Any]:
+    """The county's two paths (`corla_observer.nextsteps`), for the home page."""
+    from corla_observer.nextsteps import facts_for, next_steps
+
+    links = sum(1 for _, link in LinkStore(state.workspace.root).links() if link.county == county and link.role == "observer")
+    return next_steps(county, facts_for(state.workspace, state.log, county, observer_links=links))
 
 
 def _crawl_off(state: WebState) -> dict[str, Any] | None:

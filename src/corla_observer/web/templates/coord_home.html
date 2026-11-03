@@ -14,6 +14,32 @@
   <a class="button secondary" href="{{ url('/coord/schedule') }}">Schedule</a>
 </section>
 
+<section id="next-steps">
+  <h2>Next steps{% if steps_county %} for {{ steps_county }}{% endif %}</h2>
+  <form method="get" action="{{ url('/coord') }}" class="actions">
+    <label>County {{ county_select(steps_county) }}</label>
+    <button type="submit" class="secondary small">Show</button>
+  </form>
+  {% if steps %}
+  <p class="meta">Two paths, which may be followed at once. Each step is judged from what has been recorded here; the data map and the flags say whether it went well.</p>
+  <div class="grid two">
+  {% for p in steps %}
+    <div class="card next-path">
+      <h3>{{ p.name }} path{% if p.finished %} {{ badge('ok', 'all done') }}{% endif %}</h3>
+      <p class="meta">{{ p.purpose }}</p>
+      <ol class="next-steps">
+      {% for s in p.steps %}
+        <li class="step-{{ s.state }}">{% if s.state == 'done' %}{{ badge('ok', 'done') }}&nbsp;{% elif s.state == 'next' %}{{ badge('warning', 'next') }}&nbsp;{% else %}<span class="muted">later:</span> {% endif %}
+          {%- if s.state == 'next' %}<a href="{{ url(s.path) }}"><strong>{{ s.text }}</strong></a>{% else %}<a href="{{ url(s.path) }}">{{ s.text }}</a>{% endif %}
+          <br><span class="meta">{{ s.detail }}</span></li>
+      {% endfor %}
+      </ol>
+    </div>
+  {% endfor %}
+  </div>
+  {% else %}<p class="muted">Choose a county to see what to do next for it.</p>{% endif %}
+</section>
+
 <section class="grid two">
   <form method="post" action="{{ url('/coord/audit-boards') }}" class="card form">
     <h2>Audit boards</h2>
