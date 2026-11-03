@@ -70,3 +70,22 @@ def test_walkthrough_page_outside_a_walkthrough(client: TestClient) -> None:
     login(client)
     page = client.get("/coord/walkthrough")
     assert page.status_code == 200 and "not a walkthrough" in page.text and "WALKTHROUGH" not in page.text
+
+
+def test_activity_page_lists_the_latest_events(workspace: Path, make_client: Factory) -> None:
+    from corla_observer.activity import summary
+
+    init_schedule(Workspace.open(workspace), "2026/general")
+    with EventLog.open(workspace) as log:
+        sprint = log.append("schedule.sprint_requested", "coordinator:alice", data={"until": "2026-11-16T20:00:00.000Z", "every_seconds": 60})
+        assert summary(sprint) == "until 2026-11-16T20:00:00.000Z; every_seconds 60"
+    client: TestClient = make_client()
+    assert client.get("/coord/activity", follow_redirects=False).status_code == 303
+    login(client)
+    page = client.get("/coord/activity")
+    assert page.status_code == 200 and "schedule.sprint_requested" in page.text and "every_seconds 60" in page.text
+    assert 'data-live-url="/coord/activity"' in page.text and ">Activity</a>" in page.text
+    # Newest first: the login after the sprint request comes before it.
+    assert page.text.index("coordinator.login") < page.text.index("schedule.sprint_requested")
+    only = client.get("/coord/activity?group=schedule").text
+    assert "schedule.sprint_requested" in only and "<code>coordinator.login</code>" not in only and "show everything" in only

@@ -31,7 +31,9 @@
       wanted = seq;
       if (loading) return;
       loading = true;
-      fetch(prefix + "/fragment/dashboard?v=" + encodeURIComponent(seq), { credentials: "same-origin" })
+      // A page may name where its fresh copy comes from (the Activity page: itself); else the dashboard's fragment.
+      var base = live.getAttribute("data-live-url") || prefix + "/fragment/dashboard";
+      fetch(base + (base.indexOf("?") < 0 ? "?" : "&") + "v=" + encodeURIComponent(seq), { credentials: "same-origin" })
         .then(function (response) {
           if (!response.ok) throw new Error("HTTP " + response.status);
           return response.text();

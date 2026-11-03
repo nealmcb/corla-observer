@@ -18,6 +18,11 @@
     (``POST /coord/schedule/sprint``, ``/coord/schedule/stop``). A sprint
     is refused where no scheduler runs, and on a past election replayed
     from the public mirror, where each cycle steps to the next update.
+``GET /coord/activity[?group=G...]``
+    The latest events, newest first (`corla_observer.activity`): the time,
+    the kind, who, the county and board, and a one-line summary; ``group``
+    keeps only those families of kinds (``fetch``, ``schedule``, ...). It
+    refreshes itself when the log moves, as the dashboard does.
 ``GET /coord/walkthrough``
     In a walkthrough workspace (`corla_observer.walkthrough`), its steps
     with their simulated times, and a button that applies the next step
@@ -172,6 +177,28 @@ async def end_sprint(request: Request) -> Response:
     session, _ = await checked_form(request)
     await run_in_threadpool(lambda: stop_sprint(state.log, session.actor))
     return RedirectResponse(state.url("/coord/schedule?msg=Sprint+stopped."), status_code=303)
+
+
+@router.get("/coord/activity")
+async def coord_activity(request: Request) -> Response:
+    from corla_observer.activity import group, latest
+
+    state = get_state(request)
+    session = current_session(request)
+    if session is None:
+        return _login_redirect(state)
+    chosen = [g for g in request.query_params.getlist("group") if g.isidentifier()][:20]
+
+    def view() -> dict[str, Any]:
+        events = list(state.log.iter_events())
+        return {
+            "lines": latest(events, groups=chosen),
+            "groups": sorted({group(e.kind) for e in events}),
+            "chosen": chosen,
+            "head": events[-1].seq if events else 0,
+        }
+
+    return state.render(request, "coord_activity.html", **(await run_in_threadpool(view)), **_common(state, session))
 
 
 @router.get("/coord/walkthrough")

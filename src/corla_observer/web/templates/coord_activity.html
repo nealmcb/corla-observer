@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block title %}Coordinator: activity{% endblock %}
+{% block main %}
+<h1>Activity</h1>
+<p>The latest events in the log, newest first: fetches, cycles, sprints, uploads, draws, links, logins and observers' entries. This page updates itself as events arrive. <span id="live-status" class="meta" role="status"></span></p>
+<form method="get" action="{{ url('/coord/activity') }}" class="actions">
+  <fieldset class="activity-groups"><legend>Show only</legend>
+    {% for g in groups %}<label class="check"><input type="checkbox" name="group" value="{{ g }}"{% if g in chosen %} checked{% endif %}> {{ g }}</label> {% endfor %}
+  </fieldset>
+  <button type="submit" class="secondary small">Filter</button>{% if chosen %} <a href="{{ url('/coord/activity') }}">show everything</a>{% endif %}
+</form>
+<div data-live data-head="{{ head }}" data-live-url="{{ url('/coord/activity') }}{% if chosen %}?{% for g in chosen %}group={{ g|urlencode }}{% if not loop.last %}&amp;{% endif %}{% endfor %}{% endif %}">
+  {% if lines %}
+  <div class="table-wrap"><table class="data activity">
+    <thead><tr><th>Time</th><th>Event</th><th>By</th><th>Where</th><th>Details</th></tr></thead>
+    <tbody>
+    {% for line in lines %}
+    <tr><td class="nowrap">{{ line.time|local }}</td><td class="nowrap"><code>{{ line.kind }}</code> <span class="meta">#{{ line.seq }}</span></td><td class="nowrap">{{ line.actor }}</td><td class="nowrap">{{ line.where }}</td><td class="meta">{{ line.summary }}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table></div>
+  <p class="meta">The latest {{ lines|length }}{% if chosen %} of the kinds chosen{% endif %}. The whole log is the published event log.</p>
+  {% else %}<p class="muted">No events{% if chosen %} of those kinds{% endif %} yet.</p>{% endif %}
+</div>
+{% endblock %}
