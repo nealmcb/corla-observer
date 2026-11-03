@@ -176,3 +176,65 @@ def test_cli(tmp_path: Path) -> None:
     assert asked.exit_code == 0 and "sprint requested" in asked.output
     assert "sprint until" in runner.invoke(app, ["schedule", "show", "--workspace", root]).output
     assert "stopped" in runner.invoke(app, ["schedule", "stop", "--workspace", root, "--actor", "coordinator:c1"]).output
+
+
+def test_the_loop_records_its_start_its_states_file_errors_and_its_end(tmp_path: Path) -> None:
+    from corla_observer.schedule import SCHEDULE_FILENAME
+
+    ws = setup_workspace(tmp_path)
+    clock = FakeClock(datetime(2026, 11, 7, 1, 59, 0, tzinfo=UTC))  # 6:59 PM MST, a minute before the first window
+    ticks = iter(range(10))
+    run_loop(ws.root, clock=clock, sleep=clock.sleep, stop=lambda: next(ticks, None) is None,
+             crawl_fn=fake_crawl(election_files()), results_fn=no_results, echo=lambda line: None)  # fmt: skip
+    with EventLog.open(ws.root) as log:
+        mine = [e for e in log.iter_events() if e.kind.startswith("schedule.") and e.kind != "schedule.cycle"]
+    assert [e.kind for e in mine] == ["schedule.started", "schedule.state", "schedule.state", "schedule.stopped"]
+    assert mine[0].data["updated"] is False and mine[0].data["previous"] is None and mine[0].data["pid"]
+    assert mine[1].data["state"].startswith("between windows; next starts") and mine[2].data["state"] == "window 'target list'"
+    assert mine[-1].data["reason"] == "stopped"
+
+    # A broken schedule file, then an error that ends the loop: both recorded, the second start compared with the first.
+    (ws.root / SCHEDULE_FILENAME).write_text("not = [valid", encoding="utf-8")
+
+    def broken(seconds: float) -> None:
+        raise RuntimeError("the machine went away")
+
+    with pytest.raises(RuntimeError):
+        run_loop(ws.root, clock=clock, sleep=broken, crawl_fn=fake_crawl(election_files()), results_fn=no_results, echo=lambda line: None)
+    with EventLog.open(ws.root) as log:
+        later = [e for e in log.iter_events() if e.seq > mine[-1].seq]
+    kinds = [e.kind for e in later]
+    assert kinds == ["schedule.started", "schedule.file_error", "schedule.state", "schedule.stopped"]
+    assert later[0].data["previous"] == mine[0].data["software"] and later[0].data["updated"] is False
+    assert later[1].data["error"] and later[2].data["state"] == "no schedule file"
+    assert later[-1].data["reason"] == "RuntimeError: the machine went away"
+
+
+def test_a_sigterm_ends_the_scheduler_with_its_end_recorded(tmp_path: Path) -> None:
+    """As a service manager stops it: ``corla-observer schedule run`` in its own process, then SIGTERM."""
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    ws = setup_workspace(tmp_path)
+    command = Path(sys.executable).parent / "corla-observer"
+    process = subprocess.Popen([str(command), "schedule", "run", "--workspace", str(ws.root)],
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)  # fmt: skip
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and process.poll() is None:
+            if (ws.root / "events.sqlite3").exists():
+                with EventLog.open(ws.root, read_only=True) as log:
+                    if any(e.kind == "schedule.state" for e in log.iter_events()):
+                        break
+            time.sleep(0.2)
+        assert process.poll() is None, process.stderr.read().decode() if process.stderr else ""
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=30)
+    finally:
+        if process.poll() is None:
+            process.kill()
+    with EventLog.open(ws.root, read_only=True) as log:
+        kinds = [(e.kind, e.data.get("reason")) for e in log.iter_events() if e.kind in ("schedule.started", "schedule.stopped")]
+    assert kinds == [("schedule.started", None), ("schedule.stopped", "SystemExit: signal SIGTERM")]

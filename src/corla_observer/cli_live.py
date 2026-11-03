@@ -302,9 +302,18 @@ def schedule_show(workspace: WorkspaceOption) -> None:
 
 @schedule_app.command("run")
 def schedule_run(workspace: WorkspaceOption) -> None:
-    """Run the scheduler until stopped: a cycle whenever the schedule or a sprint says (for a long-running service)."""
+    """Run the scheduler until stopped: a cycle whenever the schedule or a sprint says (for a long-running service).
+
+    A SIGTERM (a service manager stopping it) ends the loop as an exit, so its end is recorded (``schedule.stopped``).
+    """
+    import signal
+
     from corla_observer.schedule import run_loop
 
+    def terminated(signum: int, frame: object) -> None:
+        raise SystemExit(f"signal {signal.Signals(signum).name}")
+
+    signal.signal(signal.SIGTERM, terminated)
     run_loop(workspace, echo=lambda line: typer.echo(line))
 
 

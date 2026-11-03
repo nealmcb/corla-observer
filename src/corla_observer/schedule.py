@@ -56,6 +56,20 @@ interval (at least `MIN_SPRINT_SECONDS`) until the time given, whatever
 the schedule says; ``schedule.sprint_stopped`` ends it early. `sprint`
 runs one in the foreground instead, for when no loop is running.
 
+**The loop's own events.** Besides each cycle, the loop records what it
+does, each when it changes rather than at every look: ``schedule.started``
+when it starts (its software, compared with its last start, as the web
+server's ``server.started``: `corla_observer.version.record_start`);
+``schedule.state`` when what it is doing changes (in a window, a sprint,
+between windows, no schedule file: ``state``, ``reason``, ``window``,
+``sprint_until``); ``schedule.file_error`` when ``schedule.toml`` cannot be
+read, and again (``error`` null) once it can; ``schedule.awake`` when it
+takes or releases the sprite's keep-awake hold (``held``); and
+``schedule.stopped`` when it ends (``reason``: stopped, a signal, or the
+error that ended it). An unexpected ``schedule.started`` with no
+``schedule.stopped`` before it means the scheduler was killed or the
+machine went down.
+
 **Heartbeat.** The loop writes the workspace's ``scheduler.heartbeat``
 (`HEARTBEAT_FILENAME`: its process ID and the time) each time it looks,
 at least every `MAX_SLEEP_SECONDS` while idle, so the web pages can tell
@@ -74,6 +88,8 @@ Events: ``schedule.cycle`` (``trigger``, ``started``, ``window``, ``crawl`` coun
 ``prediction_seq``, ``extracts`` (county to seq), ``errors``,
 ``seconds``), ``schedule.cycle_skipped`` (``reason``),
 ``schedule.sprint_requested`` (``until``, ``every_seconds``),
+``schedule.started``, ``schedule.state``, ``schedule.file_error``,
+``schedule.awake``, ``schedule.stopped`` (above),
 ``schedule.sprint_stopped``.
 
 Standard library only.
@@ -712,37 +728,83 @@ def run_loop(
     keep_awake: SpriteKeepAwake | None = None,
     echo: Callable[[str], None] = print,
 ) -> None:
-    """The scheduler: decide, run a cycle when due, sleep, repeat, until ``stop()``; see the module documentation."""
+    """The scheduler: decide, run a cycle when due, sleep, repeat, until ``stop()``; see the module documentation.
+
+    Its start, its changes of state, schedule file errors, the keep-awake hold and its end are
+    recorded as events ("The loop's own events"); an exception that ends it is recorded, then raised.
+    """
+    from corla_observer.version import record_start
+
     workspace = Workspace.open(workspace_dir)
     awake = keep_awake or SpriteKeepAwake()
+    with EventLog.open(workspace_dir) as log:
+        record_start(log, actor=ACTOR, kind="schedule.started", extra={"pid": os.getpid()})
     last_reason = None
-    while not stop():
-        now = format_server_time(clock())
-        beat(workspace, now)
+    last_state: str | None = None
+    last_error: str | None = None
+    last_held = awake.held
+    ending = "stopped"
+    try:
+        while not stop():
+            now = format_server_time(clock())
+            beat(workspace, now)
+            try:
+                schedule = load_schedule(workspace)
+                error = None
+            except ScheduleError as exc:
+                schedule, error = None, str(exc)
+            with EventLog.open(workspace_dir) as log:
+                sprint = active_sprint(log, now)
+                decision = decide(schedule, sprint, last_cycle_start(log), now)
+                awake.hold(_wants_awake(schedule, sprint, now))
+                if awake.available and awake.held != last_held:
+                    log.append("schedule.awake", ACTOR, data={"held": awake.held})
+                    last_held = awake.held
+                if error != last_error:
+                    log.append("schedule.file_error", ACTOR, data={"error": error[:500] if error else None})
+                    last_error = error
+                if error and error != last_reason:
+                    echo(f"schedule.toml: {error}")
+                    last_reason = error
+                state = _state(schedule, sprint, decision)
+                if state != last_state:
+                    log.append("schedule.state", ACTOR, data={
+                        "state": state, "reason": decision.reason, "window": decision.window.name if decision.window else None,
+                        "sprint_until": sprint.until if sprint else None,
+                    })  # fmt: skip
+                    last_state = state
+                if decision.due:
+                    echo(f"{colorado_time(now)} cycle: {decision.reason}")
+                    report = run_cycle(
+                        workspace, log, trigger="sprint" if sprint else "schedule", window=decision.window,
+                        results=decision.results, crawl_fn=crawl_fn, results_fn=results_fn, started=now,
+                    )  # fmt: skip
+                    echo(f"  {report.crawl} results changed: {report.results_changed}; errors: {report.errors or 'none'}; {report.seconds}s")
+                    continue
+                if decision.reason != last_reason:
+                    echo(f"{colorado_time(now)} idle: {decision.reason}")
+                    last_reason = decision.reason
+            sleep(max(1.0, decision.wait_seconds))
+    except BaseException as exc:
+        ending = f"{type(exc).__name__}: {exc}"[:500] if str(exc) else type(exc).__name__
+        raise
+    finally:
         try:
-            schedule = load_schedule(workspace)
-            error = None
-        except ScheduleError as exc:
-            schedule, error = None, str(exc)
-        with EventLog.open(workspace_dir) as log:
-            sprint = active_sprint(log, now)
-            decision = decide(schedule, sprint, last_cycle_start(log), now)
-            awake.hold(_wants_awake(schedule, sprint, now))
-            if error and error != last_reason:
-                echo(f"schedule.toml: {error}")
-                last_reason = error
-            if decision.due:
-                echo(f"{colorado_time(now)} cycle: {decision.reason}")
-                report = run_cycle(
-                    workspace, log, trigger="sprint" if sprint else "schedule", window=decision.window,
-                    results=decision.results, crawl_fn=crawl_fn, results_fn=results_fn, started=now,
-                )  # fmt: skip
-                echo(f"  {report.crawl} results changed: {report.results_changed}; errors: {report.errors or 'none'}; {report.seconds}s")
-                continue
-            if decision.reason != last_reason:
-                echo(f"{colorado_time(now)} idle: {decision.reason}")
-                last_reason = decision.reason
-        sleep(max(1.0, decision.wait_seconds))
+            with EventLog.open(workspace_dir) as log:
+                log.append("schedule.stopped", ACTOR, data={"reason": ending})
+        except Exception as exc:  # noqa: BLE001 - recording the end must not hide why it ended
+            echo(f"could not record the scheduler's end: {exc}")
+
+
+def _state(schedule: Schedule | None, sprint: Sprint | None, decision: Decision) -> str:
+    """What the loop is doing, in words that change only when it does (not with each wait)."""
+    if sprint is not None:
+        return f"sprint until {colorado_time(sprint.until, seconds=False)}, every {sprint.every_seconds} s"
+    if schedule is None:
+        return "no schedule file"
+    if decision.window is not None:
+        return f"window {decision.window.name!r}"
+    return decision.reason
 
 
 def sprint(
