@@ -1,6 +1,20 @@
 {% from "_macros.html" import county_card, problem_list, hash, badge, severity, waiting_list %}
 <div id="dashboard" data-live data-head="{{ snap.head_seq }}">
   {% for e in snap.errors %}<p class="notice notice-error">{{ badge('error', 'error') }} {{ e }}</p>{% endfor %}
+  {% if snap.progress %}
+  <section id="progress" aria-labelledby="progress-title">
+    <h2 id="progress-title">Where the audit is</h2>
+    <ol class="progress-strip">
+      {% for step in snap.progress %}
+      <li class="progress-{{ step.state }}"{% if step.state == 'current' %} aria-current="step"{% endif %}>
+        <span class="progress-mark">{% if step.state == 'done' %}{{ badge('ok', 'done') }}{% elif step.state == 'current' %}{{ badge('warning', 'now') }}{% else %}<span class="muted">later</span>{% endif %}</span>
+        <strong>{{ step.label }}</strong>
+        <span class="meta">{{ step.detail }}</span>
+      </li>
+      {% endfor %}
+    </ol>
+  </section>
+  {% endif %}
   <section class="summary">
     <div class="card stat">
       <h2>Election</h2>

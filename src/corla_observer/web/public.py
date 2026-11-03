@@ -120,6 +120,8 @@ def public_dict(snapshot: Snapshot) -> dict[str, Any]:
         "seed": snapshot.seed,
         "seed_source": snapshot.seed_source,
         "roll_time": snapshot.roll_time,
+        # Where the audit is, statewide (corla_observer.progress).
+        "progress": [step.to_dict() for step in snapshot.progress],
         "counties": [
             {k: v for k, v in dataclasses.asdict(row).items() if k != "flags"} for row in snapshot.active_counties
         ],

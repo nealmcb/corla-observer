@@ -52,6 +52,7 @@ from corla_observer.flags import (
     unflagged_problems,
 )
 from corla_observer.practice import OBSERVER_KINDS, BoardProgress, ObserverStats, practice_stats
+from corla_observer.progress import ProgressStep, audit_progress
 from corla_observer.pulllists import LIST_KINDS, RLA, all_lists
 from corla_observer.pulllists import load as load_list
 from corla_observer.uploads import CountyStatus
@@ -327,6 +328,8 @@ class Snapshot:
     rounds: Rounds = field(default_factory=Rounds)
     #: Every Colorado county's status (and any other county with an upload), in county order.
     statuses: dict[str, CountyAuditStatus] = field(default_factory=dict)
+    #: Where the audit is, statewide (`corla_observer.progress`), for the top of the dashboard.
+    progress: list[ProgressStep] = field(default_factory=list)
     #: Per county, what is not yet expected from it, with its due text (``cvr``, ``corla``).
     not_yet: dict[str, dict[str, str]] = field(default_factory=dict)
 
@@ -497,7 +500,21 @@ def build_snapshot(
         _build_map(snap, log, workspace, flag_checker)
     _apply_statuses(snap, statuses, links)
     _apply_view(snap, log, workspace, now)
+    _apply_progress(snap)
     return snap
+
+
+def _apply_progress(snap: Snapshot) -> None:
+    """The statewide stages (`corla_observer.progress`) from what the snapshot already holds."""
+    datamap = snap.datamap
+    snap.progress = audit_progress(
+        contests_posted=datamap is not None and bool(datamap.used("target_contests") or datamap.used("contests_list")),
+        corla=snap.corla,
+        seed=snap.seed is not None,
+        selections=datamap is not None and bool(datamap.used("selection_list")),
+        statuses=snap.statuses,
+        upcoming=snap.upcoming,
+    )
 
 
 def _apply_view(snap: Snapshot, log: EventLog, workspace: Workspace, now: str | None) -> None:
