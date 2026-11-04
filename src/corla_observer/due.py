@@ -19,8 +19,11 @@ Election night results are never due: they are only status.
 **The clock.** In a walkthrough (`corla_observer.walkthrough`) the
 simulated time of the last step applied (before the first, the first
 step's); for an audit center replayed from the public mirror whose updates
-have a ``time``, the time of the last update applied (before the first,
-the first update's); otherwise the real time (`clock`).
+have a ``time``, the time of the last update applied; before the first,
+the replay has not started, and it is judged a minute before the
+calendar's earliest deadline (or, without a calendar, at the first
+update's time), so a fresh replay shows nothing overdue; otherwise the real
+time (`clock`).
 
 **Staging** (`stage`). Before its due time, a missing input is not a
 problem: its problems (`Expected.codes`) are held back and it is listed in a
@@ -46,7 +49,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 from corla_observer.classify import COLORADO_COUNTIES
@@ -253,7 +256,8 @@ class Clock:
 
 def _replay_clock(workspace: Workspace, log: EventLog | None) -> Clock | None:
     """For an election replayed from the public mirror whose updates have times: the time of the last update
-    applied, or the first update's before any is applied. None otherwise (a live election: the real time)."""
+    applied; before any is applied, a minute before the calendar's earliest deadline, else the first update's
+    time. None otherwise (a live election: the real time)."""
     from corla_observer.election import SetupError, load_setup
 
     try:
@@ -270,9 +274,13 @@ def _replay_clock(workspace: Workspace, log: EventLog | None) -> Clock | None:
     if applied is not None:
         return Clock(str(applied.data["time"]), f"the replayed audit center's time ({applied.data.get('title')})")
     first = setup.mirror.updates[0]
-    if first.time:
-        return Clock(first.time, "the replayed audit center's time, before its first update")
-    return None
+    if not first.time:
+        return None
+    deadlines = sorted(m.time for m in setup.calendar)
+    if deadlines and deadlines[0] <= first.time:
+        before = datetime.strptime(deadlines[0], "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC) - timedelta(minutes=1)
+        return Clock(format_server_time(before), "the replay not yet started: a minute before its earliest deadline")
+    return Clock(first.time, "the replayed audit center's time, before its first update")
 
 
 def clock(workspace: Workspace, log: EventLog | None = None, *, now: str | None = None) -> Clock:

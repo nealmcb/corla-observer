@@ -195,9 +195,15 @@ def test_a_replayed_audit_center_is_judged_at_its_own_time(ws: Workspace, log: E
     (ws.root / SETUP_FILENAME).write_text(GENERAL_2020_SETUP, encoding="utf-8")
     first = parse_setup(GENERAL_2020_SETUP).mirror.updates[0]  # type: ignore[union-attr]
     assert first.time == parse_time("2020-11-13 15:00")
-    # Before the first update: its time, not today's (which would make every 2020 deadline overdue).
+    # Before the first update the replay has not started: a minute before its earliest deadline (the target list's,
+    # 6 Nov 2020 5:00 PM MST), not today (which would make every 2020 deadline overdue), nor the first update's time
+    # (13 Nov, after the target list's and the uploads' deadlines, though nothing has been fetched yet).
     before = clock(ws, log)
-    assert before.now == first.time and "before its first update" in before.source
+    assert before.now == "2020-11-06T23:59:00.000Z" and "not yet started" in before.source
+    # Without a calendar, the first update's time.
+    (ws.root / SETUP_FILENAME).write_text(GENERAL_2020_SETUP.split("[calendar]")[0], encoding="utf-8")
+    assert clock(ws, log).now == first.time
+    (ws.root / SETUP_FILENAME).write_text(GENERAL_2020_SETUP, encoding="utf-8")
     # After an update: the time it recorded.
     log.append("audit_center.mirror_update", "system", data={"index": 0, "title": first.title, "commit": first.commit, "time": "2020-11-14T00:00:00.000Z"})
     assert clock(ws, log).now == "2020-11-14T00:00:00.000Z"
