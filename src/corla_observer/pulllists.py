@@ -246,6 +246,15 @@ def find_list(
     return next((x for x in county_lists(events, county, board=board, retired=retired, drafts=drafts) if x.key == key), None)
 
 
+def twins_with_lists(events: Iterable[Event], county: str) -> list[str]:
+    """The demonstration counties of ``county`` ("Chaffee (2020 demo)" for "Chaffee") that have pull lists, for when ``county`` has none:
+    test data is kept under the demonstration name, so a link made for the plain county name finds nothing."""
+    from corla_observer.classify import TEST_COUNTIES
+
+    events = list(events)
+    return [name for name in TEST_COUNTIES if name.startswith(f"{county} (") and county_lists(events, name)]
+
+
 def open_drafts(events: Iterable[Event], county: str) -> list[PullList]:
     """The county's drafts not yet sent or discarded, oldest first."""
     return [x for x in county_lists(events, county, drafts=True) if x.draft]

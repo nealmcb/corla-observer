@@ -770,3 +770,30 @@ def test_a_button_pressed_twice_sends_one_list(tmp_path: Path) -> None:
             kinds = [e.kind for e in log.iter_events()]
             assert kinds.count("extract.built") == 1 and kinds.count("targets.sent") == 1
             assert [x.name for x in pulllists.county_lists(log.iter_events(), COUNTY)] == ["Targeted list 1"]
+
+
+def test_a_link_for_the_plain_county_points_to_its_demonstration_twin(tmp_path: Path) -> None:
+    """Test data is kept under "Delta (2020 demo)": a link made for "Delta" sees nothing, and the pages say where the data is."""
+    import re
+
+    store, root = _workspace(tmp_path)
+    votes = tg.load_votes(tmp_path / "files" / "cvr.csv")
+    with EventLog.open(root) as log:
+        manifest = county_manifest(store, log, COUNTY)
+        tg.enter_ids(store, log, COUNTY, ["1-2-1", "1-1-3"], ACTOR)
+        tg.send(store, log, COUNTY, ACTOR, votes=votes, locations=manifest.locations, sizes=manifest.sizes)
+        assert pulllists.twins_with_lists(log.iter_events(), "Delta") == [COUNTY] and pulllists.twins_with_lists(log.iter_events(), "Adams") == []
+    app = create_app(AppConfig(workspace=root, secret=b"s" * 32, crawl=lambda ws, log: None))
+    with TestClient(app, base_url="https://testserver") as client:
+        assert login(client).status_code == 303
+        page = client.get("/coord/links")
+        assert "can slip in deliberate mistakes" in page.text and "not only in testing mode" in page.text
+        made = client.post("/coord/links", data={"csrf": csrf_of(page), "role": "reader", "name": "ann", "county": "Delta", "board": "1"})
+        assert f"Delta has no pull lists here, but {COUNTY} has" in made.text and f"make the link for {COUNTY}" in made.text
+        url = re.search(r'id="new-link">[^<]*?(/read/[^<]+)<', made.text)
+        assert url is not None
+        reader = client.get(url.group(1)).text
+        assert "No extract for Delta board 1 yet" in reader and f"Make a link for {COUNTY} instead" in reader
+        # A link for the demonstration county itself: no such hint.
+        twin = client.post("/coord/links", data={"csrf": csrf_of(page), "role": "reader", "name": "bob", "county": COUNTY, "board": "1"})
+        assert "has no pull lists here" not in twin.text

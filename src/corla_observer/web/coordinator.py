@@ -780,8 +780,16 @@ async def make_link(request: Request) -> Response:
     except PracticeError as exc:
         return _links_page(request, state, session, 400, error=str(exc))
     path = "observe" if link.role == "observer" else "read"
-    made = {"link": link, "url": f"{site_url(request, state)}/{path}/{token}"}
+    made = {"link": link, "url": f"{site_url(request, state)}/{path}/{token}", "twins": await run_in_threadpool(_twins, state, link.county)}
     return _links_page(request, state, session, made=made)
+
+
+def _twins(state: WebState, county: str) -> list[str]:
+    """For a county with no pull lists, its demonstration counties that have some (`corla_observer.pulllists.twins_with_lists`)."""
+    from corla_observer.pulllists import county_lists, twins_with_lists
+
+    events = list(state.log.iter_events())
+    return [] if county_lists(events, county) else twins_with_lists(events, county)
 
 
 @router.post("/coord/links/revoke")

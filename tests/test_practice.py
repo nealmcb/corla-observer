@@ -323,9 +323,13 @@ def test_reader_pages(root: Path, client: TestClient) -> None:
     assert ">Next ballot</button>" not in page.text
     second = client.get(f"/p/read/{token}?rate=0&step=2").text
     assert "Second reading: read it all aloud again" in second and "101-1-1" in second and ">Next ballot</button>" in second
+    assert '<option value="0" selected>' in second
     for _ in range(10):
         client.post(f"/p/read/{token}/next", data={"rate": "0.33"})
-    assert "last ballot" in client.get(f"/p/read/{token}?step=2").text
+    last = client.get(f"/p/read/{token}?step=2").text
+    assert "last ballot" in last
+    # The rate is kept from ballot to ballot: without one asked for, the last reading's.
+    assert '<option value="0.33" selected>' in last and 'name="rate" value="0.33"' in last and "data-sets-rate" in last
     client.post(f"/p/read/{token}/restart", data={"rate": "0"})
     assert "Press Next" in client.get(f"/p/read/{token}").text
     observer, _ = LinkStore(root).create("observer", "ann", "La Plata", 1)

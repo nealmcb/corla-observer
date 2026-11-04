@@ -44,8 +44,8 @@ failure are recognized by their device ID and sequence number and recorded
 once.
 
 **Reader.** `next_read` moves a reader link to the next ballot of its board
-and records what is to be read aloud as a ``practice.read`` event. With an
-injection rate above zero it sometimes reads something deliberately
+and records what is to be read aloud as a ``practice.read`` event, with the
+injection rate it was read at (``inject_rate``, as text such as ``0.33``). With an injection rate above zero it sometimes reads something deliberately
 different (`DEVIATIONS`: a different vote in one contest, a wrong imprinted
 ID, or a skipped ballot), recorded in the event, so that practice entries
 can be scored (`board_stats`).
@@ -716,6 +716,7 @@ def next_read(
             "votes_read": [[str(x) for x in v] for v in votes],
             "redacted": ballot.get("status") == "redacted",
             "deviation": deviation,
+            "inject_rate": f"{inject_rate:g}",  # as text: event data holds no floats
         }
         if list_key != RLA or extract_sha256:
             data |= {"list": list_key, "extract_sha256": extract_sha256}

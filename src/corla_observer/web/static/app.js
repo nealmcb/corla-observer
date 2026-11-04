@@ -6,6 +6,8 @@
 "use strict";
 
 (function () {
+  // Controls marked js-hidden (a "Use this setting" button the script makes unnecessary) hide when scripts run.
+  document.documentElement.classList.add("has-js");
   var prefix = document.body.getAttribute("data-prefix") || "";
 
   function setStatus(state, text) {
@@ -100,6 +102,16 @@
     });
   }
 
+  // The practice reader's rate of deliberate differences: choosing one sets every form's hidden rate at once,
+  // so the next button pressed uses it (without JavaScript, "Use this setting" reloads the page with it).
+  function readerRate() {
+    var select = document.querySelector("select[data-sets-rate]");
+    if (!select) return;
+    select.addEventListener("change", function () {
+      document.querySelectorAll('input[type="hidden"][name="rate"]').forEach(function (input) { input.value = select.value; });
+    });
+  }
+
   function copyButtons() {
     document.querySelectorAll("[data-copy]").forEach(function (button) {
       button.addEventListener("click", function () {
@@ -141,5 +153,6 @@
 
   followDashboard();
   copyButtons();
+  readerRate();
   submitOnce();
 })();

@@ -661,6 +661,12 @@ async def reader_provenance(request: Request, token: str) -> Response:
 # The practice reader
 
 
+def _twins_of(state: WebState, county: str) -> list[str]:
+    from corla_observer.pulllists import twins_with_lists
+
+    return twins_with_lists(state.log.iter_events(), county)
+
+
 @router.get("/read/{token}")
 async def reader_page(request: Request, token: str) -> Response:
     state = get_state(request)
@@ -678,7 +684,10 @@ async def reader_page(request: Request, token: str) -> Response:
     total = len(board_ballots(found[0], link.board)) if found else 0
     ident = screen_line(found[0], found[1], link.board) if found else None
     print_layouts = layouts(found[0]) if found and link.board in [int(b) for b in found[0]["boards"]] else ()
-    rate = request.query_params.get("rate", "0")
+    # The rate asked for, else the one the board's last reading used, so the setting stays from ballot to ballot.
+    last_rate = current.get("inject_rate") if current else None
+    remembered = next((value for value, _ in INJECT_RATES if isinstance(last_rate, str) and last_rate == f"{float(value):g}"), "0")
+    rate = request.query_params.get("rate", remembered)
     response = state.render(
         request,
         "reader.html",
@@ -687,6 +696,7 @@ async def reader_page(request: Request, token: str) -> Response:
         current=current,
         total=total,
         has_extract=found is not None,
+        twins=[] if found is not None or chosen.lists else await run_in_threadpool(_twins_of, state, link.county),
         rates=INJECT_RATES,
         rate=rate if rate in dict(INJECT_RATES) else "0",
         second=request.query_params.get("step") == "2",

@@ -12,7 +12,9 @@
 {% else %}
 <p class="notice" role="status"><span aria-hidden="true">&#10003;</span> Uploaded {{ made.uploaded|join(' and ') }}; drew {{ made.ids|length }} ballots from any ballot with votes, and sent them as <strong>{{ made.list_name }}</strong>. Practice ballots, not part of any RLA sample.</p>
 <p class="populate-link"><strong>Observer link (board 1):</strong><br><a href="{{ observer_url }}" id="observer-link">{{ observer_url }}</a> <button type="button" data-copy="observer-link">Copy</button> <span class="copy-status" role="status" aria-live="polite"></span></p>
-<p class="meta">Open it on a phone, or another browser. For someone to read the ballots aloud, as an audit board would, there is also a practice reader link: <a href="{{ reader_url }}" id="reader-link">{{ reader_url }}</a>. Both are listed, and can be revoked, on <a href="{{ url('/coord/links') }}">Links</a>.</p>
+<p class="meta">Open it on a phone, or another browser.</p>
+<p class="populate-link"><strong>Practice reader link (board 1):</strong><br><a href="{{ reader_url }}" id="reader-link">{{ reader_url }}</a> <button type="button" data-copy="reader-link">Copy</button> <span class="copy-status" role="status" aria-live="polite"></span></p>
+<p class="meta">For someone to read the ballots aloud, as an audit board would, for the observer to practise on; it can slip in deliberate differences and score which ones the observer caught. Both links are listed, and can be revoked, on <a href="{{ url('/coord/links') }}">Links</a>.</p>
 <p><a class="button" href="{{ list_url }}">The list on the targeted ballots page</a> <a class="button secondary" href="{{ url('/coord') }}">Back to status</a></p>
 {% endif %}
 {% endblock %}

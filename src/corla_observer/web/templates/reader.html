@@ -10,7 +10,7 @@
 <p class="muted">You are the audit board. Read each ballot's imprinted ID and votes aloud at a steady pace twice, as the board's two members would: the first reading, then press Second reading and read it again, then press Next. Observers tap once after each reading.</p>
 {% if rla_notice %}<p class="notice" role="note"><span aria-hidden="true">&#9675;</span> {{ rla_notice }}</p>{% endif %}
 {% if not has_extract %}
-<p class="notice notice-error">No extract for {{ link.county }} board {{ link.board }} yet: nothing to read until one is built (the RLA sample needs the seed; a targeted list, the targeted pull list).</p>
+<p class="notice notice-error">No extract for {{ link.county }} board {{ link.board }} yet: nothing to read until one is built (the RLA sample needs the seed; a targeted list, the targeted pull list).{% if twins %} {{ twins|join(' and ') }} {{ 'has' if twins|length == 1 else 'have' }} lists, though: test data is kept under the demonstration county's name, so this link, made for {{ link.county }}, does not see it. Make a link for {{ twins[0] }} instead.{% endif %}</p>
 {% else %}
 <section class="card">
   {% if current %}
@@ -49,10 +49,11 @@
 </section>
 <form method="get" action="{{ url('/read/' ~ token) }}" class="card form">
   <label>Deliberate differences (a changed vote, a wrong ID or a skipped ballot), recorded for scoring
-    <select name="rate">{% for value, label in rates %}<option value="{{ value }}"{% if value == rate %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+    <select name="rate" data-sets-rate>{% for value, label in rates %}<option value="{{ value }}"{% if value == rate %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
   </label>
   {% if list_key != 'rla' %}<input type="hidden" name="list" value="{{ list_key }}">{% endif %}
-  <button type="submit" class="secondary">Use this setting</button>
+  <button type="submit" class="secondary js-hidden">Use this setting</button>
+  <span class="meta">Kept from ballot to ballot, until changed.</span>
 </form>
 <form method="post" action="{{ url('/read/' ~ token ~ '/restart') }}">
   <input type="hidden" name="rate" value="{{ rate }}">

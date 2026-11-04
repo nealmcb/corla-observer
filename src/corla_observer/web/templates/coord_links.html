@@ -11,6 +11,7 @@
   <p>Copy it now and send it to {{ made.link.name }}: it is shown only once, since only a hash of it is kept. Whoever has it can {% if made.link.role == 'observer' %}enter observations as {{ made.link.actor }}{% else %}read ballots aloud for this board in practice{% endif %}.</p>
   <p><code class="hash full" id="new-link">{{ made.url }}</code></p>
   <p><button type="button" data-copy="new-link">Copy to clipboard</button> <span class="copy-status" role="status" aria-live="polite"></span></p>
+  {% if made.twins %}<p class="notice" role="note"><span aria-hidden="true">&#9650;</span> {{ made.link.county }} has no pull lists here, but {{ made.twins|join(' and ') }} {{ 'has' if made.twins|length == 1 else 'have' }}: test data is kept under the demonstration county's name. For that data, make the link for {{ made.twins[0] }}.</p>{% endif %}
 </section>
 {% endif %}
 
@@ -20,9 +21,10 @@
   <label>For
     <select name="role" required>
       <option value="observer" selected>an observer (enters what they hear)</option>
-      <option value="reader">a practice reader (acts as the audit board)</option>
+      <option value="reader">a practice reader (stands in for the audit board; can slip in deliberate mistakes)</option>
     </select>
   </label>
+  <p class="meta">A practice reader link shows each ballot of the board's list to read aloud, as the audit board would, for observers to practise on. It can slip in deliberate mistakes (a different vote, a wrong imprinted ID, a skipped ballot) at a rate you choose, and the statistics then score which ones each observer caught. It works on any deployment, not only in testing mode, but it is for practice: its readings are recorded in this workspace's log, so use it before the real audit or on a practice deployment.</p>
   <label>Name (letters, digits, '.', '_' or '-'; for an observer it becomes their observer ID, such as observer:ann) <input name="name" required maxlength="64" pattern="[A-Za-z0-9._\-]{1,64}" spellcheck="false" autocapitalize="none"></label>
   <label>County {{ county_select(remembered_county) }}</label>
   <label>Audit board <input name="board" type="number" min="1" max="{{ max_link_boards }}" value="1" required inputmode="numeric"></label>
