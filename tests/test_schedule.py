@@ -213,6 +213,7 @@ def test_the_loop_records_its_start_its_states_file_errors_and_its_end(tmp_path:
 def test_a_sigterm_ends_the_scheduler_with_its_end_recorded(tmp_path: Path) -> None:
     """As a service manager stops it: ``corla-observer schedule run`` in its own process, then SIGTERM."""
     import signal
+    import sqlite3
     import subprocess
     import sys
     import time
@@ -224,10 +225,12 @@ def test_a_sigterm_ends_the_scheduler_with_its_end_recorded(tmp_path: Path) -> N
     try:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline and process.poll() is None:
-            if (ws.root / "events.sqlite3").exists():
+            try:  # the other process may still be creating the log: its file can exist before its table
                 with EventLog.open(ws.root, read_only=True) as log:
                     if any(e.kind == "schedule.state" for e in log.iter_events()):
                         break
+            except (FileNotFoundError, sqlite3.OperationalError):
+                pass
             time.sleep(0.2)
         assert process.poll() is None, process.stderr.read().decode() if process.stderr else ""
         process.send_signal(signal.SIGTERM)
