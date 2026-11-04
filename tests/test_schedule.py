@@ -211,7 +211,14 @@ def test_the_loop_records_its_start_its_states_file_errors_and_its_end(tmp_path:
 
 
 def test_a_sigterm_ends_the_scheduler_with_its_end_recorded(tmp_path: Path) -> None:
-    """As a service manager stops it: ``corla-observer schedule run`` in its own process, then SIGTERM."""
+    """As the sprite's service manager stops it: ``uv run corla-observer schedule run`` in a process group of its own, then SIGTERM to the group.
+
+    The scheduler then gets TERM twice, the group's and the one ``uv`` forwards a moment later; the second
+    must not interrupt the recording of the first (seen on the corla-observer sprite). Without ``uv`` on the
+    PATH, the scheduler is run directly and gets one TERM.
+    """
+    import os
+    import shutil
     import signal
     import sqlite3
     import subprocess
@@ -219,11 +226,12 @@ def test_a_sigterm_ends_the_scheduler_with_its_end_recorded(tmp_path: Path) -> N
     import time
 
     ws = setup_workspace(tmp_path)
-    command = Path(sys.executable).parent / "corla-observer"
-    process = subprocess.Popen([str(command), "schedule", "run", "--workspace", str(ws.root)],
-                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE)  # fmt: skip
+    uv = shutil.which("uv")
+    command = [uv, "run", "--quiet", "corla-observer"] if uv else [str(Path(sys.executable).parent / "corla-observer")]
+    process = subprocess.Popen([*command, "schedule", "run", "--workspace", str(ws.root)], cwd=Path(__file__).parent.parent,
+                               stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True)  # fmt: skip
     try:
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + 60
         while time.monotonic() < deadline and process.poll() is None:
             try:  # the other process may still be creating the log: its file can exist before its table
                 with EventLog.open(ws.root, read_only=True) as log:
@@ -233,7 +241,7 @@ def test_a_sigterm_ends_the_scheduler_with_its_end_recorded(tmp_path: Path) -> N
                 pass
             time.sleep(0.2)
         assert process.poll() is None, process.stderr.read().decode() if process.stderr else ""
-        process.send_signal(signal.SIGTERM)
+        os.killpg(process.pid, signal.SIGTERM)
         process.wait(timeout=30)
     finally:
         if process.poll() is None:

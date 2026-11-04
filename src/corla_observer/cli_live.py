@@ -305,12 +305,16 @@ def schedule_run(workspace: WorkspaceOption) -> None:
     """Run the scheduler until stopped: a cycle whenever the schedule or a sprint says (for a long-running service).
 
     A SIGTERM (a service manager stopping it) ends the loop as an exit, so its end is recorded (``schedule.stopped``).
+    Later TERM and INT signals are ignored: a manager signalling the process group, through ``uv run``, delivers
+    TERM twice, and the second would otherwise interrupt the recording of the first.
     """
     import signal
 
     from corla_observer.schedule import run_loop
 
     def terminated(signum: int, frame: object) -> None:
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)
+        signal.signal(signal.SIGINT, signal.SIG_IGN)
         raise SystemExit(f"signal {signal.Signals(signum).name}")
 
     signal.signal(signal.SIGTERM, terminated)

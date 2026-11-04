@@ -85,12 +85,15 @@ def test_every_start_is_recorded_and_an_update_keeps_every_event_link_list_and_e
 
 
 def test_a_sigterm_records_the_stop_even_with_a_live_page_open(tmp_path: Path) -> None:
-    """As the sprite's service manager stops it: ``corla-observer serve`` in its own process, a browser's live stream open, SIGTERM, then SIGKILL a second later.
+    """As the sprite's service manager stops it: ``uv run corla-observer serve`` in a process group of its own, a browser's live stream open, SIGTERM to the group, then SIGKILL a second later.
 
     The stream never ends by itself, and the manager kills the process about a second after its TERM
-    (seen on corla-demo): the stop must be recorded as the signal arrives, not after the wait.
+    (seen on corla-demo): the stop must be recorded as the signal arrives, not after the wait, and a
+    second TERM (forwarded by ``uv``) must not lose it. Without ``uv`` on the PATH, the server is run directly.
     """
     import http.client
+    import os
+    import shutil
     import signal
     import subprocess
     import sys
@@ -101,14 +104,15 @@ def test_a_sigterm_records_the_stop_even_with_a_live_page_open(tmp_path: Path) -
     root = tmp_path / "ws"
     Workspace.open(root)
     port = free_port()
-    command = Path(sys.executable).parent / "corla-observer"
+    uv = shutil.which("uv")
+    command = [uv, "run", "--quiet", "corla-observer"] if uv else [str(Path(sys.executable).parent / "corla-observer")]
     process = subprocess.Popen(
-        [str(command), "serve", "--workspace", str(root), "--port", str(port), "--secret-file", str(tmp_path / "secret")],
-        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+        [*command, "serve", "--workspace", str(root), "--port", str(port), "--secret-file", str(tmp_path / "secret")],
+        cwd=Path(__file__).parent.parent, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, start_new_session=True,
     )  # fmt: skip
     stream = None
     try:
-        deadline = time.monotonic() + 30
+        deadline = time.monotonic() + 60
         while time.monotonic() < deadline and process.poll() is None:
             try:
                 probe = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
@@ -121,17 +125,17 @@ def test_a_sigterm_records_the_stop_even_with_a_live_page_open(tmp_path: Path) -
         stream = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         stream.request("GET", "/events/stream")
         assert stream.getresponse().status == 200  # left open, as a dashboard's
-        process.send_signal(signal.SIGTERM)
+        os.killpg(process.pid, signal.SIGTERM)
         try:
             process.wait(timeout=1)
         except subprocess.TimeoutExpired:
-            process.kill()  # as the service manager does
+            os.killpg(process.pid, signal.SIGKILL)  # as the service manager does
             process.wait(timeout=10)
     finally:
         if stream is not None:
             stream.close()
         if process.poll() is None:
-            process.kill()
+            os.killpg(process.pid, signal.SIGKILL)
     with EventLog.open(root, read_only=True) as log:
         found = [(e.kind, e.data.get("reason")) for e in log.iter_events() if e.kind in (version.STARTED_KIND, version.STOPPED_KIND)]
     assert found == [(version.STARTED_KIND, None), (version.STOPPED_KIND, "signal SIGTERM")]
