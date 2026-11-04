@@ -514,6 +514,7 @@ def _apply_progress(snap: Snapshot) -> None:
         selections=datamap is not None and bool(datamap.used("selection_list")),
         statuses=snap.statuses,
         upcoming=snap.upcoming,
+        calendar_known=bool(snap.view is not None and snap.view.calendar.times),
     )
 
 

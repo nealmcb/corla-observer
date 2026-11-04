@@ -7,7 +7,7 @@
     <ol class="progress-strip">
       {% for step in snap.progress %}
       <li class="progress-{{ step.state }}"{% if step.state == 'current' %} aria-current="step"{% endif %}>
-        <span class="progress-mark">{% if step.state == 'done' %}{{ badge('ok', 'done') }}{% elif step.state == 'current' %}{{ badge('warning', 'now') }}{% else %}<span class="muted">later</span>{% endif %}</span>
+        <span class="progress-mark">{% if step.state == 'done' %}{{ badge('ok', 'done') }}{% elif step.state == 'current' %}{{ badge('warning', 'waiting for this') }}{% else %}<span class="muted">later</span>{% endif %}</span>
         <strong>{{ step.label }}</strong>
         <span class="meta">{{ step.detail }}</span>
       </li>

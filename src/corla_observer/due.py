@@ -25,8 +25,9 @@ calendar's earliest deadline (or, without a calendar, at the first
 update's time), so a fresh replay shows nothing overdue; otherwise the real
 time (`clock`).
 
-**Staging** (`stage`). Before its due time, a missing input is not a
-problem: its problems (`Expected.codes`) are held back and it is listed in a
+**Staging** (`stage`). Before its due time, or when no due time is known
+(no calendar: a workspace without an election setup, as a practice one
+after a reset), a missing input is not a problem: its problems (`Expected.codes`) are held back and it is listed in a
 short "not yet expected" summary with counts (`Waiting`: "Manifests: 0 of
 63 posted, due Fri 10 Jul 2:00 PM"). From its due time on, its problems are
 problems as before, and an input that has none of its own in the data map
@@ -466,12 +467,16 @@ def stage(
         due = calendar.at(item.milestone)
         if done:
             continue
-        if due is not None and due > now:
+        if due is None:
+            # Nothing can be overdue without a due time: it waits, with its due time unknown.
+            held_codes |= item.codes
+            waiting.append(Waiting(item.key, item.label, words, "", "due date unknown (no election calendar)"))
+        elif due > now:
             held_codes |= item.codes
             when = due_text(due)
             phrase = f"expected after the roll, {when}" if item.after else (f"due at the roll, {when}" if item.milestone == ROLL else f"due {when}")
             waiting.append(Waiting(item.key, item.label, words, due, phrase))
-        elif due is not None:
+        else:
             extra.extend(_overdue(item, due, lacking))
     current = [p for p in items if p.code not in held_codes]
     held = [p for p in items if p.code in held_codes]

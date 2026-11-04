@@ -503,9 +503,11 @@ From Neal, 2026-11-03, on the demo deployment:
 14. **The public dashboard showed "no seed" and "no contests" as blocking errors** before they
   were due. The staging already holds both back until due; the demo's `election.toml` predated
   the replay clock's `time` and was judged at today's date. A Reset rebuilds it. Fixed besides:
-  the dashboard opens with "Where the audit is", the statewide stages (contests chosen,
-  counties' files in CORLA, seed, selections, audit rounds with a floor and a high marker),
-  each done, now or later (`corla_observer.progress`), also in `dashboard.json`.
+  the dashboard opens with "Where the audit is", the statewide stages, each named by the event
+  that completes it (target contest list posted, counties' files imported in CORLA, seed
+  entered, selections posted, audit rounds with a floor and a high marker), each done, waiting
+  for this, or later (`corla_observer.progress`), also in `dashboard.json`. A missing input
+  with no known due time (a workspace without an election setup) waits; it is never overdue.
 15. **"Nothing is still to come before its due time"** was the empty "Not yet expected" list.
   Fixed: the section is left out when empty.
 16. **A sprint on the demo did nothing, without saying so.** The demo runs no scheduler, and on a

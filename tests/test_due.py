@@ -94,6 +94,18 @@ def test_missing_inputs_are_not_problems_before_they_are_due(ws: Workspace, log:
     assert after.waiting == [] and after.valid_until is None and after.errors >= 2
 
 
+def test_without_a_calendar_nothing_missing_is_overdue(ws: Workspace, log: EventLog) -> None:
+    """A workspace without an election setup (a practice one after a reset) has no due times: nothing missing is a problem."""
+    from corla_observer.due import Calendar
+
+    datamap = build_map(log, ws)
+    assert {"no_seed", "no_contests"} <= {p.code for p in datamap.check()}
+    view = stage(datamap, datamap.check(), now=AFTER_ROLL, calendar=Calendar({}, "no calendar known"))
+    assert not {"no_seed", "no_contests"} & {p.code for p in view.current} and view.errors == 0
+    assert "Seed: not yet entered, due date unknown (no election calendar)" in [w.text for w in view.waiting]
+    assert "Target contest list: not yet posted, due date unknown (no election calendar)" in [w.text for w in view.waiting]
+
+
 def test_something_present_but_wrong_is_always_a_problem(ws: Workspace, log: EventLog) -> None:
     # Boulder's file holds Adams's manifest: a manifest under another county's name.
     fetch(ws, log, election_files(files_Boulder_csv=ADAMS_MANIFEST))

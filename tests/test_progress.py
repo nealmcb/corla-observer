@@ -23,13 +23,17 @@ def test_before_anything_every_stage_waits_and_says_when_due() -> None:
     steps = audit_progress(contests_posted=False, corla=CorlaUploads(), seed=False, selections=False, statuses={},
                            upcoming={"targets_deadline": "Fri 6 Nov 5:00 PM", "roll": "Mon 16 Nov 10:00 AM"})  # fmt: skip
     assert [s.state for s in steps] == ["current", "later", "later", "later", "later"]
-    assert steps[0].detail == "not yet posted; due Fri 6 Nov 5:00 PM" and steps[2].detail == "not yet; at the roll, Mon 16 Nov 10:00 AM"
+    assert steps[0].detail == "the Secretary of State's target contest list is not yet posted; due Fri 6 Nov 5:00 PM"
+    assert steps[2].detail == "the random seed is not yet entered; at the roll, Mon 16 Nov 10:00 AM"
+    # Without a calendar (no election setup), the stages say so instead of a due time.
+    bare = audit_progress(contests_posted=False, corla=CorlaUploads(), seed=False, selections=False, statuses={}, calendar_known=False)
+    assert bare[0].detail == "the Secretary of State's target contest list is not yet posted; no election calendar here"
 
 def test_counties_files_then_seed_then_rounds_with_floor_and_high_marker() -> None:
     corla = CorlaUploads("uploadStatus.csv")
     partly = {"Adams": _status("Adams"), "Delta": _status("Delta", files=False), "San Juan": _status("San Juan", files=False)}
     steps = audit_progress(contests_posted=True, corla=corla, seed=False, selections=False, statuses=partly)
-    assert [s.state for s in steps][:3] == ["done", "current", "later"] and steps[1].detail == "1 of 2 counties have their manifest and CVR imported"
+    assert [s.state for s in steps][:3] == ["done", "current", "later"] and steps[1].detail == "1 of 2 counties have their ballot manifest and CVR imported"
     rounds = {"Adams": _status("Adams", round=3), "Delta": _status("Delta", round=1)}
     steps = audit_progress(contests_posted=True, corla=corla, seed=True, selections=True, statuses=rounds)
     assert [s.state for s in steps] == ["done", "done", "done", "done", "current"]
@@ -40,6 +44,7 @@ def test_counties_files_then_seed_then_rounds_with_floor_and_high_marker() -> No
 def test_the_dashboard_shows_the_stages(client: TestClient) -> None:  # noqa: F811
     page = client.get("/")
     assert '<section id="progress"' in page.text and "Where the audit is" in page.text and 'aria-current="step"' in page.text
+    assert "waiting for this" in page.text and ">now<" not in page.text
     assert "Nothing is still to come" not in page.text
     progress = client.get("/dashboard.json").json()["progress"]
-    assert [p["label"] for p in progress] == ["Contests chosen", "Counties' files in CORLA", "Seed entered", "Selections posted", "Audit rounds"]
+    assert [p["label"] for p in progress] == ["Target contest list posted", "Counties' files imported in CORLA", "Seed entered", "Selections posted", "Audit rounds"]
