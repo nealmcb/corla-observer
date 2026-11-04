@@ -1176,6 +1176,9 @@ def workspace_reset(
     typer.echo(f"reset: the new log starts with workspace.reset, after the old log's {report.previous_events} events (head {report.previous_head_seq} {report.previous_head_hash or '-'})")
 
 
+#: How long the web server waits for open connections when stopped, before its shutdown runs (`serve`).
+SHUTDOWN_GRACE_SECONDS = 3
+
 user_app = typer.Typer(help="Coordinator accounts for the web interface.", no_args_is_help=True)
 app.add_typer(user_app, name="user")
 
@@ -1322,6 +1325,9 @@ def serve_command(
         forwarded_allow_ips=forwarded_allow_ips,
         server_header=False,
         timeout_keep_alive=5,
+        # On SIGTERM, wait at most this long for open connections (a dashboard's or the Activity page's live
+        # stream never closes by itself) before the app's shutdown, which records server.stopped.
+        timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
     )
 
 

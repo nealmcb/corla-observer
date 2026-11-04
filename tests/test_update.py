@@ -82,3 +82,54 @@ def test_every_start_is_recorded_and_an_update_keeps_every_event_link_list_and_e
     with EventLog.open(store.root, read_only=True) as log:
         cycle = [e.kind for e in log.iter_events() if e.kind in (version.STARTED_KIND, version.STOPPED_KIND)]
     assert cycle == [version.STARTED_KIND, version.STOPPED_KIND] * 3
+
+
+def test_a_sigterm_records_the_stop_even_with_a_live_page_open(tmp_path: Path) -> None:
+    """As a service manager stops it: ``corla-observer serve`` in its own process, a browser's live stream open, then SIGTERM.
+
+    The stream never ends by itself; the server must stop waiting for it (``timeout_graceful_shutdown``)
+    and run its shutdown, which records ``server.stopped``, before the manager gives up and kills it.
+    """
+    import http.client
+    import signal
+    import subprocess
+    import sys
+    import time
+
+    from test_browser_per_contest import free_port
+
+    root = tmp_path / "ws"
+    Workspace.open(root)
+    port = free_port()
+    command = Path(sys.executable).parent / "corla-observer"
+    process = subprocess.Popen(
+        [str(command), "serve", "--workspace", str(root), "--port", str(port), "--secret-file", str(tmp_path / "secret")],
+        stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+    )  # fmt: skip
+    stream = None
+    try:
+        deadline = time.monotonic() + 30
+        while time.monotonic() < deadline and process.poll() is None:
+            try:
+                probe = http.client.HTTPConnection("127.0.0.1", port, timeout=2)
+                probe.request("GET", "/version.json")
+                if probe.getresponse().status == 200:
+                    break
+            except OSError:
+                time.sleep(0.2)
+        assert process.poll() is None, process.stderr.read().decode() if process.stderr else ""
+        stream = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+        stream.request("GET", "/events/stream")
+        assert stream.getresponse().status == 200  # left open, as a dashboard's
+        began = time.monotonic()
+        process.send_signal(signal.SIGTERM)
+        process.wait(timeout=20)
+        assert time.monotonic() - began < 15
+    finally:
+        if stream is not None:
+            stream.close()
+        if process.poll() is None:
+            process.kill()
+    with EventLog.open(root, read_only=True) as log:
+        kinds = [e.kind for e in log.iter_events() if e.kind in (version.STARTED_KIND, version.STOPPED_KIND)]
+    assert kinds == [version.STARTED_KIND, version.STOPPED_KIND]
