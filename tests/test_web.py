@@ -173,6 +173,21 @@ def test_sse_emits_an_update_after_an_append(workspace: Path, make_client: Facto
     assert heads[1]["hash"] == log.head()[1]
 
 
+def test_sse_pings_between_heads_saying_when_the_next_word_is_due(workspace: Path, make_client: Factory, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Between heads the stream sends ping events, so the page can show its last contact and when the next is due."""
+    from corla_observer.web import public
+
+    monkeypatch.setattr(public, "KEEPALIVE_SECONDS", 0.3)
+    client = make_client(sse_max_seconds=1.2)
+    text = client.get("/events/stream").text
+    events = [line[len("event: ") :] for line in text.splitlines() if line.startswith("event: ")]
+    data = [json.loads(line[len("data: ") :]) for line in text.splitlines() if line.startswith("data: ")]
+    assert events[0] == "head" and events.count("ping") >= 2 and set(events) == {"head", "ping"}
+    assert all(d["next_within"] == 0.3 for d in data)
+    # And the scheduler's next check, for beside it: this workspace has no scheduler.
+    assert {d["audit_center"] for d in data} == {"Audit Center checks: no scheduler running here"}
+
+
 def test_login_and_logout(workspace: Path, client: TestClient) -> None:
     assert login(client, password="wrong password!").status_code == 401
     assert login(client, name="nobody").status_code == 401

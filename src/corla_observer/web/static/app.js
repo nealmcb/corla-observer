@@ -46,7 +46,7 @@
             current.replaceWith(document.importNode(fresh, true));
             shown = fresh.getAttribute("data-head");
           }
-          setStatus("live", "Live: updated " + new Date().toLocaleTimeString());
+          showContact();
         })
         .catch(function () {
           setStatus("stale", "Could not refresh; reload the page");
@@ -57,13 +57,45 @@
         });
     }
 
+    // The last word from the server (a head or a ping) and when the next is due at the latest: shown beside
+    // "Live", and checked every few seconds, so a silent connection reads as such rather than as a quiet log.
+    var lastContact = null;
+    var nextBy = null;
+    var auditCenter = "";
+    var connected = false;
+    var LATE_MS = 10000;
+    function clock(t) { return t.toLocaleTimeString(); }
+    function showContact() {
+      if (!connected) return;
+      if (lastContact === null) { setStatus("live", "Live"); return; }
+      var now = Date.now();
+      if (nextBy !== null && now > nextBy.getTime() + LATE_MS) {
+        setStatus("stale", "No word from the server since " + clock(lastContact) + "; reconnecting…");
+      } else {
+        setStatus("live", "Live · last contact " + clock(lastContact) + (nextBy ? " · next by " + clock(nextBy) : "") + (auditCenter ? " · " + auditCenter : ""));
+      }
+    }
+    function contact(data) {
+      lastContact = new Date();
+      var within = data && typeof data.next_within === "number" ? data.next_within : null;
+      nextBy = within === null ? null : new Date(lastContact.getTime() + within * 1000);
+      if (data && typeof data.audit_center === "string") auditCenter = data.audit_center;
+      showContact();
+    }
+    setInterval(showContact, 5000);
+
     var source = new EventSource(prefix + "/events/stream");
-    source.addEventListener("open", function () { setStatus("live", "Live"); });
-    source.addEventListener("error", function () { setStatus("stale", "Reconnecting…"); });
+    source.addEventListener("open", function () { connected = true; showContact(); });
+    source.addEventListener("error", function () { connected = false; setStatus("stale", "Reconnecting…"); });
+    source.addEventListener("ping", function (event) {
+      var data = null;
+      try { data = JSON.parse(event.data); } catch (e) { /* still a contact */ }
+      contact(data);
+    });
     source.addEventListener("head", function (event) {
       var head;
       try { head = JSON.parse(event.data); } catch (e) { return; }
-      setStatus("live", "Live");
+      contact(head);
       if (String(head.seq) !== String(shown)) refresh(head.seq);
     });
   }

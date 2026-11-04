@@ -639,6 +639,47 @@ def decide(schedule: Schedule | None, sprint: Sprint | None, last_start: str | N
     return Decision(False, f"window {window.name!r}", window, window.results, min(MAX_SLEEP_SECONDS, max(1.0, remaining)))
 
 
+def next_check(schedule: Schedule | None, sprint: Sprint | None, last_start: str | None, now: str) -> tuple[str | None, str]:
+    """When the scheduler next checks the Audit Center (UTC; None if not known) and why: in a sprint or a window, one
+    interval after the last cycle's start (now, if due); between windows, the next window's start."""
+    decision = decide(schedule, sprint, last_start, now)
+    if decision.due:
+        return now, decision.reason
+    if sprint is not None:
+        when = _plus(last_start or now, sprint.every_seconds)
+        return when, f"sprint, every {sprint.every_seconds} s"
+    if schedule is None:
+        return None, "no schedule file"
+    if decision.window is not None:
+        when = _plus(last_start or now, decision.window.every_seconds)
+        return when, f"window {decision.window.name!r}, every {_every(decision.window.every_seconds)}"
+    upcoming = schedule.next_start(now)
+    return (upcoming, "the next window") if upcoming else (None, "after the last window")
+
+
+def _plus(moment: str, seconds: float) -> str:
+    return format_server_time(datetime.strptime(moment, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=UTC) + timedelta(seconds=seconds))
+
+
+def _every(seconds: int) -> str:
+    return f"{seconds // 3600} h" if seconds % 3600 == 0 else (f"{seconds // 60} min" if seconds % 60 == 0 else f"{seconds} s")
+
+
+def next_check_text(workspace: Workspace, log: EventLog, now: str) -> str:
+    """The scheduler's next check of the Audit Center, in words, for the pages' live status: whether a
+    scheduler is running for the workspace (its heartbeat), and when it next checks, in Colorado time."""
+    if not scheduler_running(workspace, now):
+        return "Audit Center checks: no scheduler running here"
+    try:
+        schedule = load_schedule(workspace)
+    except ScheduleError:
+        return "Audit Center checks: schedule.toml cannot be read"
+    when, why = next_check(schedule, active_sprint(log, now), last_cycle_start(log), now)
+    if when is None:
+        return f"Audit Center checks: none scheduled ({why})"
+    return f"next Audit Center check {colorado_time(when, seconds=False)} ({why})"
+
+
 class SpriteKeepAwake:
     """Holds a Sprites task through the sprite's local API socket while asked to, refreshing it every minute."""
 

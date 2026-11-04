@@ -36,9 +36,14 @@ Routes (under the app's path prefix):
 ``GET /events/stream``
     Server-sent events: a ``head`` event with the log's head when the
     stream opens and whenever it moves, checked every
-    ``sse_poll_interval`` seconds (one indexed query), and a comment every
-    15 seconds to keep the connection open. A stream ends after
-    ``sse_max_seconds`` and the browser reconnects.
+    ``sse_poll_interval`` seconds (one indexed query), and between them a
+    ``ping`` event every 15 seconds (``next_within``: the seconds until the
+    next word at the latest), which keeps the connection open and lets the
+    page show its last contact with the server and when the next is due.
+    Both carry ``audit_center``: the scheduler's next check of the Audit
+    Center in words (`corla_observer.schedule.next_check_text`, worked out
+    at most every 15 seconds for all streams), shown beside it. A
+    stream ends after ``sse_max_seconds`` and the browser reconnects.
 
 Responses carry an ETag (the log head's position and hash) and ``Cache-Control:
 public, no-cache``, so a cached copy is always revalidated.
@@ -50,6 +55,7 @@ import dataclasses
 import json
 import time
 from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import anyio
@@ -58,6 +64,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from corla_observer.classify import is_test_county
+from corla_observer.events import format_server_time
 from corla_observer.version import current
 from corla_observer.web.app import WebState, get_state
 from corla_observer.web.views import Snapshot
@@ -219,6 +226,26 @@ def _sse(event: str, data: dict[str, Any]) -> str:
     return f"event: {event}\ndata: {json.dumps(data, separators=(',', ':'))}\n\n"
 
 
+_NEXT_CHECK: dict[str, tuple[float, str]] = {}
+
+
+def _next_check(state: WebState) -> str:
+    """The scheduler's next check in words (`corla_observer.schedule.next_check_text`), kept for `KEEPALIVE_SECONDS`, so many streams cost one reading."""
+    from corla_observer.schedule import next_check_text
+
+    key = str(state.workspace.root)
+    now = time.monotonic()
+    kept = _NEXT_CHECK.get(key)
+    if kept is not None and now - kept[0] < KEEPALIVE_SECONDS:
+        return kept[1]
+    try:
+        text = next_check_text(state.workspace, state.log, format_server_time(datetime.now(UTC)))
+    except Exception:  # noqa: BLE001 - the live status never breaks the stream
+        text = ""
+    _NEXT_CHECK[key] = (now, text)
+    return text
+
+
 @router.get("/events/stream")
 async def event_stream(request: Request) -> Response:
     state = get_state(request)
@@ -245,10 +272,10 @@ async def event_stream(request: Request) -> Response:
                 if current != last:
                     last = current
                     last_sent = now
-                    yield _sse("head", {"seq": current[0], "hash": current[1]})
+                    yield _sse("head", {"seq": current[0], "hash": current[1], "next_within": KEEPALIVE_SECONDS, "audit_center": _next_check(state)})
                 elif now - last_sent >= KEEPALIVE_SECONDS:
                     last_sent = now
-                    yield ": keepalive\n\n"
+                    yield _sse("ping", {"next_within": KEEPALIVE_SECONDS, "audit_center": _next_check(state)})
                 if now - started >= config.sse_max_seconds or await request.is_disconnected():
                     return
                 await anyio.sleep(config.sse_poll_interval)

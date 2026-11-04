@@ -249,3 +249,24 @@ def test_a_sigterm_ends_the_scheduler_with_its_end_recorded(tmp_path: Path) -> N
     with EventLog.open(ws.root, read_only=True) as log:
         kinds = [(e.kind, e.data.get("reason")) for e in log.iter_events() if e.kind in ("schedule.started", "schedule.stopped")]
     assert kinds == [("schedule.started", None), ("schedule.stopped", "SystemExit: signal SIGTERM")]
+
+
+def test_the_next_check_in_words(tmp_path: Path) -> None:
+    """The pages' live status: whether a scheduler runs here, and when it next checks the Audit Center."""
+    from corla_observer.schedule import Sprint, beat, load_schedule, next_check, next_check_text
+
+    ws = setup_workspace(tmp_path)
+    schedule = load_schedule(ws)
+    before = "2026-11-03T19:00:00.000Z"
+    with EventLog.open(ws.root) as log:
+        assert next_check_text(ws, log, before) == "Audit Center checks: no scheduler running here"
+        beat(ws, before)
+        assert next_check_text(ws, log, before) == "next Audit Center check 2026-11-06 19:00 MST (the next window)"
+    # In a window: one interval after the last cycle's start, or now if due; in a sprint, its interval.
+    roll = "2026-11-16T15:00:00.000Z"  # 8 AM MST on roll day: every 3 minutes
+    when, why = next_check(schedule, None, "2026-11-16T14:59:00.000Z", roll)
+    assert when == "2026-11-16T15:02:00.000Z" and why == "window 'roll day', every 3 min"
+    assert next_check(schedule, None, "2026-11-16T14:50:00.000Z", roll)[0] == roll
+    sprint = Sprint("2026-11-16T16:00:00.000Z", 60, "coordinator:ann", 1)
+    assert next_check(schedule, sprint, "2026-11-16T14:59:30.000Z", roll) == ("2026-11-16T15:00:30.000Z", "sprint, every 60 s")
+    assert next_check(schedule, None, None, "2026-12-31T00:00:00.000Z") == (None, "after the last window")
