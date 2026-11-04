@@ -299,6 +299,10 @@ class WebState:
             )  # fmt: skip
         return response
 
+    #: Whether this process's stop is recorded (`record_stop`), and the lock guarding it.
+    stop_recorded = False
+    stop_lock = threading.Lock()
+
     def close(self) -> None:
         self.log.close()
 
@@ -484,12 +488,21 @@ def _record_start(state: WebState) -> None:
         logging.getLogger(__name__).warning("could not record the server's start: %s", exc)
 
 
-def _record_stop(state: WebState) -> None:
-    """Record a graceful stop (``server.stopped``), so a start with none before it shows a crash or a kill; never raises."""
+def record_stop(state: WebState, reason: str = "stopped") -> None:
+    """Record the server's stop (``server.stopped``, with ``reason``) once: a start with none before it shows a crash or a kill; never raises.
+
+    ``serve`` calls it as soon as a stop signal arrives (`corla_observer.cli`), before the server waits for
+    open connections, since a service manager may kill the process within a second; the app's shutdown
+    calls it too, for any other stop, and it records nothing the second time.
+    """
     from corla_observer.version import STOPPED_KIND
 
+    with state.stop_lock:
+        if state.stop_recorded:
+            return
+        state.stop_recorded = True
     try:
-        state.log.append(STOPPED_KIND, "system", data={"reason": "stopped"})
+        state.log.append(STOPPED_KIND, "system", data={"reason": reason})
     except Exception as exc:  # noqa: BLE001 - stopping must go on
         logging.getLogger(__name__).warning("could not record the server's stop: %s", exc)
 
@@ -509,7 +522,7 @@ def create_app(config: AppConfig) -> FastAPI:
         try:
             yield
         finally:
-            _record_stop(state)
+            record_stop(state)
             state.close()
 
     app = FastAPI(

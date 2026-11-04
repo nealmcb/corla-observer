@@ -85,10 +85,10 @@ def test_every_start_is_recorded_and_an_update_keeps_every_event_link_list_and_e
 
 
 def test_a_sigterm_records_the_stop_even_with_a_live_page_open(tmp_path: Path) -> None:
-    """As a service manager stops it: ``corla-observer serve`` in its own process, a browser's live stream open, then SIGTERM.
+    """As the sprite's service manager stops it: ``corla-observer serve`` in its own process, a browser's live stream open, SIGTERM, then SIGKILL a second later.
 
-    The stream never ends by itself; the server must stop waiting for it (``timeout_graceful_shutdown``)
-    and run its shutdown, which records ``server.stopped``, before the manager gives up and kills it.
+    The stream never ends by itself, and the manager kills the process about a second after its TERM
+    (seen on corla-demo): the stop must be recorded as the signal arrives, not after the wait.
     """
     import http.client
     import signal
@@ -121,15 +121,17 @@ def test_a_sigterm_records_the_stop_even_with_a_live_page_open(tmp_path: Path) -
         stream = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
         stream.request("GET", "/events/stream")
         assert stream.getresponse().status == 200  # left open, as a dashboard's
-        began = time.monotonic()
         process.send_signal(signal.SIGTERM)
-        process.wait(timeout=20)
-        assert time.monotonic() - began < 15
+        try:
+            process.wait(timeout=1)
+        except subprocess.TimeoutExpired:
+            process.kill()  # as the service manager does
+            process.wait(timeout=10)
     finally:
         if stream is not None:
             stream.close()
         if process.poll() is None:
             process.kill()
     with EventLog.open(root, read_only=True) as log:
-        kinds = [e.kind for e in log.iter_events() if e.kind in (version.STARTED_KIND, version.STOPPED_KIND)]
-    assert kinds == [version.STARTED_KIND, version.STOPPED_KIND]
+        found = [(e.kind, e.data.get("reason")) for e in log.iter_events() if e.kind in (version.STARTED_KIND, version.STOPPED_KIND)]
+    assert found == [(version.STARTED_KIND, None), (version.STOPPED_KIND, "signal SIGTERM")]

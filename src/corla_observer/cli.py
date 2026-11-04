@@ -1177,7 +1177,7 @@ def workspace_reset(
 
 
 #: How long the web server waits for open connections when stopped, before its shutdown runs (`serve`).
-SHUTDOWN_GRACE_SECONDS = 3
+SHUTDOWN_GRACE_SECONDS = 1
 
 user_app = typer.Typer(help="Coordinator accounts for the web interface.", no_args_is_help=True)
 app.add_typer(user_app, name="user")
@@ -1317,18 +1317,35 @@ def serve_command(
         )
     )
     typer.echo(f"serving on http://{host}:{port}{prefix}/", err=True)
-    uvicorn.run(
-        web,
-        host=host,
-        port=port,
-        proxy_headers=True,
-        forwarded_allow_ips=forwarded_allow_ips,
-        server_header=False,
-        timeout_keep_alive=5,
-        # On SIGTERM, wait at most this long for open connections (a dashboard's or the Activity page's live
-        # stream never closes by itself) before the app's shutdown, which records server.stopped.
-        timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
-    )
+    from corla_observer.web.app import record_stop
+
+    class Server(uvicorn.Server):
+        """Records the stop (server.stopped) the moment a stop signal arrives, before waiting for open connections:
+        a service manager may kill the process within a second, and a live page's stream never closes by itself."""
+
+        def handle_exit(self, sig: int, frame: Any) -> None:
+            import signal as signals
+            import threading
+
+            # In a thread of its own, not in this signal handler: the handler may have interrupted this thread
+            # in the middle of an append (the log's lock is reentrant), and appending here would fork the chain.
+            reason = f"signal {signals.Signals(sig).name}"
+            threading.Thread(target=record_stop, args=(web.state.web, reason), name="corla-observer-stop").start()
+            super().handle_exit(sig, frame)
+
+    Server(
+        uvicorn.Config(
+            web,
+            host=host,
+            port=port,
+            proxy_headers=True,
+            forwarded_allow_ips=forwarded_allow_ips,
+            server_header=False,
+            timeout_keep_alive=5,
+            # Then wait at most this long for open connections, so the process ends before it is killed.
+            timeout_graceful_shutdown=SHUTDOWN_GRACE_SECONDS,
+        )
+    ).run()
 
 
 # ---------------------------------------------------------------------------
