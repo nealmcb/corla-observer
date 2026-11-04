@@ -11,6 +11,7 @@ import shutil
 import subprocess
 from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -32,6 +33,7 @@ from corla_observer.practice import (
     practice_stats,
     pull_order_key,
     record_entry,
+    reset_reads,
 )
 from corla_observer.seeds import enter_and_confirm
 from corla_observer.web.accounts import AccountStore
@@ -197,6 +199,45 @@ def test_links_entries_reader_and_stats(root: Path) -> None:
 # The web pages
 
 
+def test_a_wrong_ballot_reads_another_ballots_votes_under_this_ones_id(root: Path) -> None:
+    """The reader's wrong ballot (`SUBSTITUTED`): another ballot of the list, the most different, under the right imprinted ID."""
+    from corla_observer.practice import SUBSTITUTED
+
+    ws = Workspace.open(root)
+    with EventLog.open(root) as log:
+        extract, _, _ = build_extract(ws, log, "La Plata", boards=1)
+        _, reader = LinkStore(root).create("reader", "bob", "La Plata", 1, log)
+        by_id = {str(b["imprinted_id"]): b for b in extract["ballots"]}
+        next_read(log, reader, extract, inject_rate=1.0, inject_kinds="wrong", rng=random.Random(1))
+        read = current_read(log, "La Plata", 1)
+        assert read is not None and read["inject_kinds"] == "wrong" and read["inject_rate"] == "1"
+        deviation = read["deviation"]
+        first = extract["ballots"][0]
+        assert deviation["type"] == SUBSTITUTED and read["imprinted_id_read"] == first["imprinted_id"]
+        other = by_id[deviation["read_from"]]
+        assert other["imprinted_id"] != first["imprinted_id"] and read["votes_read"] == [[str(c), str(v)] for c, v in other["votes"]]
+
+        # The most different ballot of the list, counted over both ballots' contests; each difference recorded.
+        def differ(b: dict[str, Any]) -> int:
+            mine, theirs = dict(map(tuple, first["votes"])), dict(map(tuple, b["votes"]))
+            return sum(1 for c in set(mine) | set(theirs) if mine.get(c) != theirs.get(c))
+
+        candidates = [b for b in extract["ballots"] if b["imprinted_id"] != first["imprinted_id"] and b.get("status") != "redacted" and b.get("votes")]
+        assert deviation["contests_different"] == max(differ(b) for b in candidates) == len(deviation["differences"]) > 0
+        # "small" never substitutes; "both" may do either.
+        kinds = set()
+        for seed in range(40):
+            rng = random.Random(seed)
+            reset_reads(log, reader)
+            next_read(log, reader, extract, inject_rate=1.0, inject_kinds="both", rng=rng)
+            kinds.add(((current_read(log, "La Plata", 1) or {}).get("deviation") or {}).get("type"))
+        assert SUBSTITUTED in kinds and kinds & set(DEVIATIONS)
+        for seed in range(20):
+            reset_reads(log, reader)
+            next_read(log, reader, extract, inject_rate=1.0, inject_kinds="small", rng=random.Random(seed))
+            assert ((current_read(log, "La Plata", 1) or {}).get("deviation") or {}).get("type") != SUBSTITUTED
+
+
 @pytest.fixture
 def client(root: Path) -> Iterator[TestClient]:
     ws = Workspace.open(root)
@@ -325,11 +366,12 @@ def test_reader_pages(root: Path, client: TestClient) -> None:
     assert "Second reading: read it all aloud again" in second and "101-1-1" in second and ">Next ballot</button>" in second
     assert '<option value="0" selected>' in second
     for _ in range(10):
-        client.post(f"/p/read/{token}/next", data={"rate": "0.33"})
+        client.post(f"/p/read/{token}/next", data={"rate": "0.33", "kinds": "wrong"})
     last = client.get(f"/p/read/{token}?step=2").text
     assert "last ballot" in last
     # The rate is kept from ballot to ballot: without one asked for, the last reading's.
-    assert '<option value="0.33" selected>' in last and 'name="rate" value="0.33"' in last and "data-sets-rate" in last
+    assert '<option value="0.33" selected>' in last and 'name="rate" value="0.33"' in last and "data-sets-field" in last
+    assert '<option value="wrong" selected>' in last and 'name="kinds" value="wrong"' in last
     client.post(f"/p/read/{token}/restart", data={"rate": "0"})
     assert "Press Next" in client.get(f"/p/read/{token}").text
     observer, _ = LinkStore(root).create("observer", "ann", "La Plata", 1)

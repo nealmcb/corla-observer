@@ -114,6 +114,8 @@ from corla_observer.seeds import seed_state
 from corla_observer.pulllists import LOOKUP, LOOKUP_KINDS, LOOKUP_NAME, RLA, PullList, county_lists, events_for, extract_by_sha
 from corla_observer.pulllists import load as load_list
 from corla_observer.practice import (
+    DEVIATION_LABELS,
+    INJECT_KINDS,
     Link,
     LinkStore,
     PracticeError,
@@ -688,6 +690,8 @@ async def reader_page(request: Request, token: str) -> Response:
     last_rate = current.get("inject_rate") if current else None
     remembered = next((value for value, _ in INJECT_RATES if isinstance(last_rate, str) and last_rate == f"{float(value):g}"), "0")
     rate = request.query_params.get("rate", remembered)
+    last_kinds = current.get("inject_kinds") if current else None
+    kinds = request.query_params.get("kinds", last_kinds if last_kinds in dict(INJECT_KINDS) else "small")
     response = state.render(
         request,
         "reader.html",
@@ -698,6 +702,9 @@ async def reader_page(request: Request, token: str) -> Response:
         has_extract=found is not None,
         twins=[] if found is not None or chosen.lists else await run_in_threadpool(_twins_of, state, link.county),
         rates=INJECT_RATES,
+        kind_options=INJECT_KINDS,
+        kinds=kinds if kinds in dict(INJECT_KINDS) else "small",
+        deviation_labels=DEVIATION_LABELS,
         rate=rate if rate in dict(INJECT_RATES) else "0",
         second=request.query_params.get("step") == "2",
         short_contest=short_contest,
@@ -730,6 +737,8 @@ async def reader_next(request: Request, token: str) -> Response:
     form = await _small_form(request)
     rate = form.get("rate", "0")
     inject = float(rate) if rate in dict(INJECT_RATES) else 0.0
+    kinds = form.get("kinds", "small")
+    kinds = kinds if kinds in dict(INJECT_KINDS) else "small"
     chosen = await run_in_threadpool(_choose, state, link, _asked_key(request, form))
     key = chosen.key
     found = await run_in_threadpool(chosen.extract, state)
@@ -737,11 +746,11 @@ async def reader_next(request: Request, token: str) -> Response:
         raise HTTPException(status_code=409, detail="No practice extract for this county yet.")
     try:
         await run_in_threadpool(
-            lambda: next_read(state.log, link, found[0], inject_rate=inject, rng=random.SystemRandom(), list_key=key, extract_sha256=found[1])
+            lambda: next_read(state.log, link, found[0], inject_rate=inject, inject_kinds=kinds, rng=random.SystemRandom(), list_key=key, extract_sha256=found[1])
         )
     except PracticeError:
         pass  # the last ballot: the page says so
-    return RedirectResponse(state.url(f"/read/{token}?rate={rate}" + _list_query(key, "&")), status_code=303)
+    return RedirectResponse(state.url(f"/read/{token}?rate={rate}&kinds={kinds}" + _list_query(key, "&")), status_code=303)
 
 
 @router.post("/read/{token}/restart")
@@ -751,4 +760,6 @@ async def reader_restart(request: Request, token: str) -> Response:
     form = await _small_form(request)
     key = (await run_in_threadpool(_choose, state, link, _asked_key(request, form))).key
     await run_in_threadpool(reset_reads, state.log, link, key)
-    return RedirectResponse(state.url(f"/read/{token}?rate={form.get('rate', '0')}" + _list_query(key, "&")), status_code=303)
+    kinds = form.get("kinds", "small")
+    kinds = kinds if kinds in dict(INJECT_KINDS) else "small"
+    return RedirectResponse(state.url(f"/read/{token}?rate={form.get('rate', '0')}&kinds={kinds}" + _list_query(key, "&")), status_code=303)

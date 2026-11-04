@@ -46,9 +46,15 @@ once.
 **Reader.** `next_read` moves a reader link to the next ballot of its board
 and records what is to be read aloud as a ``practice.read`` event, with the
 injection rate it was read at (``inject_rate``, as text such as ``0.33``). With an injection rate above zero it sometimes reads something deliberately
-different (`DEVIATIONS`: a different vote in one contest, a wrong imprinted
-ID, or a skipped ballot), recorded in the event, so that practice entries
-can be scored (`board_stats`).
+different, recorded in the event, so that practice entries can be scored
+(`board_stats`). Which kinds (``inject_kinds``, `INJECT_KINDS`, recorded
+too): ``small`` differences (`DEVIATIONS`: a different vote in one
+contest, a wrong imprinted ID (``wrong_ballot``, the name it was first
+recorded under), or a skipped ballot); a ``wrong`` ballot
+(`SUBSTITUTED`): another ballot of the list read in this one's place, under
+this one's imprinted ID, as when a board pulls the wrong ballot but reads
+the ID from the list, chosen to differ in as many contests as possible, so
+that observers practise entering the names they hear; or ``both``.
 
 **Pull lists.** A county may have targeted lists besides its RLA sample
 (`corla_observer.pulllists`). Each entry belongs to the list of the extract
@@ -104,6 +110,21 @@ __all__ = [
 LINKS_PATH = Path("accounts") / "links.json"
 ROLES = ("observer", "reader")
 DEVIATIONS = ("different_vote", "wrong_ballot", "skipped_ballot")
+#: Another ballot of the list read in this one's place, under this one's imprinted ID.
+SUBSTITUTED = "substituted_ballot"
+#: Which differences a reader slips in: (value, description).
+INJECT_KINDS = (
+    ("small", "small: one vote, the imprinted ID, or a skipped ballot"),
+    ("wrong", "a wrong ballot: another ballot's votes read in its place"),
+    ("both", "both"),
+)
+#: How the reader page names each difference.
+DEVIATION_LABELS = {
+    "different_vote": "one vote changed",
+    "wrong_ballot": "a wrong imprinted ID",
+    "skipped_ballot": "a skipped ballot",
+    SUBSTITUTED: "a wrong ballot",
+}
 MAX_NOTE = 500
 MAX_BOARDS = 20
 #: Events of contest-by-contest entry (`corla_observer.contests`): one contest's outcome in one
@@ -650,7 +671,35 @@ def current_read(log: EventLog, county: str, board: int, list_key: str = RLA) ->
     return dict(reads[-1].data) if reads else None
 
 
+def _substitute(ballot: Mapping[str, Any], extract: Mapping[str, Any], rng: random.Random) -> tuple[str, list[list[str]], dict[str, JSONValue]] | None:
+    """Another ballot of the list, read under this one's imprinted ID: the one whose votes differ in the most contests (`SUBSTITUTED`)."""
+    mine = {str(c): str(v) for c, v in ballot["votes"]}
+    best: list[Mapping[str, Any]] = []
+    most = 0
+    seen: set[str] = set()
+    for other in extract["ballots"]:
+        other_id = str(other["imprinted_id"])
+        if other_id == str(ballot["imprinted_id"]) or other_id in seen or other.get("status") == "redacted" or not other.get("votes"):
+            continue
+        seen.add(other_id)
+        theirs = {str(c): str(v) for c, v in other["votes"]}
+        differ = sum(1 for c in set(mine) | set(theirs) if mine.get(c) != theirs.get(c))
+        if differ > most:
+            best, most = [other], differ
+        elif differ == most and differ:
+            best.append(other)
+    if not best:
+        return None
+    other = rng.choice(best)
+    votes = [[str(c), str(v)] for c, v in other["votes"]]
+    theirs = dict((c, v) for c, v in votes)
+    differences: list[JSONValue] = [[c, mine.get(c, ""), theirs.get(c, "")] for c in sorted(set(mine) | set(theirs)) if mine.get(c) != theirs.get(c)]
+    return str(ballot["imprinted_id"]), votes, {"read_from": str(other["imprinted_id"]), "contests_different": most, "differences": differences[:40]}
+
+
 def _deviate(ballot: Mapping[str, Any], kind: str, extract: Mapping[str, Any], rng: random.Random) -> tuple[str, list[list[str]], dict[str, JSONValue]] | None:
+    if kind == SUBSTITUTED:
+        return _substitute(ballot, extract, rng) or _deviate(ballot, "different_vote", extract, rng)
     votes = [list(v) for v in ballot["votes"]]
     if kind == "different_vote":
         options = [
@@ -683,6 +732,7 @@ def next_read(
     extract: Mapping[str, Any],
     *,
     inject_rate: float = 0.0,
+    inject_kinds: str = "small",
     rng: random.Random | None = None,
     list_key: str = RLA,
     extract_sha256: str | None = None,
@@ -717,6 +767,7 @@ def next_read(
             "redacted": ballot.get("status") == "redacted",
             "deviation": deviation,
             "inject_rate": f"{inject_rate:g}",  # as text: event data holds no floats
+            "inject_kinds": inject_kinds,
         }
         if list_key != RLA or extract_sha256:
             data |= {"list": list_key, "extract_sha256": extract_sha256}
@@ -727,7 +778,8 @@ def next_read(
         kinds = list(DEVIATIONS)
         if index + 1 >= len(ballots):
             kinds.remove("skipped_ballot")
-        kind = rng.choice(kinds)
+        wrong = inject_kinds == "wrong" or (inject_kinds == "both" and rng.random() < 0.5)
+        kind = SUBSTITUTED if wrong else rng.choice(kinds)
         if kind == "skipped_ballot":
             append(ballot, None, [], {"type": "skipped_ballot"})
             ballot = ballots[index + 1]

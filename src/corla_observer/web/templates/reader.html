@@ -25,14 +25,14 @@
       <ul class="reader-votes">
         {% for contest, choice in current.votes_read %}<li><span class="muted">{{ short_contest(contest) }}:</span> <strong>{{ choice }}</strong></li>{% endfor %}
       </ul>
-      {% if current.deviation %}<p class="meta">Practice difference injected here ({{ current.deviation.type|label }}); read it as shown.</p>{% endif %}
+      {% if current.deviation %}<p class="meta">Practice difference injected here ({{ deviation_labels.get(current.deviation.type, current.deviation.type|label) }}{% if current.deviation.read_from %}: ballot {{ current.deviation.read_from }}'s votes, {{ current.deviation.contests_different }} contest{{ '' if current.deviation.contests_different == 1 else 's' }} different, under this ballot's ID{% endif %}); read it as shown.</p>{% endif %}
     {% endif %}
   {% else %}
     <p>Press Next to show the first ballot ({{ total }} on this board).</p>
   {% endif %}
   {% if current and not second and not (current.deviation and current.deviation.type == 'skipped_ballot') %}
   <form method="get" action="{{ url('/read/' ~ token) }}">
-    <input type="hidden" name="rate" value="{{ rate }}">
+    <input type="hidden" name="rate" value="{{ rate }}"><input type="hidden" name="kinds" value="{{ kinds }}">
     <input type="hidden" name="step" value="2">
     {% if list_key != 'rla' %}<input type="hidden" name="list" value="{{ list_key }}">{% endif %}
     <button type="submit" class="reader-next">Second reading</button>
@@ -41,22 +41,26 @@
     <p class="notice"><span aria-hidden="true">&#10003;</span> That was the last ballot on this board.</p>
   {% else %}
   <form method="post" action="{{ url('/read/' ~ token ~ '/next') }}">
-    <input type="hidden" name="rate" value="{{ rate }}">
+    <input type="hidden" name="rate" value="{{ rate }}"><input type="hidden" name="kinds" value="{{ kinds }}">
     <input type="hidden" name="list" value="{{ list_key }}">
     <button type="submit" class="reader-next">Next ballot</button>
   </form>
   {% endif %}
 </section>
 <form method="get" action="{{ url('/read/' ~ token) }}" class="card form">
-  <label>Deliberate differences (a changed vote, a wrong ID or a skipped ballot), recorded for scoring
-    <select name="rate" data-sets-rate>{% for value, label in rates %}<option value="{{ value }}"{% if value == rate %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  <label>Deliberate differences, recorded for scoring: how often
+    <select name="rate" data-sets-field>{% for value, label in rates %}<option value="{{ value }}"{% if value == rate %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
   </label>
+  <label>Which kind
+    <select name="kinds" data-sets-field>{% for value, label in kind_options %}<option value="{{ value }}"{% if value == kinds %} selected{% endif %}>{{ label }}</option>{% endfor %}</select>
+  </label>
+  <p class="meta">A wrong ballot reads another ballot of the list in this one's place, under this ballot's imprinted ID, as when the board pulls the wrong ballot but reads the ID from the list: chosen to differ in as many contests as possible, so observers practise entering the names they hear.</p>
   {% if list_key != 'rla' %}<input type="hidden" name="list" value="{{ list_key }}">{% endif %}
   <button type="submit" class="secondary js-hidden">Use this setting</button>
   <span class="meta">Kept from ballot to ballot, until changed.</span>
 </form>
 <form method="post" action="{{ url('/read/' ~ token ~ '/restart') }}">
-  <input type="hidden" name="rate" value="{{ rate }}">
+  <input type="hidden" name="rate" value="{{ rate }}"><input type="hidden" name="kinds" value="{{ kinds }}">
   <input type="hidden" name="list" value="{{ list_key }}">
   <button type="submit" class="secondary small">Start this board over</button>
 </form>

@@ -102,13 +102,14 @@
     });
   }
 
-  // The practice reader's rate of deliberate differences: choosing one sets every form's hidden rate at once,
-  // so the next button pressed uses it (without JavaScript, "Use this setting" reloads the page with it).
+  // The practice reader's settings (how often, which kind of deliberate difference): choosing one sets every
+  // form's hidden field of that name at once, so the next button pressed uses it (without JavaScript, "Use
+  // this setting" reloads the page with it).
   function readerRate() {
-    var select = document.querySelector("select[data-sets-rate]");
-    if (!select) return;
-    select.addEventListener("change", function () {
-      document.querySelectorAll('input[type="hidden"][name="rate"]').forEach(function (input) { input.value = select.value; });
+    document.querySelectorAll("select[data-sets-field]").forEach(function (select) {
+      select.addEventListener("change", function () {
+        document.querySelectorAll('input[type="hidden"][name="' + select.name + '"]').forEach(function (input) { input.value = select.value; });
+      });
     });
   }
 
