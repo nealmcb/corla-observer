@@ -49,12 +49,15 @@ injection rate it was read at (``inject_rate``, as text such as ``0.33``). With 
 different, recorded in the event, so that practice entries can be scored
 (`board_stats`). Which kinds (``inject_kinds``, `INJECT_KINDS`, recorded
 too): ``small`` differences (`DEVIATIONS`: a different vote in one
-contest, a wrong imprinted ID (``wrong_ballot``, the name it was first
-recorded under), or a skipped ballot); a ``wrong`` ballot
-(`SUBSTITUTED`): another ballot of the list read in this one's place, under
-this one's imprinted ID, as when a board pulls the wrong ballot but reads
-the ID from the list, chosen to differ in as many contests as possible, so
-that observers practise entering the names they hear; or ``both``.
+contest, a skipped ballot, or an extra ballot not on the list, found
+elsewhere and read with its own imprinted ID before the list's next one);
+a ``wrong`` ballot (`SUBSTITUTED`): another ballot of the list read in
+this one's place, under this one's imprinted ID, as when a board pulls the
+wrong ballot but reads the ID from the list, picked at random among those
+that differ in many contests, so that observers practise entering the names
+they hear; or ``both``. An extra ballot is scored as caught when the
+observer records an imprinted ID not on the list at that point. Earlier logs
+may hold ``wrong_ballot``, a wrong imprinted ID alone, no longer made.
 
 **Pull lists.** A county may have targeted lists besides its RLA sample
 (`corla_observer.pulllists`). Each entry belongs to the list of the extract
@@ -70,6 +73,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import math
 import random
 import re
 import secrets
@@ -109,20 +113,23 @@ __all__ = [
 
 LINKS_PATH = Path("accounts") / "links.json"
 ROLES = ("observer", "reader")
-DEVIATIONS = ("different_vote", "wrong_ballot", "skipped_ballot")
+DEVIATIONS = ("different_vote", "skipped_ballot", "extra_ballot")
+#: A substituted ballot is picked at random among those differing in at least this share of the most any differs.
+BIG_DIFFERENCE = 0.6
 #: Another ballot of the list read in this one's place, under this one's imprinted ID.
 SUBSTITUTED = "substituted_ballot"
 #: Which differences a reader slips in: (value, description).
 INJECT_KINDS = (
-    ("small", "small: one vote, the imprinted ID, or a skipped ballot"),
+    ("small", "small: one vote changed, a skipped ballot, or an extra ballot found elsewhere"),
     ("wrong", "a wrong ballot: another ballot's votes read in its place"),
     ("both", "both"),
 )
 #: How the reader page names each difference.
 DEVIATION_LABELS = {
     "different_vote": "one vote changed",
-    "wrong_ballot": "a wrong imprinted ID",
+    "wrong_ballot": "a wrong imprinted ID",  # earlier logs only
     "skipped_ballot": "a skipped ballot",
+    "extra_ballot": "an extra ballot, not on the list (found elsewhere)",
     SUBSTITUTED: "a wrong ballot",
 }
 MAX_NOTE = 500
@@ -672,10 +679,10 @@ def current_read(log: EventLog, county: str, board: int, list_key: str = RLA) ->
 
 
 def _substitute(ballot: Mapping[str, Any], extract: Mapping[str, Any], rng: random.Random) -> tuple[str, list[list[str]], dict[str, JSONValue]] | None:
-    """Another ballot of the list, read under this one's imprinted ID: the one whose votes differ in the most contests (`SUBSTITUTED`)."""
+    """Another ballot of the list, read under this one's imprinted ID (`SUBSTITUTED`): picked at random among those whose votes
+    differ in many contests (at least `BIG_DIFFERENCE` of the most any differs)."""
     mine = {str(c): str(v) for c, v in ballot["votes"]}
-    best: list[Mapping[str, Any]] = []
-    most = 0
+    scored: list[tuple[int, Mapping[str, Any]]] = []
     seen: set[str] = set()
     for other in extract["ballots"]:
         other_id = str(other["imprinted_id"])
@@ -684,17 +691,33 @@ def _substitute(ballot: Mapping[str, Any], extract: Mapping[str, Any], rng: rand
         seen.add(other_id)
         theirs = {str(c): str(v) for c, v in other["votes"]}
         differ = sum(1 for c in set(mine) | set(theirs) if mine.get(c) != theirs.get(c))
-        if differ > most:
-            best, most = [other], differ
-        elif differ == most and differ:
-            best.append(other)
-    if not best:
+        if differ:
+            scored.append((differ, other))
+    if not scored:
         return None
-    other = rng.choice(best)
+    floor = max(1, math.ceil(BIG_DIFFERENCE * max(d for d, _ in scored)))
+    most, other = rng.choice([(d, o) for d, o in scored if d >= floor])
     votes = [[str(c), str(v)] for c, v in other["votes"]]
     theirs = dict((c, v) for c, v in votes)
     differences: list[JSONValue] = [[c, mine.get(c, ""), theirs.get(c, "")] for c in sorted(set(mine) | set(theirs)) if mine.get(c) != theirs.get(c)]
     return str(ballot["imprinted_id"]), votes, {"read_from": str(other["imprinted_id"]), "contests_different": most, "differences": differences[:40]}
+
+
+def _extra(ballot: Mapping[str, Any], extract: Mapping[str, Any], rng: random.Random) -> tuple[str, list[list[str]], dict[str, JSONValue]] | None:
+    """An extra ballot, not on the list, found elsewhere: an imprinted ID near this one's that the list does not hold, with another ballot's votes."""
+    listed = {str(b["imprinted_id"]) for b in extract["ballots"]}
+    parts = str(ballot["imprinted_id"]).split("-")
+    if not parts[-1].isdigit():
+        return None
+    for step in rng.sample(range(1, 60), 59):
+        imprinted = "-".join([*parts[:-1], str(int(parts[-1]) + step)])
+        if imprinted not in listed:
+            break
+    else:
+        return None
+    others = [b for b in extract["ballots"] if b.get("votes") and b.get("status") != "redacted"] or [ballot]
+    source = rng.choice(others)
+    return imprinted, [[str(c), str(v)] for c, v in source["votes"]], {"read": imprinted, "votes_from": str(source["imprinted_id"])}
 
 
 def _deviate(ballot: Mapping[str, Any], kind: str, extract: Mapping[str, Any], rng: random.Random) -> tuple[str, list[list[str]], dict[str, JSONValue]] | None:
@@ -716,7 +739,7 @@ def _deviate(ballot: Mapping[str, Any], kind: str, extract: Mapping[str, Any], r
         detail: dict[str, JSONValue] = {"contest": votes[i][0], "expected": votes[i][1], "read": new}
         votes[i][1] = new
         return ballot["imprinted_id"], votes, detail
-    if kind == "wrong_ballot":
+    if kind == "wrong_ballot":  # no longer made (a board seldom misreads only the number); kept for reading earlier logs' code
         parts = str(ballot["imprinted_id"]).split("-")
         if not parts[-1].isdigit():
             return None
@@ -724,6 +747,11 @@ def _deviate(ballot: Mapping[str, Any], kind: str, extract: Mapping[str, Any], r
         wrong = "-".join(parts)
         return wrong, votes, {"expected": ballot["imprinted_id"], "read": wrong}
     return None
+
+
+def _is_extra(read: Event) -> bool:
+    deviation = read.data.get("deviation")
+    return isinstance(deviation, dict) and deviation.get("type") == "extra_ballot"
 
 
 def next_read(
@@ -780,6 +808,15 @@ def next_read(
             kinds.remove("skipped_ballot")
         wrong = inject_kinds == "wrong" or (inject_kinds == "both" and rng.random() < 0.5)
         kind = SUBSTITUTED if wrong else rng.choice(kinds)
+        if kind == "extra_ballot":
+            extra = _extra(ballot, extract, rng)
+            if extra is not None:
+                # Read before the list's ballot, at its place: the next press reads the list's ballot itself.
+                imprinted, votes, detail = extra
+                marked: dict[str, JSONValue] = {"type": "extra_ballot"}
+                append(ballot | {"board_position": index}, imprinted, votes, marked | detail)
+                return seqs
+            kind = "different_vote"
         if kind == "skipped_ballot":
             append(ballot, None, [], {"type": "skipped_ballot"})
             ballot = ballots[index + 1]
@@ -950,6 +987,8 @@ def practice_stats(events: Sequence[Event]) -> tuple[list[ObserverStats], list[B
         confirm_times: list[int] = []
         #: The latest first reading's elapsed time, per device and position.
         pending_first: dict[tuple[str | None, int], int] = {}
+        #: Where in the list the observer recorded an imprinted ID not on it.
+        not_on_list_at: set[int] = set()
         for e in evs:
             if e.kind == "observation.first_reading":
                 stats.first_readings += 1
@@ -963,6 +1002,8 @@ def practice_stats(events: Sequence[Event]) -> tuple[list[ObserverStats], list[B
                 continue
             if e.kind == "observation.id_not_on_list":
                 stats.not_on_list += 1
+                if isinstance(e.data.get("expected_position"), int):
+                    not_on_list_at.add(int(e.data["expected_position"]))  # type: ignore[arg-type]
                 continue
             if e.kind in CONTEST_KINDS:
                 continue
@@ -1016,11 +1057,20 @@ def practice_stats(events: Sequence[Event]) -> tuple[list[ObserverStats], list[B
             stats.first_reading_median_ms = int(statistics.median(first_times))
         if confirm_times:
             stats.confirm_median_ms = int(statistics.median(confirm_times))
+        board_reads = reads.get((county, board, list_key), [])
         deviations = {
             int(r.data["position"]): r.data.get("deviation")  # type: ignore[arg-type]
-            for r in reads.get((county, board, list_key), [])
-            if isinstance(r.data.get("position"), int)
+            for r in board_reads
+            if isinstance(r.data.get("position"), int) and not _is_extra(r)
         }
+        # An extra ballot is caught when the observer recorded an imprinted ID not on the list at that point.
+        for r in board_reads:
+            if _is_extra(r):
+                stats.deviations += 1
+                if r.data.get("position") in not_on_list_at:
+                    stats.caught += 1
+                else:
+                    stats.missed += 1
         for position, deviation in deviations.items():
             noted = position in latest and bool(latest[position].get("note"))
             if deviation:

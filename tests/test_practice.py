@@ -33,6 +33,7 @@ from corla_observer.practice import (
     practice_stats,
     pull_order_key,
     record_entry,
+    record_heard_id,
     reset_reads,
 )
 from corla_observer.seeds import enter_and_confirm
@@ -187,7 +188,8 @@ def test_links_entries_reader_and_stats(root: Path) -> None:
     assert (stats.actor, stats.entries, stats.edits, stats.positions) == ("observer:ann", 6, 1, 6)
     assert (stats.matches, stats.notes) == (2, 4)
     assert stats.median_ms == 3500 and stats.slowest_ms == 6000  # edits are not timed
-    assert stats.deviations == sum(1 for d in deviations.values() if d)
+    # Counted per reading: an extra ballot shares its place in the list with the list's ballot read after it.
+    assert stats.deviations == sum(1 for r in reads if r.data["deviation"])
     assert stats.caught + stats.missed == stats.deviations
     assert stats.caught == sum(1 for p, d in deviations.items() if d and p in (1, 2, 3, 6))
     (board,) = boards
@@ -201,7 +203,9 @@ def test_links_entries_reader_and_stats(root: Path) -> None:
 
 def test_a_wrong_ballot_reads_another_ballots_votes_under_this_ones_id(root: Path) -> None:
     """The reader's wrong ballot (`SUBSTITUTED`): another ballot of the list, the most different, under the right imprinted ID."""
-    from corla_observer.practice import SUBSTITUTED
+    import math
+
+    from corla_observer.practice import BIG_DIFFERENCE, SUBSTITUTED
 
     ws = Workspace.open(root)
     with EventLog.open(root) as log:
@@ -223,7 +227,9 @@ def test_a_wrong_ballot_reads_another_ballots_votes_under_this_ones_id(root: Pat
             return sum(1 for c in set(mine) | set(theirs) if mine.get(c) != theirs.get(c))
 
         candidates = [b for b in extract["ballots"] if b["imprinted_id"] != first["imprinted_id"] and b.get("status") != "redacted" and b.get("votes")]
-        assert deviation["contests_different"] == max(differ(b) for b in candidates) == len(deviation["differences"]) > 0
+        # A random one among those that differ a lot: at least BIG_DIFFERENCE of the most any differs.
+        most = max(differ(b) for b in candidates)
+        assert math.ceil(BIG_DIFFERENCE * most) <= deviation["contests_different"] == differ(other) == len(deviation["differences"]) > 0
         # "small" never substitutes; "both" may do either.
         kinds = set()
         for seed in range(40):
@@ -236,6 +242,45 @@ def test_a_wrong_ballot_reads_another_ballots_votes_under_this_ones_id(root: Pat
             reset_reads(log, reader)
             next_read(log, reader, extract, inject_rate=1.0, inject_kinds="small", rng=random.Random(seed))
             assert ((current_read(log, "La Plata", 1) or {}).get("deviation") or {}).get("type") != SUBSTITUTED
+
+
+def test_an_extra_ballot_is_read_before_the_lists_next_and_scored(root: Path) -> None:
+    """An extra ballot found elsewhere: an imprinted ID not on the list, read before the list's ballot, which comes next;
+    caught when the observer records an ID not on the list there."""
+    ws = Workspace.open(root)
+    with EventLog.open(root) as log:
+        extract, _, _ = build_extract(ws, log, "La Plata", boards=1)
+        store = LinkStore(root)
+        _, reader = store.create("reader", "bob", "La Plata", 1, log)
+        _, observer = store.create("observer", "ann", "La Plata", 1, log)
+        listed = {str(b["imprinted_id"]) for b in extract["ballots"]}
+        first = extract["ballots"][0]
+        for seed in range(200):
+            reset_reads(log, reader)
+            next_read(log, reader, extract, inject_rate=1.0, inject_kinds="small", rng=random.Random(seed))
+            read = current_read(log, "La Plata", 1)
+            if read and (read["deviation"] or {}).get("type") == "extra_ballot":
+                break
+        else:
+            raise AssertionError("no extra ballot in 200 tries")
+        assert read["imprinted_id_read"] not in listed and read["position"] == first["position"] and read["board_position"] == 0
+        # The next press reads the list's first ballot itself.
+        next_read(log, reader, extract, rng=random.Random(0))
+        after = current_read(log, "La Plata", 1)
+        assert after is not None and after["imprinted_id_read"] == first["imprinted_id"] and after["board_position"] == 1
+        # Scored: missed until the observer records the ID heard as not on the list, at that point; then caught.
+        def extra_scores() -> tuple[int, int]:
+            mine = [x for x in practice_stats(list(log.iter_events()))[0] if x.actor == observer.actor]
+            return (mine[0].caught, mine[0].missed) if mine else (0, 0)
+
+        seen: set[tuple[str, int]] = set()
+        record_entry(log, observer, {"position": first["position"], "imprinted_id": first["imprinted_id"], "match": True, "note": "",
+                                     "elapsed_ms": 1000, "device_id": "dev-a", "device_seq": 1, "client_time": "2026-11-05T12:00:00.000Z"}, seen)  # fmt: skip
+        assert extra_scores() == (0, 1)
+        heard = {"position": first["position"], "imprinted_id": first["imprinted_id"], "heard": read["imprinted_id_read"],
+                 "elapsed_ms": 900, "device_id": "dev-a", "device_seq": 2, "client_time": "2026-11-05T12:00:00.000Z"}  # fmt: skip
+        assert record_heard_id(log, observer, heard, seen, extract["ballots"]) is not None
+        assert extra_scores() == (1, 0)
 
 
 @pytest.fixture

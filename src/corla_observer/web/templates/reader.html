@@ -14,7 +14,7 @@
 {% else %}
 <section class="card">
   {% if current %}
-    <p class="meta">Ballot {{ current.board_position }} of {{ total }}</p>
+    <p class="meta">{% if current.deviation and current.deviation.type == 'extra_ballot' %}An extra ballot, not on the list, before ballot {{ current.board_position + 1 }} of {{ total }}{% else %}Ballot {{ current.board_position }} of {{ total }}{% endif %}</p>
     {% if current.deviation and current.deviation.type == 'skipped_ballot' %}
       <p class="reader-id">(skipped)</p>
       <p>Practice difference: say nothing for this ballot; it is skipped. Press Next.</p>
