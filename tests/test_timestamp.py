@@ -413,3 +413,113 @@ def test_verify_without_tools(ws: Workspace, log: EventLog, out_repo: Path, tmp_
     evil.write_text(f"{'0' * 64}  ../../etc/passwd\n{'0' * 64}  /etc/passwd\nnot a line\n")
     report = verify_evidence(evil)
     assert not report.ok and report.count("error") == 3
+
+
+def _keyless_bundle(path: Path, email: str, issuer: str) -> None:
+    """A cosign bundle whose certificate names a signer as Fulcio's do: the email, and the issuer in extension 1.3.6.1.4.1.57264.1.8."""
+    import base64
+    from datetime import timedelta
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import ec
+    from cryptography.x509.oid import NameOID
+
+    key = ec.generate_private_key(ec.SECP256R1())
+    name = x509.Name([x509.NameAttribute(NameOID.ORGANIZATION_NAME, "sigstore.dev")])
+    der_utf8 = b"\x0c" + bytes([len(issuer)]) + issuer.encode()
+    cert = (
+        x509.CertificateBuilder().subject_name(name).issuer_name(name).public_key(key.public_key()).serial_number(1)
+        .not_valid_before(NOW).not_valid_after(NOW + timedelta(minutes=10))
+        .add_extension(x509.SubjectAlternativeName([x509.RFC822Name(email)]), critical=True)
+        .add_extension(x509.UnrecognizedExtension(x509.ObjectIdentifier("1.3.6.1.4.1.57264.1.8"), der_utf8), critical=False)
+        .sign(key, hashes.SHA256())
+    )  # fmt: skip
+    pem = cert.public_bytes(serialization.Encoding.PEM)
+    path.write_text(json.dumps({"base64Signature": "AA==", "cert": base64.b64encode(pem).decode(), "rekorBundle": {}}))
+
+
+def test_bundle_identity(tmp_path: Path) -> None:
+    from corla_observer.timestamp import bundle_identity, verify_command
+
+    bundle = tmp_path / "x.cosign-bundle"
+    _keyless_bundle(bundle, "signer@example.org", "https://accounts.google.com")
+    signer = bundle_identity(bundle)
+    assert signer == ("signer@example.org", "https://accounts.google.com")
+    assert verify_command("S.txt", signer) == (
+        "cosign verify-blob --bundle S.txt.cosign-bundle --certificate-identity signer@example.org "
+        "--certificate-oidc-issuer https://accounts.google.com S.txt"
+    )
+    bundle.write_text('{"sha": "x", "key": "k.key"}')  # a key file's bundle has no certificate
+    assert bundle_identity(bundle) is None
+
+
+def test_keyless_signing_uses_the_device_flow(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keyless, cosign's input is closed (the device flow: nothing to paste back); with a key file it is the terminal's, for the password."""
+    from corla_observer import timestamp
+
+    seen: list[bool] = []
+
+    def fake_run(argv: list[str], **kwargs: object) -> timestamp.ToolRun:
+        seen.append(bool(kwargs.get("interactive")))
+        return timestamp.ToolRun(1, "no")
+
+    monkeypatch.setattr(timestamp, "run_tool", fake_run)
+    monkeypatch.setattr(timestamp.shutil, "which", lambda name: "/bin/cosign")
+    blob = tmp_path / "S.txt"
+    blob.write_text("x")
+    timestamp.sign_cosign(blob, CosignOptions(), timeout=5)
+    timestamp.sign_cosign(blob, CosignOptions(key=tmp_path / "k.key"), timeout=5)
+    assert seen == [False, True]
+
+
+def test_title_and_one_commit_per_commitment(ws: Workspace, log: EventLog, out_repo: Path, fake_tools: Path) -> None:
+    """``--title`` heads the commit; ``upgrade-proofs --amend`` folds the completed proof into it, and the log names the commit that results."""
+    title = "2026 General: Auditcenter risk limit with digital timestamp"
+    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR, push=False, title=title)
+    message = git(out_repo, "log", "-1", "--format=%B")
+    assert message.splitlines()[0] == title and f"{first.sums_name}: " in message
+    assert "opentimestamps: pending" in message
+    with pytest.raises(TimestampError, match="only with --amend"):
+        upgrade_proofs(log, out_repo=out_repo, push=False, title="x")
+    (out_repo / "unrelated.txt").write_text("staged, but not part of the commitment\n")
+    git(out_repo, "add", "unrelated.txt")
+    upgraded = upgrade_proofs(log, out_repo=out_repo, actor=ACTOR, push=False, amend=True)
+    assert "unrelated.txt" not in git(out_repo, "show", "--name-only", "--format=", "HEAD")
+    git(out_repo, "reset", "--quiet", "unrelated.txt")
+    assert upgraded.upgraded == [f"{SUBDIR}/{first.sums_name}.ots"]
+    # One commit after the starting one, holding the SUMS file, its signature and its complete proof.
+    assert git(out_repo, "rev-list", "--count", "HEAD").strip() == "2"
+    files = set(git(out_repo, "show", "--name-only", "--format=", "HEAD").split())
+    assert files == {f"{SUBDIR}/{first.sums_name}", f"{SUBDIR}/{first.sums_name}.ots", f"{SUBDIR}/{first.sums_name}.cosign-bundle"}
+    assert OTS_BITCOIN_TAG in (out_repo / SUBDIR / f"{first.sums_name}.ots").read_bytes()
+    message = git(out_repo, "log", "-1", "--format=%B")
+    assert message.splitlines()[0] == title and "opentimestamps: complete (a Bitcoin block)" in message and "pending" not in message
+    event = events(log, "evidence.proofs_upgraded")[-1]
+    assert event["amended"] == first.commit and event["commit"] == git(out_repo, "rev-parse", "HEAD").strip() != first.commit
+    # A new headline when amending; and a pushed commit is never amended.
+    (out_repo / SUBDIR / f"{first.sums_name}.ots").write_bytes(b"FAKEOTS pending")
+    git(out_repo, "commit", "--quiet", "-am", "pending again")
+    again = upgrade_proofs(log, out_repo=out_repo, push=False, amend=True, title="Another headline")
+    assert again.commit and git(out_repo, "log", "-1", "--format=%s").strip() == "Another headline"
+    # A commit without signer lines gets them from the keyless certificate when amended.
+    _keyless_bundle(out_repo / SUBDIR / f"{first.sums_name}.cosign-bundle", "signer@example.org", "https://accounts.google.com")
+    (out_repo / SUBDIR / f"{first.sums_name}.ots").write_bytes(b"FAKEOTS pending")
+    git(out_repo, "commit", "--quiet", "-am", "Headline\n\nopentimestamps: pending (x)")
+    upgrade_proofs(log, out_repo=out_repo, push=False, amend=True)
+    message = git(out_repo, "log", "-1", "--format=%B")
+    assert "Signed keyless by signer@example.org (issuer https://accounts.google.com). Check with:" in message
+    assert f"--certificate-identity signer@example.org --certificate-oidc-issuer https://accounts.google.com {first.sums_name}" in message
+    remote = out_repo.parent / "remote.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+    git(out_repo, "remote", "add", "origin", str(remote))
+    git(out_repo, "push", "--quiet", "origin", "main")
+    git(out_repo, "fetch", "--quiet", "origin")
+    with pytest.raises(TimestampError, match="has been pushed"):
+        upgrade_proofs(log, out_repo=out_repo, push=False, amend=True)
+
+
+def test_titles_are_one_short_line(ws: Workspace, log: EventLog, out_repo: Path, no_tools: Path) -> None:
+    for bad in ("", "two\nlines", "x" * 101):
+        with pytest.raises(TimestampError, match="one line"):
+            commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False, title=bad)

@@ -64,7 +64,9 @@ No local paths are recorded in events, SUMS files or commit messages.
 
 from __future__ import annotations
 
+import base64
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -577,7 +579,10 @@ def sign_cosign(path: Path, options: CosignOptions, *, timeout: float, echo: Ech
         argv += ["--key", str(options.key.resolve())]
         mode = "with a key file"
     argv.append(path.name)
-    run = run_tool(argv, cwd=path.parent, timeout=timeout, echo=echo, interactive=True)
+    # Keyless, cosign's input is closed so that it uses the device flow: it prints a link and a code to
+    # check, and the signer logs in there, with nothing to type back (with a terminal it would wait for
+    # a code to be pasted, behind a prompt this output does not show). A key file's password is typed.
+    run = run_tool(argv, cwd=path.parent, timeout=timeout, echo=echo, interactive=options.key is not None)
     if run.returncode == 0 and bundle.is_file() and bundle.stat().st_size > 0:
         match = _REKOR_INDEX_RE.search(run.output)
         index = int(match.group(1)) if match else None
@@ -586,6 +591,31 @@ def sign_cosign(path: Path, options: CosignOptions, *, timeout: float, echo: Ech
     bundle.unlink(missing_ok=True)
     why = "timed out" if run.returncode is None else f"exit status {run.returncode}"
     return Step("sigstore", "failed", f"cosign sign-blob {mode} {why}: {_short(run.output)}"), None
+
+
+def bundle_identity(bundle: Path) -> tuple[str, str] | None:
+    """A keyless cosign bundle's signer: the identity (an email, or a workflow URI) and the OIDC issuer; None for a key file's, or if unreadable."""
+    try:
+        from cryptography import x509
+
+        cert_b64 = json.loads(bundle.read_text(encoding="utf-8")).get("cert")
+        if not isinstance(cert_b64, str):
+            return None
+        cert = x509.load_pem_x509_certificate(base64.b64decode(cert_b64))
+        names = cert.extensions.get_extension_for_class(x509.SubjectAlternativeName).value
+        found = names.get_values_for_type(x509.RFC822Name) or names.get_values_for_type(x509.UniformResourceIdentifier)
+        issuer = ""
+        for oid in ("1.3.6.1.4.1.57264.1.8", "1.3.6.1.4.1.57264.1.1"):  # Fulcio's issuer extensions, the newer first
+            try:
+                raw = cert.extensions.get_extension_for_oid(x509.ObjectIdentifier(oid)).value.value  # type: ignore[attr-defined]
+            except x509.ExtensionNotFound:
+                continue
+            text = raw.decode("utf-8", "replace")
+            issuer = text[text.find("http") :] if "http" in text else text
+            break
+        return (found[0], issuer) if found and issuer else None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
 
 
 def commit_evidence(
@@ -603,6 +633,7 @@ def commit_evidence(
     timeout: float = DEFAULT_TOOL_TIMEOUT,
     clock: Callable[[], datetime] | None = None,
     echo: Echo | None = None,
+    title: str | None = None,
 ) -> CommitResult:
     """Collect, write, stamp, sign, commit and record a new evidence version; see the module documentation.
 
@@ -617,6 +648,7 @@ def commit_evidence(
     cosign = cosign or CosignOptions()
     out_repo = Path(out_repo)
     _check_repo(out_repo)
+    title = check_title(title)
     datamap = build_map(log, workspace)
     if datamap.election is not None and datamap.election != election:
         raise TimestampError(f"the data map's election is {datamap.election}, not {election}")
@@ -666,7 +698,8 @@ def commit_evidence(
                 detail += f"; withheld (no passing redaction check on record): {', '.join(withheld)}"
             steps.append(Step("include_files", "done", detail))
         rel = [f"{subdir}/{p}" if subdir else p for p in [name, *proofs, *included]]
-        message = _commit_message(election, name, evidence, steps, included)
+        signer = bundle_identity(target / f"{name}{COSIGN_SUFFIX}") if any(p.endswith(COSIGN_SUFFIX) for p in proofs) else None
+        message = _commit_message(election, name, evidence, steps, included, title=title, signer=signer)
         commit = _commit(out_repo, rel, message)
         steps.append(Step("git_commit", "done", commit))
     except BaseException as exc:
@@ -754,16 +787,37 @@ def _copy_included(workspace: Workspace, evidence: EvidenceSet, target: Path, ec
     return copied
 
 
-def _commit_message(election: str, name: str, evidence: EvidenceSet, steps: Sequence[Step], included: Sequence[str]) -> str:
+def check_title(title: str | None) -> str | None:
+    """A commit headline: one line, not empty, at most 100 characters."""
+    if title is None:
+        return None
+    title = title.strip()
+    if not title or "\n" in title or "\r" in title or len(title) > 100:
+        raise TimestampError("the title must be one line of 1 to 100 characters")
+    return title
+
+
+def verify_command(name: str, signer: tuple[str, str]) -> str:
+    """The cosign command that checks a keyless signature of ``name`` against its signer."""
+    return (f"cosign verify-blob --bundle {name}{COSIGN_SUFFIX} --certificate-identity {signer[0]} "
+            f"--certificate-oidc-issuer {signer[1]} {name}")  # fmt: skip
+
+
+def _commit_message(
+    election: str, name: str, evidence: EvidenceSet, steps: Sequence[Step], included: Sequence[str],
+    *, title: str | None = None, signer: tuple[str, str] | None = None,
+) -> str:  # fmt: skip
+    """The commit's message: ``title`` (or a default headline), then the SUMS file, the log head, the software and each step."""
     seq, head = evidence.log_head
-    lines = [
-        f"Observer evidence for {election}: {name} ({len(evidence.files)} files)",
-        "",
-        f"Event log head: {seq} {head}",
-        f"Software: {evidence.software}",
-    ]
+    default = f"Observer evidence for {election}: {name} ({len(evidence.files)} files)"
+    lines = [title or default, ""]
+    if title:
+        lines.append(f"{name}: {len(evidence.files)} files.")
+    lines += [f"Event log head: {seq} {head}", f"Software: {evidence.software}"]
     for step in steps:
         lines.append(f"{step.name}: {step.status} ({step.detail})")
+    if signer is not None:
+        lines += [f"Signed keyless by {signer[0]} (issuer {signer[1]}). Check with:", verify_command(name, signer)]
     if included:
         lines.append(f"Includes copies of {len(included)} evidence files.")
     lines.extend(f"Note: {note}" for note in evidence.notes)
@@ -829,13 +883,35 @@ def upgrade_proofs(
     include_complete: bool = False,
     timeout: float = DEFAULT_TOOL_TIMEOUT,
     echo: Echo | None = None,
+    amend: bool = False,
+    title: str | None = None,
 ) -> UpgradeResult:
-    """Run ``ots upgrade`` on the repository's pending ``.ots`` files, commit the upgraded ones and record an event."""
+    """Run ``ots upgrade`` on the repository's pending ``.ots`` files, commit the upgraded ones and record an event.
+
+    With ``amend``, the proofs considered are only those of the last commit, which must not have
+    been pushed (no remote branch holds it): the upgraded proofs are folded into it, its message's
+    OpenTimestamps line says the proof is complete and in which Bitcoin block, and its headline is
+    ``title`` if given. The event records the commit it replaced (``amended``) and the new one, so
+    that the log names the commit that is published. One commit per commitment, holding the SUMS
+    file, its signature and its complete proof.
+    """
     check_actor(actor)
     out_repo = Path(out_repo)
     _check_repo(out_repo)
+    title = check_title(title)
+    if title and not amend:
+        raise TimestampError("--title applies only with --amend")
     scope = check_subdir(subdir) if subdir else "."
     tracked = [p for p in _git(out_repo, "ls-files", "-z", "--", scope).stdout.split("\0") if p.endswith(OTS_SUFFIX)]
+    replaced: str | None = None
+    if amend:
+        replaced = _git(out_repo, "rev-parse", "HEAD").stdout.strip()
+        if _git(out_repo, "branch", "-r", "--contains", replaced).stdout.strip():
+            raise TimestampError(f"the last commit, {replaced[:12]}, has been pushed: it is never amended")
+        in_last = set(_git(out_repo, "show", "--name-only", "--format=", "HEAD").stdout.split())
+        tracked = [p for p in tracked if p in in_last]
+        if not tracked:
+            raise TimestampError("the last commit holds no OpenTimestamps proof to fold an upgrade into")
     upgraded: list[str] = []
     pending: list[str] = []
     complete: list[str] = []
@@ -877,7 +953,25 @@ def upgrade_proofs(
             pending.append(rel)
     commit: str | None = None
     steps: list[Step] = []
-    if upgraded:
+    done = [p for p in upgraded if p not in pending]
+    if amend and done:
+        old = _git(out_repo, "log", "-1", "--format=%B").stdout.rstrip("\n").split("\n")
+        block = ", ".join(f"Bitcoin block {blocks[p]}" if blocks.get(p) else "a Bitcoin block" for p in done)
+        body = [f"opentimestamps: complete ({block})" if line.startswith("opentimestamps:") else line for line in old[1:]]
+        if not any(line.startswith("Signed keyless by ") for line in body):
+            for rel in done:  # a commit made before the signer lines were added: add them from the certificate
+                sums = rel.removesuffix(OTS_SUFFIX)
+                signer = bundle_identity(out_repo / f"{sums}{COSIGN_SUFFIX}")
+                if signer is not None:
+                    name = PurePosixPath(sums).name
+                    body += [f"Signed keyless by {signer[0]} (issuer {signer[1]}). Check with:", verify_command(name, signer)]
+        message = "\n".join([title or old[0], *body]) + "\n"
+        # Only the upgraded proofs are folded in, whatever else may be staged.
+        _git(out_repo, "commit", "--quiet", "--amend", "-m", message, "--", *done)
+        commit = _git(out_repo, "rev-parse", "HEAD").stdout.strip()
+        steps.append(Step("git_commit", "done", f"{commit} (amended {replaced})"))
+        steps.append(_push_step(out_repo, push, echo))
+    elif upgraded and not amend:
         message = f"Upgrade {len(upgraded)} OpenTimestamps proof(s)\n\n" + "\n".join(upgraded) + "\n"
         commit = _commit(out_repo, upgraded, message)
         steps.append(Step("git_commit", "done", commit))
@@ -894,6 +988,7 @@ def upgrade_proofs(
             "commit": commit,
             "pushed": pushed,
             "bitcoin_blocks": dict(blocks),
+            **({"amended": replaced} if amend and commit else {}),
         },
     )
     return UpgradeResult(upgraded, pending, complete, failed, skipped, commit, pushed, event.seq, steps)

@@ -1540,6 +1540,10 @@ def commit_evidence_command(
         typer.Option("--cosign-key", help="Sign with this cosign key file instead of keyless Sigstore signing.", show_default=False),
     ] = None,
     timeout: Annotated[int, typer.Option("--tool-timeout", min=1, help="Seconds allowed for each ots or cosign run.")] = 300,
+    title: Annotated[
+        str | None,
+        typer.Option("--title", help="The commit's headline, such as '2026 General: Auditcenter risk limit with digital timestamp'.", show_default=False),
+    ] = None,
 ) -> None:
     """Write a new versioned SHA256SUMS file of the evidence, stamp, sign, commit and push it, and record it.
 
@@ -1561,6 +1565,7 @@ def commit_evidence_command(
                 include_files=include_files,
                 ots=not no_ots,
                 cosign=CosignOptions(enabled=not no_cosign, key=cosign_key),
+                title=title,
                 timeout=timeout,
                 echo=lambda line: typer.echo(f"    {line}", err=True),
             )
@@ -1594,6 +1599,11 @@ def upgrade_proofs_command(
         bool, typer.Option("--all", help="Also try proofs that already have a Bitcoin attestation.")
     ] = False,
     timeout: Annotated[int, typer.Option("--tool-timeout", min=1, help="Seconds allowed for each ots run.")] = 300,
+    amend: Annotated[
+        bool,
+        typer.Option("--amend", help="Fold the completed proofs into the last commit, which must not have been pushed: one commit per commitment."),
+    ] = False,
+    title: Annotated[str | None, typer.Option("--title", help="With --amend: a new headline for that commit.", show_default=False)] = None,
 ) -> None:
     """Run `ots upgrade` on pending OpenTimestamps proofs, commit the upgraded ones and record it.
 
@@ -1613,6 +1623,8 @@ def upgrade_proofs_command(
                 include_complete=include_complete,
                 timeout=timeout,
                 echo=lambda line: typer.echo(f"    {line}", err=True),
+                amend=amend,
+                title=title,
             )
     except (TimestampError, EventLogError, ValueError) as exc:
         typer.echo(f"error: {exc}", err=True)
