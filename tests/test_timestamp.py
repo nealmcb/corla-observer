@@ -354,7 +354,7 @@ def test_include_files_and_verify(ws: Workspace, log: EventLog, out_repo: Path, 
         "file.received", ACTOR, county="Weld", file_sha256=unchecked.sha256,
         data={"kind": "redacted_cvr", "original_name": "weld.csv", "sha256": unchecked.sha256, "size": unchecked.size},
     )
-    result = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include_files=True)
+    result = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="all")
     target = out_repo / SUBDIR
     withheld = [f for f in result.evidence.files if not f.publishable]
     assert [f.sha256 for f in withheld] == [unchecked.sha256]
@@ -568,3 +568,79 @@ def test_titles_are_one_short_line(ws: Workspace, log: EventLog, out_repo: Path,
     for bad in ("", "two\nlines", "x" * 101):
         with pytest.raises(TimestampError, match="one line"):
             publish_evidence(log, out_repo=out_repo, title=bad)
+
+
+def test_the_default_includes_only_the_fetched_files(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
+    """``commit-evidence`` copies the Audit Center's files by default (public already), never the counties' uploads or the extracts."""
+    page = ws.put_bytes(b"<html>the risk limit page</html>")
+    url = "https://www.coloradosos.gov/pubs/elections/RLA/2026/general/riskLimit.html"
+    with EventLog.open(ws.root) as log:
+        log.append("fetch.file", "system", file_sha256=page.sha256, data={"url": url, "status": 200, "sha256": page.sha256, "size": page.size})
+    runner = CliRunner()
+    args = ["commit-evidence", "--workspace", str(ws.root), "--election", ELECTION, "--out-repo", str(out_repo)]
+    result = runner.invoke(app, args)
+    assert result.exit_code == 0, result.output
+    target = out_repo / SUBDIR
+    copied = sorted(str(p.relative_to(target)) for p in target.rglob("*") if p.is_file() and not p.name.startswith("SHA256SUMS"))
+    assert copied == ["auditcenter/2026/general/riskLimit.html"], copied
+    assert "1 copied (the files fetched from the Audit Center)" in result.output
+    with EventLog.open(ws.root, read_only=True) as log:
+        assert events(log, "evidence.committed")[-1]["included"] == ["auditcenter/2026/general/riskLimit.html"]
+    bad = runner.invoke(app, [*args, "--include", "everything"])
+    assert bad.exit_code == 2 and "include must be one of none, fetched, all" in bad.output
+    hashes_only = runner.invoke(app, [*args, "--include", "none"])
+    assert hashes_only.exit_code == 0 and "include_files" not in hashes_only.output
+
+
+def test_a_page_refetched_with_only_a_new_token_is_published_once(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
+    """A page whose content, with Cloudflare's per-response token stripped, is unchanged is listed as its earliest fetch:
+    its published copy stays as it is. A page whose content changed replaces the copy at the same path, never beside it."""
+    url = "https://www.coloradosos.gov/pubs/elections/RLA/2026/general/riskLimit.html"
+    rel = "auditcenter/2026/general/riskLimit.html"
+
+    def fetch(log: EventLog, body: bytes, content: str) -> str:
+        stored = ws.put_bytes(body)
+        log.append("fetch.file", "system", file_sha256=stored.sha256,
+                   data={"url": url, "status": 200, "sha256": stored.sha256, "size": stored.size, "normalized_sha256": content})  # fmt: skip
+        return stored.sha256
+
+    target = out_repo / SUBDIR
+    with EventLog.open(ws.root) as log:
+        first = fetch(log, b"<html>risk limit 3% <i>token 1</i></html>", "c" * 64)
+        one = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="fetched")
+        assert (rel, first) in [(f.path, f.sha256) for f in one.evidence.files]
+        git(out_repo, "add", ".")
+        git(out_repo, "commit", "--quiet", "-m", "published")
+        fetch(log, b"<html>risk limit 3% <i>token 2</i></html>", "c" * 64)  # the same page, a new token
+        two = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="fetched")
+        assert (rel, first) in [(f.path, f.sha256) for f in two.evidence.files]
+        assert git(out_repo, "status", "--porcelain", "--", f"{SUBDIR}/auditcenter").strip() == ""  # nothing new to publish
+        changed = fetch(log, b"<html>risk limit 2% <i>token 3</i></html>", "d" * 64)  # the content changed
+        three = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="fetched")
+    assert (rel, changed) in [(f.path, f.sha256) for f in three.evidence.files]
+    assert (target / rel).read_bytes() == b"<html>risk limit 2% <i>token 3</i></html>"
+    assert [p.name for p in (target / rel).parent.iterdir()] == ["riskLimit.html"]  # replaced, no copy beside it
+
+
+def test_a_replaced_file_is_called_out_with_where_its_previous_version_is(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
+    """Publishing a file that replaces an earlier version names it, and the commit that published that version, in the commit and the event."""
+    from corla_observer.timestamp import _web_link
+
+    url = "https://www.coloradosos.gov/pubs/elections/RLA/2026/general/riskLimit.html"
+    path = f"{SUBDIR}/auditcenter/2026/general/riskLimit.html"
+    _remote(out_repo)
+    with EventLog.open(ws.root) as log:
+        for body, content in ((b"<html>3%</html>", "c" * 64), (b"<html>2%</html>", "d" * 64)):
+            page = ws.put_bytes(body)
+            log.append("fetch.file", "system", file_sha256=page.sha256,
+                       data={"url": url, "status": 200, "sha256": page.sha256, "size": page.size, "normalized_sha256": content})  # fmt: skip
+            commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="fetched")
+            published = publish_evidence(log, out_repo=out_repo, actor=ACTOR)
+            if content == "c" * 64:
+                first = published.commit
+                assert "Changed since" not in published.message and events(log, "evidence.published")[-1]["replaced"] == {}
+        assert events(log, "evidence.published")[-1]["replaced"] == {path: first}
+    assert f"Changed since its last publication: {path}\n  previous version: commit {first}\n" in published.message
+    assert _web_link("https://github.com/nealmcb/auditcenter.git", "abc", "x/y.html") == "https://github.com/nealmcb/auditcenter/blob/abc/x/y.html"
+    assert _web_link("git@github.com:nealmcb/auditcenter.git", "abc", "x/y.html") == "https://github.com/nealmcb/auditcenter/blob/abc/x/y.html"
+    assert _web_link("/srv/some/bare.git", "abc", "x") is None

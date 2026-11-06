@@ -27,7 +27,14 @@ commands. `commit_evidence` makes the commitment:
 4. **Sign** it with Sigstore (``cosign sign-blob --bundle``), if ``cosign``
    is installed, producing ``<sums>.cosign-bundle``: keyless (an OIDC
    identity, recorded in the public Rekor log) unless a key file is given.
-5. **Copy**, only if asked, the evidence files themselves next to it.
+5. **Copy** the evidence files themselves next to it, as ``include`` says:
+   none, the files fetched from the Audit Center (``fetched``), or every
+   publishable file (``all``: also the counties' uploads that passed the
+   redaction check, and the derived extracts and printouts).
+   A page fetched again unchanged but for Cloudflare's per-response token
+   is listed as its earliest fetch with that content, so it is published
+   once; a file whose content changed replaces the earlier copy at the same
+   path, the repository's history keeping the earlier one.
 6. **Record** an ``evidence.committed`` event: what is fixed from that
    moment on (the SUMS file's hash, its proofs, the log head), and no git
    commit, since none is final yet.
@@ -65,9 +72,11 @@ Events written here (``data`` always JSON; ``file_sha256`` is the SUMS file's):
     ``evidence.committed`` event's number), ``repository`` (the remote's
     address), ``branch``, ``commit`` (pushed), ``files`` (paths within the
     repository), ``opentimestamps`` (``complete, Bitcoin block N``, or
-    ``pending``), ``rekor_log_index``, and ``replaces_unpublished_commits``:
+    ``pending``), ``rekor_log_index``, ``replaces_unpublished_commits``:
     any commit an earlier ``evidence.committed`` named that was never
-    published.
+    published, and ``replaced``: each file published that replaced an
+    earlier version, with the commit that published that version (also
+    named, with a link, in the commit's message).
 ``evidence.proofs_upgraded``
     ``upgraded`` and ``still_pending`` (proof file paths within the output
     repository), ``skipped`` (why, if ``ots`` was not run), ``commit`` and
@@ -218,10 +227,20 @@ def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | Non
     redaction_passed: set[str] = set()
     prediction: tuple[int, str] | None = None
     extracts: dict[str, tuple[int, str, str | None, dict[str, dict[str, str]]]] = {}
+    # A page fetched again differs only by the token Cloudflare puts in each response: its content, with
+    # that stripped (``normalized_sha256``), is unchanged. Such a page is listed as its earliest fetch
+    # with that content, so it is published once, not again with each fetch.
+    normalized_of: dict[str, str] = {}  # a fetch's bytes -> their normalized content
+    earliest: dict[tuple[str, str], str] = {}  # (URL, normalized content) -> the earliest fetch's bytes
     for event in log.iter_events():
         if event.seq > log_head[0]:
             break
-        if event.kind == "map.adapter_ran":
+        if event.kind == "fetch.file":
+            url, raw, normalized = event.data.get("url"), event.data.get("sha256"), event.data.get("normalized_sha256")
+            if isinstance(url, str) and isinstance(raw, str) and isinstance(normalized, str):
+                normalized_of[raw] = normalized
+                earliest.setdefault((url, normalized), raw)
+        elif event.kind == "map.adapter_ran":
             out, src, module = event.data.get("output_sha256"), event.data.get("source_sha256"), event.data.get("module")
             if isinstance(out, str) and isinstance(src, str) and isinstance(module, str):
                 adapter_sources[out] = (module, src)
@@ -258,6 +277,10 @@ def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | Non
         county = entry.county
         if entry.source == "fetch":
             path = fetched_path(entry.ref)
+            content = normalized_of.get(entry.sha256)
+            if content is not None:
+                add(path, earliest.get((entry.ref, content), entry.sha256), entry.source, entry.ref, kind=entry.kind, county=county)
+                continue
         elif entry.source == "upload":
             path = _safe_path(["uploads", county or "unknown", entry.kind, entry.name])
         elif entry.source == "supplied":
@@ -651,7 +674,7 @@ def commit_evidence(
     out_repo: Path,
     subdir: str | None = None,
     actor: str = "system",
-    include_files: bool = False,
+    include: str = "none",
     ots: bool = True,
     cosign: CosignOptions | None = None,
     timeout: float = DEFAULT_TOOL_TIMEOUT,
@@ -678,8 +701,7 @@ def commit_evidence(
     target = out_repo / subdir if subdir else out_repo
     target.mkdir(parents=True, exist_ok=True)
 
-    if include_files:
-        _avoid_collisions(evidence, target)
+    include = check_include(include)
 
     used = existing_versions(out_repo, subdir) | logged_versions(log, subdir)
     version = max(used, default=0) + 1
@@ -712,10 +734,10 @@ def commit_evidence(
         if step.status == "done":
             proofs.append(name + COSIGN_SUFFIX)
 
-        included = _copy_included(workspace, evidence, target, echo) if include_files else []
-        if include_files:
-            withheld = [f.path for f in evidence.files if not f.publishable]
-            detail = f"{len(included)} copied"
+        included = _copy_included(workspace, evidence, target, echo, include) if include != "none" else []
+        if include != "none":
+            withheld = [f.path for f in evidence.files if not f.publishable and (include == "all" or f.origin == "fetch")]
+            detail = f"{len(included)} copied" + (" (the files fetched from the Audit Center)" if include == "fetched" else "")
             if withheld:
                 detail += f"; withheld (no passing redaction check on record): {', '.join(withheld)}"
             steps.append(Step("include_files", "done", detail))
@@ -764,23 +786,23 @@ def commit_evidence(
     )
 
 
-def _avoid_collisions(evidence: EvidenceSet, target: Path) -> None:
-    """Give a file a new path if a different file already sits at its path in the output directory."""
-    renamed: list[EvidenceFile] = []
-    for item in evidence.files:
-        dest = target / item.path
-        if dest.is_file() and sha256_of_file(dest)[0] != item.sha256:
-            item = EvidenceFile(
-                f"{item.path}~{item.sha256[:12]}", item.sha256, item.size, item.origin, item.ref,
-                item.kind, item.county, item.publishable,
-            )
-        renamed.append(item)
-    evidence.files = sorted(renamed, key=lambda f: f.path)
+#: What ``include`` copies: nothing; the files fetched from the Audit Center (public already); or
+#: every publishable file (also the counties' uploads that passed the redaction check, and the
+#: derived extracts and printouts, which carry the expected votes of their CVRs).
+INCLUDE_CHOICES = ("none", "fetched", "all")
 
 
-def _copy_included(workspace: Workspace, evidence: EvidenceSet, target: Path, echo: Echo | None) -> list[str]:
+def check_include(include: str) -> str:
+    if include not in INCLUDE_CHOICES:
+        raise TimestampError(f"include must be one of {', '.join(INCLUDE_CHOICES)}, not {include!r}")
+    return include
+
+
+def _copy_included(workspace: Workspace, evidence: EvidenceSet, target: Path, echo: Echo | None, include: str = "all") -> list[str]:
     copied: list[str] = []
     for item in evidence.files:
+        if include == "fetched" and item.origin != "fetch":
+            continue
         if not item.publishable:
             if echo is not None:
                 echo(f"not copying {item.path}: no passing redaction check is on record for it")
@@ -789,8 +811,11 @@ def _copy_included(workspace: Workspace, evidence: EvidenceSet, target: Path, ec
         if dest.is_file() and sha256_of_file(dest)[0] == item.sha256:
             copied.append(item.path)
             continue
-        if dest.exists():
-            raise TimestampError(f"{item.path} exists in the output directory with other content")
+        # A new version (a corrected manifest, a page whose content changed) replaces the earlier copy at
+        # the same path; the repository's history keeps the earlier one, with the commit that published it.
+        if dest.exists() and not dest.is_file():
+            raise TimestampError(f"{item.path} is a directory in the output directory")
+        dest.unlink(missing_ok=True)
         dest.parent.mkdir(parents=True, exist_ok=True)
         workspace.copy_to(item.sha256, dest)
         os.chmod(dest, 0o644)
@@ -814,9 +839,28 @@ def verify_command(name: str, signer: tuple[str, str]) -> str:
             f"--certificate-oidc-issuer {signer[1]} {name}")  # fmt: skip
 
 
+def _web_link(remote: str, commit: str, path: str) -> str | None:
+    """A link to ``path`` as of ``commit`` on GitHub, if the remote is a GitHub repository."""
+    match = re.match(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+)/([^/]+?)(?:\.git)?/?$", remote)
+    return f"https://github.com/{match.group(1)}/{match.group(2)}/blob/{commit}/{path}" if match else None
+
+
+def _replaced_files(repo: Path, files: Sequence[str]) -> dict[str, str]:
+    """Of ``files``, those already in the repository with other content: each with the commit that last published it."""
+    replaced: dict[str, str] = {}
+    for line in _git(repo, "status", "--porcelain", "--", *files).stdout.splitlines():
+        if line[:2] != "??" and "M" in line[:2]:  # a tracked file, modified
+            path = line[3:].strip()
+            last = _git(repo, "log", "-1", "--format=%H", "--", path, check=False).stdout.strip()
+            if last:
+                replaced[path] = last
+    return replaced
+
+
 def _publish_message(
-    name: str, data: Mapping[str, Any], event_seq: int, *, title: str | None, ots_status: str, signer: tuple[str, str] | None
-) -> str:
+    name: str, data: Mapping[str, Any], event_seq: int, *, title: str | None, ots_status: str, signer: tuple[str, str] | None,
+    replaced: Mapping[str, str] | None = None, remote: str | None = None,
+) -> str:  # fmt: skip
     """The published commit's message: ``title`` (or a default headline), then what it holds and how to check it."""
     default = f"Observer evidence for {data.get('election')}: {name} ({data.get('files')} files)"
     lines = [title or default, ""]
@@ -834,6 +878,9 @@ def _publish_message(
         lines.append(f"Signed with Sigstore, Rekor log index {data.get('rekor_log_index')}.")
     if data.get("included"):
         lines.append(f"Includes copies of {len(data['included'])} evidence files.")
+    for path, previous in sorted((replaced or {}).items()):
+        link = _web_link(remote, previous, path) if remote else None
+        lines += [f"Changed since its last publication: {path}", f"  previous version: commit {previous}" + (f", {link}" if link else "")]
     lines.append(f"Recorded in the observers' event log as event {event_seq}.")
     return "\n".join(lines) + "\n"
 
@@ -954,7 +1001,10 @@ def publish_evidence(
         ots_status = "none"
     bundle = target / f"{name}{COSIGN_SUFFIX}"
     signer = bundle_identity(bundle) if bundle.is_file() else None
-    message = _publish_message(name, data, event.seq, title=title, ots_status=ots_status, signer=signer)
+    replaced = _replaced_files(out_repo, files)
+    remotes = _git(out_repo, "remote").stdout.split()
+    remote = _remote_address(out_repo) if remotes else None
+    message = _publish_message(name, data, event.seq, title=title, ots_status=ots_status, signer=signer, replaced=replaced, remote=remote)
     earlier = data.get("commit")
     if dry_run:
         return PublishResult(name, str(data["sums_sha256"]), files, message, ots_status, None, None, [])
@@ -989,6 +1039,7 @@ def publish_evidence(
             "opentimestamps": ots_status,
             "rekor_log_index": data.get("rekor_log_index"),
             "replaces_unpublished_commits": replaces,
+            "replaced": dict(replaced),
         },
     )
     return PublishResult(name, str(data["sums_sha256"]), files, message, ots_status, commit, published.seq, replaces)

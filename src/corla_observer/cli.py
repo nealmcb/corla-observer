@@ -1529,9 +1529,17 @@ def commit_evidence_command(
     ] = None,
     actor: Annotated[str, typer.Option("--actor", help="Who is responsible, as coordinator:ID.")] = "system",
     log_path: LogOption = None,
-    include_files: Annotated[
-        bool, typer.Option("--include-files", help="Also copy the evidence files themselves (never a CVR without a passing redaction check).")
-    ] = False,
+    include: Annotated[
+        str,
+        typer.Option(
+            "--include",
+            help=(
+                "Which evidence files to copy next to the SUMS file, to be published with it: 'fetched' (the Audit Center's "
+                "files, public already), 'all' (also the counties' uploads that passed the redaction check, and the extracts "
+                "and printouts, which carry their CVRs' votes), or 'none' (hashes only)."
+            ),
+        ),
+    ] = "fetched",
     no_ots: Annotated[bool, typer.Option("--no-ots", help="Do not stamp with OpenTimestamps.")] = False,
     no_cosign: Annotated[bool, typer.Option("--no-cosign", help="Do not sign with cosign.")] = False,
     cosign_key: Annotated[
@@ -1556,7 +1564,7 @@ def commit_evidence_command(
                 out_repo=out_repo,
                 subdir=subdir,
                 actor=actor,
-                include_files=include_files,
+                include=include,
                 ots=not no_ots,
                 cosign=CosignOptions(enabled=not no_cosign, key=cosign_key),
                 timeout=timeout,
