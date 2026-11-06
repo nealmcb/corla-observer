@@ -9,7 +9,11 @@ commands. `commit_evidence` makes the commitment:
    of every adapter whose output is used, the latest prediction, and each
    county's latest extract with its stored page index (the per-page hashes
    printed on the extract, ``page_index_sha256`` in ``extract.built``) and
-   its printouts (each board's PDF in each layout, ``pdfs``).
+   its printouts (each board's PDF in each layout, ``pdfs``), and the
+   server's receipt key as last published (``derived/receipt-key.json``:
+   the canonical JSON of ``receipt.key_published``'s data, its algorithm,
+   public key and key ID), so an observer's device or the browser extension
+   can check the key that signs its receipts against the commitment.
    Every stored object is re-hashed on the way, so a corrupt store stops
    the commitment rather than committing to it.
 2. **Write** a new versioned SHA256SUMS file, named for its version and the
@@ -107,7 +111,7 @@ from corla_observer.classify import is_test_county
 from corla_observer.datamap import DataMap, build_map
 from corla_observer.localtime import to_colorado
 from corla_observer.post import ProposedPost
-from corla_observer.events import EventLog, JSONValue, check_actor, verify_jsonl
+from corla_observer.events import EventLog, JSONValue, canonical_json, check_actor, verify_jsonl
 from corla_observer.redaction import PASS
 from corla_observer.workspace import Workspace, sha256_of_file
 
@@ -123,6 +127,8 @@ COSIGN_SUFFIX = ".cosign-bundle"
 
 #: Event kinds whose ``file_sha256`` is an extract committed to observers.
 EXTRACT_EVENT_KINDS = frozenset({"practice.extract_built", "extract.built"})
+#: The event recording the server's receipt key (`corla_observer.signed.KEY_KIND`).
+RECEIPT_KEY_KIND = "receipt.key_published"
 
 #: Default time limit, in seconds, for one run of ``ots`` or ``cosign``.
 DEFAULT_TOOL_TIMEOUT = 300
@@ -279,6 +285,7 @@ def collect_evidence(
     # with that content, so it is published once, not again with each fetch.
     normalized_of: dict[str, str] = {}  # a fetch's bytes -> their normalized content
     earliest: dict[tuple[str, str], str] = {}  # (URL, normalized content) -> the earliest fetch's bytes
+    receipt_key: tuple[int, dict[str, JSONValue]] | None = None
     for event in log.iter_events():
         if event.seq > log_head[0]:
             break
@@ -295,6 +302,8 @@ def collect_evidence(
             redaction_passed.add(event.file_sha256)
         elif event.kind == "prediction.made" and event.file_sha256:
             prediction = (event.seq, event.file_sha256)
+        elif event.kind == RECEIPT_KEY_KIND:
+            receipt_key = (event.seq, dict(event.data))
         elif event.kind in EXTRACT_EVENT_KINDS and event.file_sha256 and not is_test_county(event.county):
             # The RLA sample's extract, and each targeted list sent to the county (docs/TARGETING.md, "Provenance"):
             # the county acts on a sent list, so it is part of the record, under its name ("targeted-list-1").
@@ -376,6 +385,11 @@ def collect_evidence(
                     _safe_path(["derived", f"extract-{county or 'all'}-board{board}-{layout}.pdf"]), pdf_sha, "printout",
                     f"event {seq}", county=county or None,
                 )  # fmt: skip
+
+    if receipt_key is not None:
+        # Stored here (content-addressed, so the same bytes every time), to be listed like any other file.
+        stored = workspace.put_bytes(canonical_json(receipt_key[1]))
+        add("derived/receipt-key.json", stored.sha256, "receipt_key", f"event {receipt_key[0]}")
 
     files: list[EvidenceFile] = []
     taken: dict[str, str] = {}
