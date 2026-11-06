@@ -117,6 +117,13 @@ a local server. It opens an observer link through it and enters a ballot. It che
 - that the links page shows the identity the build computed, refuses what is not an observer
   link, and keeps and opens one that is.
 
+In Firefox (`scripts/firefox_extension.py`, the case `firefox`), the same test builds the Firefox
+form, installs it as a temporary add-on over WebDriver BiDi (Playwright cannot install add-ons in
+Firefox), and checks that the links page shows the build's identity, that the observation page runs
+from the extension, and that an entry is answered and passes the receipt, commitments, chain and
+report checks. It runs the newest Firefox in Playwright's cache (an unbranded build), or
+`$CORLA_OBSERVER_FIREFOX`, with a Python that has `websockets`.
+
 `tests/test_obsreport.py` runs `report.js` in Node and `corla_observer.obsreport` on the same 300
 random sets of entries and checks the reports are identical.
 
@@ -126,7 +133,7 @@ cache, or `$CORLA_OBSERVER_CHROMIUM`. The extension page's policy forbids evalua
 code, so the test waits on selectors rather than on page functions.
 
 **To do:**
-- **Firefox:** test there, including on Android.
+- **Firefox on Android:** test there.
 - **Releases:** reproducible zips from tagged commits, their identity published and signed like the
   evidence commitments, and a signed Firefox listing.
 - **Test the permission request** the links page makes for a server not allowed at install, and

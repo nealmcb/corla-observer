@@ -1,4 +1,4 @@
-"""The observer page run from the browser extension, in a real Chromium (scripts/browser_extension.py).
+"""The observer page run from the browser extension, in a real Chromium (scripts/browser_extension.py) and Firefox (scripts/firefox_extension.py).
 
 Marked ``browser`` and left out of the default run, like the other browser tests. A Testland list is
 populated (corla_observer.quicksetup) and served; the extension is built allowing the server's origin
@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -33,23 +35,48 @@ from test_web import SECRET
 pytestmark = pytest.mark.browser
 ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "scripts" / "browser_extension.py"
+FIREFOX_SCRIPT = ROOT / "scripts" / "firefox_extension.py"
 
 
-@pytest.mark.parametrize("case", ["honest", "false-anchor", "false-report"])
+def firefox() -> str | None:
+    """``$CORLA_OBSERVER_FIREFOX``, else the newest Firefox in Playwright's cache (an unbranded build, driven over WebDriver BiDi)."""
+    if os.environ.get("CORLA_OBSERVER_FIREFOX"):
+        return os.environ["CORLA_OBSERVER_FIREFOX"]
+    found = sorted(Path.home().glob(".cache/ms-playwright/firefox-*/firefox/firefox"), key=lambda p: int(p.parent.parent.name.split("-")[1]))
+    return str(found[-1]) if found else None
+
+
+def bidi_python() -> str | None:
+    """A Python with ``websockets``, for the Firefox driver: this one, or the Playwright one."""
+    for python in (sys.executable, playwright_python()):
+        if python and subprocess.run([python, "-c", "import websockets"], capture_output=True, check=False).returncode == 0:
+            return python
+    return None
+
+
+@pytest.mark.parametrize("case", ["honest", "false-anchor", "false-report", "firefox"])
 def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path, case: str) -> None:
     """Honest, the page passes every check; with a false published anchor, or a server signing a false report of the entries, it raises an alert."""
     forked = case == "false-anchor"
-    python = playwright_python()
+    python = bidi_python() if case == "firefox" else playwright_python()
     if python is None:
-        pytest.skip("no Python with Playwright")
+        pytest.skip("no Python with websockets" if case == "firefox" else "no Python with Playwright")
+    fox = firefox() if case == "firefox" else None
+    if case == "firefox" and fox is None:
+        pytest.skip("no Firefox")
     store = Workspace.open(tmp_path / "ws")
     with EventLog.open(store.root) as log:
         made = populate(store, log, "Testland", "coordinator:ann")
         anchor_seq, anchor_hash = log.head()  # the log's head, as a commitment would anchor it
     port = free_port()
     built = subprocess.run([sys.executable, str(ROOT / "scripts" / "build_extension.py"), "--out", str(tmp_path / "extension"),
-                            "--allow-host", "http://127.0.0.1/*"], capture_output=True, text=True, check=False)  # fmt: skip
+                            "--allow-host", "http://127.0.0.1/*"] + (["--browser", "firefox"] if fox else []), capture_output=True, text=True, check=False)  # fmt: skip
     assert built.returncode == 0, built.stderr[-2000:]
+    identity = built.stdout.strip().rsplit(" ", 1)[-1]
+    xpi = tmp_path / "extension.xpi"
+    if fox:  # Firefox installs an add-on from its zip
+        shutil.make_archive(str(xpi.with_suffix("")), "zip", tmp_path / "extension")
+        xpi.with_suffix(".zip").rename(xpi)
     paths: list[str] = []
     # One receipt key for both app instances, as a server keeps one in its key file (without one, each instance makes its own).
     signer = ReceiptSigner.generate()
@@ -109,7 +136,10 @@ def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path, 
             time.sleep(0.05)
         link = f"http://127.0.0.1:{port}/observe/{made.observer_token}"
         listing = f"http://127.0.0.1:{port}/fake/listing.json"
-        command = [python, str(SCRIPT), str(tmp_path / "extension"), link, listing] + ({"false-anchor": ["--expect-forked-log"], "false-report": ["--expect-false-report"]}.get(case, []))
+        if fox:
+            command = [python, str(FIREFOX_SCRIPT), fox, str(xpi), identity, link, listing]
+        else:
+            command = [python, str(SCRIPT), str(tmp_path / "extension"), link, listing] + ({"false-anchor": ["--expect-forked-log"], "false-report": ["--expect-false-report"]}.get(case, []))
         result = subprocess.run(command, capture_output=True, text=True, timeout=180, check=False)
         summary: dict[str, Any] = json.loads(result.stdout) if result.stdout.startswith("{") else {"ok": False, "error": result.stderr[-3000:]}
         assert result.returncode == 0 and summary["ok"], json.dumps(summary, indent=1)
