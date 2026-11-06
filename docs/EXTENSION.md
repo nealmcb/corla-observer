@@ -51,6 +51,12 @@ verifiability".
   (`/observe/TOKEN/log`, for holders of an observer link), recomputes each line's hash from its
   own bytes, and follows the `prev_hash` links (docs/EVENT_LOG.md). The server cannot fake a chain
   through points it has already committed to. A break is an alert.
+- **The observation report.** Once every entry has been sent, it computes the observer's
+  observation report (`report.js`, the same definition as `corla_observer.obsreport`) from the
+  entries the server acknowledged, as the device recorded them. It fetches the report the server
+  signs for this device (`/observe/TOKEN/report.json`), checks the signature with the pinned
+  receipt key, and compares the two: the same ballots, verdicts and contests, or an alert. The head
+  the server's report was computed at is kept like a receipt's, so it must lie on the same log.
 
   The result is shown at the top of the page ("Receipts checked by this extension: 12 verified"),
   and any failure is an alert asking the observer to keep their record and tell their coordinator.
@@ -86,7 +92,8 @@ server at install, for tests.
 - the observation page running from the extension's code, with its key in the extension's storage;
 - the receipt checks;
 - the check of the extract shown and the receipt key against the published commitments;
-- the check that the receipts' heads and the anchored heads lie on one log.
+- the check that the receipts' heads and the anchored heads lie on one log;
+- the comparison of the device's observation report with the server's signed one.
 
 `tests/test_browser_extension.py` (marked `browser`) loads the built extension in Chromium against
 a local server. It opens an observer link through it and enters a ballot. It checks:
@@ -98,7 +105,11 @@ a local server. It opens an observer link through it and enters a ballot. It che
 - that the extract shown and the receipt key are found in published commitments, served in
   GitHub's listing format;
 - that the log is one chain through the receipts' heads and the anchored head, and, in a second
-  case with a false anchor, that the page raises an alert.
+  case with a false anchor, that the page raises an alert;
+- that the server's signed report of the entry matches the device's own.
+
+`tests/test_obsreport.py` runs `report.js` in Node and `corla_observer.obsreport` on the same 300
+random sets of entries and checks the reports are identical.
 
 The receipt checks need Ed25519 in Web Crypto, in Chrome 137 and later and Firefox 129 and later.
 An older browser says it cannot check them. The test runs the newest Chromium in Playwright's
