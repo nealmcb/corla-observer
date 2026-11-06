@@ -17,7 +17,11 @@
 // Then it checks that all those points (the heads its receipts stated and the published anchors) lie on
 // one log: it fetches the log's lines between them from the server (/observe/TOKEN/log), recomputes each
 // line's hash from its own bytes and follows the prev_hash links (docs/EVENT_LOG.md). The server cannot
-// fake a chain through points it has already committed to. The result is shown at the top of the page; a
+// fake a chain through points it has already committed to.
+//
+// And it computes the observation report (report.js, corla_observer.obsreport) from the device's own
+// records, the entries the server has acknowledged, and compares it with the report the server signs for
+// this device (/observe/TOKEN/report.json): the same ballots, verdicts and contests, or an alert. The result is shown at the top of the page; a
 // failure is an alert.
 (function () {
   "use strict";
@@ -33,6 +37,8 @@
   var anchors = {};            // position -> hash, from the commitments' headers
   var committedKeys = null;    // the receipt keys' hashes the commitments list (derived/receipt-key.json), once read
   var keyNote = "";
+  var reportNote = "";
+  var who = null;              // {observer, county, board, extract_sha256, records}: for the report
   var chainNote = "";          // what the log's chain check found
   var chainTimer = null;
   var LOG_LINES = 2000;        // the server's most lines at once (web/observe.py, MAX_LOG_LINES)
@@ -69,7 +75,7 @@
       node.className = "meta";
       node.removeAttribute("role");
       node.textContent = "Receipts checked by this extension: " + verified + " verified" +
-        (key ? " (server receipt key " + key.key_id.slice(0, 16) + "…)" : "") + "." + (keyNote ? " " + keyNote : "") + (extractNote ? " " + extractNote : "") + (chainNote ? " " + chainNote : "");
+        (key ? " (server receipt key " + key.key_id.slice(0, 16) + "…)" : "") + "." + (reportNote ? " " + reportNote : "") + (keyNote ? " " + keyNote : "") + (extractNote ? " " + extractNote : "") + (chainNote ? " " + chainNote : "");
     }
   }
   function problem(text) { if (problems.indexOf(text) < 0) problems.push(text); show(); }
@@ -78,6 +84,7 @@
     var detail = event.detail || {};
     var offered = detail.receipt_key;
     server = detail.server || "";
+    who = { observer: detail.observer, county: detail.county, board: detail.board, extract_sha256: detail.extract_sha256, records: detail.records };
     if (!offered || offered.algorithm !== "Ed25519") { problem("the server gave no Ed25519 receipt key"); return; }
     commitments(detail.extract_sha256);
     storageGet("receipt-key:" + server, null).then(function (pinned) {
@@ -161,7 +168,7 @@
   // The log's chain through every known point, a few seconds after the last change (receipts come in bursts).
   function soonCheckChain() {
     clearTimeout(chainTimer);
-    chainTimer = setTimeout(function () { queue = queue.then(checkChain).catch(function (error) { chainNote = "The log could not be checked (" + error + ")."; show(); }); }, 3000);
+    chainTimer = setTimeout(function () { queue = queue.then(checkReport).then(checkChain).catch(function (error) { chainNote = "The log could not be checked (" + error + ")."; show(); }); }, 3000);
   }
 
   function checkChain() {
@@ -209,6 +216,56 @@
         show();
       }, function (error) {
         problem("the server's log is not one chain through your receipts and the published anchors: " + error.message);
+      });
+    });
+  }
+
+  // The device's records (the page's IndexedDB store, in this extension's origin), in the order signed.
+  function deviceRecords() {
+    return new Promise(function (resolve, reject) {
+      var open = indexedDB.open("corla-observer", 1);
+      open.onerror = function () { reject(new Error("the device's records could not be read")); };
+      open.onsuccess = function () {
+        var request = open.result.transaction("records").objectStore("records").index("link").getAll(who.records);
+        request.onsuccess = function () { resolve(request.result.sort(function (a, b) { return a.device_seq - b.device_seq; })); };
+        request.onerror = function () { reject(new Error("the device's records could not be read")); };
+      };
+    });
+  }
+
+  // The device's report, against the one the server signs for it. Only once every entry is acknowledged:
+  // an entry still waiting to be sent would make them differ for no fault of the server's.
+  function checkReport() {
+    if (!who || !cryptoKey) return null;
+    return deviceRecords().then(function (records) {
+      var signed = records.filter(function (r) { return r.payload && r.payload.type !== "device_registration"; });
+      if (!signed.length) return null;
+      if (signed.some(function (r) { return !r.receipt && !r.refused; })) { reportNote = "Your report is compared once every entry is sent."; show(); return null; }
+      var device = signed[0].payload.device_id;
+      var mine = window.CorlaReport.build(signed.filter(function (r) { return r.receipt; }).map(function (r) { return r.payload; }), who);
+      var url = server + "/observe/" + encodeURIComponent(document.body.getAttribute("data-token")) + "/report.json?device=" +
+        encodeURIComponent(device) + "&extract=" + encodeURIComponent(who.extract_sha256);
+      return fetch(url).then(function (r) { if (!r.ok) throw new Error("HTTP " + r.status); return r.json(); }).then(function (got) {
+        var body = got.report;
+        return crypto.subtle.verify({ name: "Ed25519" }, cryptoKey, bytes(got.signature), new TextEncoder().encode(window.CorlaSigning.canonical(body))).then(function (good) {
+          if (!good || body.key_id !== key.key_id || body.device_id !== device) { problem("the server's report of your entries is not signed by its receipt key"); return; }
+          var theirs = {};
+          Object.keys(body).forEach(function (k) { if (["device_id", "head_seq", "head_hash", "key_id"].indexOf(k) < 0) theirs[k] = body[k]; });
+          if (window.CorlaSigning.canonical(theirs) !== window.CorlaSigning.canonical(mine)) {
+            problem("the server's signed report of your entries differs from your device's own (" + mine.summary.ballots + " ballots here, " + theirs.summary.ballots + " there)");
+            return;
+          }
+          reportNote = "The server's signed report of your entries matches your device's: " + mine.summary.ballots + " ballots, " +
+            mine.summary.discrepancies + " with discrepancies.";
+          show();
+          // The head it was computed at is one more point the log must pass through.
+          return storageGet("heads:" + server, {}).then(function (heads) {
+            var known = heads[String(body.head_seq)];
+            if (known && known !== body.head_hash) { problem("the server's report states another log than its receipts at position " + body.head_seq); return; }
+            heads[String(body.head_seq)] = body.head_hash;
+            return storageSet("heads:" + server, heads);
+          });
+        });
       });
     });
   }

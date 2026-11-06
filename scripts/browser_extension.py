@@ -120,6 +120,7 @@ def main(argv: list[str]) -> int:
         chained = page.inner_text("#ext-verify")
         check("the log is one chain through the receipts' heads", "is one chain" in chained and "problem" not in chained, chained)
         check("the receipt key is the one in the published commitments", "receipt key is the one in the published commitments" in chained, chained)
+        check("the server's signed report matches the device's own", "signed report of your entries matches your device's: 1 ballots, 0 with discrepancies" in chained, chained)
         # Last: after a forged receipt the page shows only the alert.
         page.evaluate(
             "document.dispatchEvent(new CustomEvent('corla-observer:receipt', {detail: {payload_sha256: 'a'.repeat(64),"

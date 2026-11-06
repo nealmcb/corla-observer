@@ -81,9 +81,10 @@ def client_html(page: str, token: str) -> tuple[str, list[str]]:
     page = page.replace(token, PLACEHOLDER_TOKEN)  # the throwaway link's random token: the same in every build
     first_script = page.index("<script ")
     page = page[:first_script] + '<script src="boot.js" defer></script>\n' + page[first_script:]
-    # The receipt checks (extension/verify.js), after the page's own scripts.
+    # The checks (extension/verify.js), after the page's own scripts, with the observation report it computes (static/report.js).
     head_end = page.index("</head>")
-    page = page[:head_end] + '<script src="verify.js" defer></script>\n' + page[head_end:]
+    page = page[:head_end] + '<script src="report.js" defer></script>\n<script src="verify.js" defer></script>\n' + page[head_end:]
+    used.append("report.js")
     page = page.replace("<body ", f'<body data-placeholder-base="{PLACEHOLDER_PREFIX}" data-placeholder-token="{PLACEHOLDER_TOKEN}" ', 1)
     return page, used
 

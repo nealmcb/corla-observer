@@ -1409,7 +1409,8 @@
         ident: data.ident, list: data.list, list_label: data.list_label, list_shas: data.list_shas, other_shas: data.other_shas };
       save(listStore + ":ballots", ballots);
       save(listStore + ":meta", meta);
-      document.dispatchEvent(new CustomEvent("corla-observer:meta", { detail: { server: prefix, receipt_key: data.receipt_key, extract_sha256: data.extract_sha256 } }));
+      document.dispatchEvent(new CustomEvent("corla-observer:meta", { detail: { server: prefix, receipt_key: data.receipt_key, extract_sha256: data.extract_sha256,
+        observer: data.observer, county: data.county, board: String(data.board), records: storeKey } }));
       choices = data.choices || {};
       serverContests = data.contests || {};
       save(listStore + ":choices", choices);
