@@ -166,8 +166,8 @@ different logs without the heads in their receipts, or the published anchors, di
 ### The observer client as a browser extension (built, in testing)
 
 To take the page's code away from the server altogether, the observer client is packaged as a
-browser extension. It is built and tested in Chromium, on a development branch, and is not yet in
-use at an audit.
+browser extension. It is built and tested in Chromium and Firefox, on a development branch, and is
+not yet in use at an audit.
 
 - **Its page** is rendered at build time from the server's own template, so the two cannot drift
   apart. The device's key lives in the extension's own storage, which no web page can reach. The
@@ -193,8 +193,7 @@ anchor are each caught.
 The checks' results go into the observer's downloadable record, and the record checker reports any
 alert the extension raised.
 
-**Not yet done:** testing in Firefox and on Android; signed releases, published like the evidence
-commitments.
+**Not yet done:** testing on Android; signed releases, published like the evidence commitments.
 
 **Limits:** Chrome on Android doesn't support extensions, and Safari on iPhone supports them only
 inside an App Store app. Observers on those phones keep the served page, and paper, the spreadsheet
