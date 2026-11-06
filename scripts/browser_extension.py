@@ -11,9 +11,11 @@ set as the published commitments for the link's server before the page opens, an
 the extract shown is in them.
 
 With ``--expect-forked-log`` after the listing, the listing's anchor is a false one: the page must
-raise an alert that the server's log does not agree with it, instead of finding one chain.
+raise an alert that the server's log does not agree with it, instead of finding one chain. With
+``--expect-false-report``, the server signs a false report of the entries: the page must raise an
+alert that it differs from the device's own.
 
-Usage: python3 scripts/browser_extension.py EXTENSION_DIR OBSERVER_LINK [COMMITMENTS_LISTING [--expect-forked-log]]
+Usage: python3 scripts/browser_extension.py EXTENSION_DIR OBSERVER_LINK [COMMITMENTS_LISTING [--expect-forked-log | --expect-false-report]]
 """
 
 from __future__ import annotations
@@ -45,6 +47,7 @@ def main(argv: list[str]) -> int:
     extension, link = argv[0], argv[1]
     listing = argv[2] if len(argv) > 2 else None
     forked = "--expect-forked-log" in argv[3:]
+    false_report = "--expect-false-report" in argv[3:]
     checks: list[dict[str, Any]] = []
 
     def check(what: str, ok: bool, detail: Any = None) -> None:
@@ -107,6 +110,13 @@ def main(argv: list[str]) -> int:
         check("the extension verified the receipts", re.search(r"[1-9][0-9]* verified", verdict) is not None and "problem" not in verdict, verdict)
         if listing:
             check("the extract shown is in the published commitments", "is in the published commitments (SHA256SUMS.txt)" in verdict, verdict)
+        if false_report:
+            page.wait_for_selector("#ext-verify[role='alert']", timeout=20000)
+            alert = page.inner_text("#ext-verify")
+            check("a false signed report of the entries is an alert", "differs from your device's own" in alert, alert)
+            print(json.dumps({"ok": all(c["ok"] for c in checks), "checks": checks}))
+            context.close()
+            return 0 if all(c["ok"] for c in checks) else 1
         if forked:
             # A false anchor: an alert that the log does not agree with it.
             page.wait_for_selector("#ext-verify[role='alert']", timeout=20000)

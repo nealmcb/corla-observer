@@ -35,8 +35,10 @@ ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "scripts" / "browser_extension.py"
 
 
-@pytest.mark.parametrize("forked", [False, True], ids=["true-anchor", "false-anchor"])
-def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path, forked: bool) -> None:
+@pytest.mark.parametrize("case", ["honest", "false-anchor", "false-report"])
+def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path, case: str) -> None:
+    """Honest, the page passes every check; with a false published anchor, or a server signing a false report of the entries, it raises an alert."""
+    forked = case == "false-anchor"
     python = playwright_python()
     if python is None:
         pytest.skip("no Python with Playwright")
@@ -50,7 +52,8 @@ def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path, 
     assert built.returncode == 0, built.stderr[-2000:]
     paths: list[str] = []
     # One receipt key for both app instances, as a server keeps one in its key file (without one, each instance makes its own).
-    config = AppConfig(workspace=store.root, secret=SECRET, secure_cookies=False, crawl=lambda ws, log: None, receipt_key=ReceiptSigner.generate())
+    signer = ReceiptSigner.generate()
+    config = AppConfig(workspace=store.root, secret=SECRET, secure_cookies=False, crawl=lambda ws, log: None, receipt_key=signer)
     # The extract's hash, from a first app instance: leaving a TestClient closes its app's log, so the served app is another.
     with TestClient(create_app(config), base_url="https://testserver") as client:
         data = client.get(f"/observe/{made.observer_token}/data.json").json()
@@ -76,6 +79,25 @@ def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path, 
             return
         if scope["type"] == "http":
             paths.append(f"{scope['method']} {scope['path']}")
+        if case == "false-report" and scope["type"] == "http" and scope["path"].endswith("/report.json"):
+            # A server signing, with its real key, a report of the entries that says otherwise: every match a discrepancy.
+            parts: list[bytes] = []
+
+            async def keep(message: Any) -> None:
+                if message["type"] == "http.response.body":
+                    parts.append(message.get("body", b""))
+
+            await app(scope, receive, keep)
+            got = json.loads(b"".join(parts))
+            body = got["report"]
+            for ballot in body["ballots"]:
+                ballot["verdict"] = "discrepancy" if ballot["verdict"] == "match" else ballot["verdict"]
+            body["summary"]["discrepancies"] += body["summary"]["matches"]
+            body["summary"]["matches"] = 0
+            out = json.dumps({"report": body, "signature": signer.sign(body)}).encode()
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"application/json")]})
+            await send({"type": "http.response.body", "body": out})
+            return
         await app(scope, receive, send)
 
     server = uvicorn.Server(uvicorn.Config(recording, host="127.0.0.1", port=port, log_level="warning"))
@@ -87,7 +109,7 @@ def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path, 
             time.sleep(0.05)
         link = f"http://127.0.0.1:{port}/observe/{made.observer_token}"
         listing = f"http://127.0.0.1:{port}/fake/listing.json"
-        command = [python, str(SCRIPT), str(tmp_path / "extension"), link, listing] + (["--expect-forked-log"] if forked else [])
+        command = [python, str(SCRIPT), str(tmp_path / "extension"), link, listing] + ({"false-anchor": ["--expect-forked-log"], "false-report": ["--expect-false-report"]}.get(case, []))
         result = subprocess.run(command, capture_output=True, text=True, timeout=180, check=False)
         summary: dict[str, Any] = json.loads(result.stdout) if result.stdout.startswith("{") else {"ok": False, "error": result.stderr[-3000:]}
         assert result.returncode == 0 and summary["ok"], json.dumps(summary, indent=1)

@@ -106,7 +106,8 @@ a local server. It opens an observer link through it and enters a ballot. It che
   GitHub's listing format;
 - that the log is one chain through the receipts' heads and the anchored head, and, in a second
   case with a false anchor, that the page raises an alert;
-- that the server's signed report of the entry matches the device's own.
+- that the server's signed report of the entry matches the device's own, and, in a third case
+  where the server signs a false one with its real key, that the page raises an alert.
 
 `tests/test_obsreport.py` runs `report.js` in Node and `corla_observer.obsreport` on the same 300
 random sets of entries and checks the reports are identical.
