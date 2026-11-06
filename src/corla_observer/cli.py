@@ -1954,6 +1954,10 @@ from corla_observer.cli_photo import register as _register_photo  # noqa: E402
 
 _register_photo(app)
 
+from corla_observer.cli_report import register as _register_report  # noqa: E402
+
+_register_report(app)
+
 
 # ---------------------------------------------------------------------------
 # Targeted ballots (corla_observer.targets, docs/TARGETING.md), as on /coord/targets.

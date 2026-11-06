@@ -10,7 +10,26 @@ the observations that can be computed the same way from every record of them:
 - **on the observer's device,** from the payloads it signed and kept, by the browser extension
   (``extension/report.js``, the same rules in JavaScript; tests/test_obsreport.py runs both on the
   same payloads and checks the reports are identical);
-- **from a marked spreadsheet or a paper tally,** entered in the same terms (``report_from_marks``).
+- **from a marked spreadsheet or a paper tally,** entered in the same terms (``report_from_marks``);
+- **from the record an observer downloads** from the observer page (``report_from_record``), so the
+  report of online entries can also be computed with no browser at all.
+
+**Marking the spreadsheet.** The extract's spreadsheet (`corla_observer.extract.to_csv`) has two
+blank columns per ballot, ``match`` and ``heard instead``. An observer, or someone transcribing a
+paper tally, fills them in for each ballot read out:
+
+- ``match``: ``y``, ``yes``, ``x``, ``✓`` or ``match`` when the ballot read out matched the expected
+  votes; ``n``, ``no`` or ``different`` when it did not; ``other`` or ``other board`` when the board
+  set the ballot aside as another board's. Left blank, the ballot was not observed, unless ``heard
+  instead`` is filled in, which marks a discrepancy on its own;
+- ``heard instead``: for a discrepancy, what was read out (``Bob for Governor``). It is the note of
+  a discrepancy, as on the observer page.
+
+The spreadsheet may be saved as CSV (any delimiter, with or without the leading quotes that guard
+cells against formulas) or as an Excel workbook. Its identification rows give the extract's SHA-256,
+which the report carries; a ``match`` that is none of the above, or ``yes`` with something heard
+instead, is an error naming the row, never a guess. A spreadsheet of several boards needs the board
+to report on.
 
 **The report** (`build_report`), for one county, board and extract (the list), from payloads in the
 order they were signed, is a JSON object:
@@ -37,11 +56,13 @@ marked done or when every row has a second reading; it matches when done, every 
 every final outcome confirmed with no readings that differ. Payloads of other types (first
 readings, entry modes, notices, list switches, lookups) and of other extracts are left out.
 
-Standard library only.
+Standard library only (the workbook reader is `corla_observer.classify`'s).
 """
 
 from __future__ import annotations
 
+import csv
+import io
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
@@ -181,3 +202,127 @@ def sign_report(signer: Any, report: Mapping[str, Any], *, device_id: str, head:
     """The report signed with the server's receipt key, with the device it is for and the log's head it was computed at."""
     body = dict(report) | {"device_id": device_id, "head_seq": head[0], "head_hash": head[1], "key_id": signer.key_id}
     return {"report": body, "signature": signer.sign(body)}
+
+
+# ---------------------------------------------------------------------------
+# Marked spreadsheets and paper tallies, and downloaded records
+
+MATCH_MARKS = frozenset({"y", "yes", "x", "✓", "✔", "match", "matched", "ok", "1", "true"})
+DIFFERENT_MARKS = frozenset({"n", "no", "different", "differs", "discrepancy", "mismatch", "0", "false"})
+OTHER_BOARD_MARKS = frozenset({"other", "other board", "o", "skip", "skipped"})
+
+
+class MarksError(ValueError):
+    """A marked spreadsheet that cannot be read as one board's observations."""
+
+
+def _sheet_rows(data: bytes) -> list[list[str]]:
+    from corla_observer.classify import XlsxError, XlsxReader, decode_text
+
+    if data[:2] == b"PK":
+        try:
+            reader = XlsxReader(data)
+            return [list(r) for r in reader.rows(reader.sheet_names[0])]
+        except (XlsxError, IndexError) as exc:
+            raise MarksError(f"not a readable workbook: {exc}") from None
+    text, _ = decode_text(data)
+    sample = text[:4096]
+    try:
+        delimiter = csv.Sniffer().sniff(sample, delimiters=",;\t").delimiter
+    except csv.Error:
+        delimiter = ","
+    return list(csv.reader(io.StringIO(text, newline=""), delimiter=delimiter))
+
+
+def _cell(text: str) -> str:
+    text = text.strip()
+    return text[1:] if text.startswith("'") else text
+
+
+def report_from_marks(data: bytes, *, observer: str, board: str | None = None) -> dict[str, Any]:
+    """The observation report of a marked extract spreadsheet (see "Marking the spreadsheet" above).
+
+    Raises:
+        MarksError: if it is not an extract spreadsheet, names no extract, covers several boards
+            and ``board`` is not given, or has marks that cannot be read.
+    """
+    rows = [[_cell(c) for c in row] for row in _sheet_rows(data)]
+    ident = {row[0].lower(): row[1] for row in rows if len(row) >= 2 and row[0]}
+    header_at = next((i for i, row in enumerate(rows) if [c.lower() for c in row[:1]] == ["board"] and "imprinted id" in [c.lower() for c in row]), None)
+    if header_at is None:
+        raise MarksError("no ballot header row (board, ..., imprinted id, ..., match, heard instead): not an extract spreadsheet")
+    extract_sha = ident.get("extract", "").lower()
+    if len(extract_sha) != 64 or any(c not in "0123456789abcdef" for c in extract_sha):
+        raise MarksError("no extract SHA-256 in the identification rows (a row starting 'Extract')")
+    header = [c.lower() for c in rows[header_at]]
+    need = {name: header.index(name) for name in ("board", "position in county", "imprinted id", "match", "heard instead") if name in header}
+    missing = {"board", "position in county", "imprinted id", "match", "heard instead"} - set(need)
+    if missing:
+        raise MarksError(f"the ballot header has no {', '.join(sorted(missing))} column")
+    ballots = [row for row in rows[header_at + 1 :] if any(row)]
+    boards = sorted({row[need["board"]] for row in ballots if len(row) > need["board"]})
+    if board is None:
+        if len(boards) != 1:
+            raise MarksError(f"the spreadsheet covers boards {', '.join(boards)}: say which board to report on")
+        board = boards[0]
+    elif str(board) not in boards:
+        raise MarksError(f"the spreadsheet has no ballots for board {board}")
+    payloads: list[dict[str, Any]] = []
+    problems: list[str] = []
+    for number, row in enumerate(rows[header_at + 1 :], start=header_at + 2):
+        row = row + [""] * (len(header) - len(row))
+        if not any(row) or row[need["board"]] != str(board):
+            continue
+        mark, heard = " ".join(row[need["match"]].lower().split()), row[need["heard instead"]].strip()
+        position_text, imprinted = row[need["position in county"]], row[need["imprinted id"]]
+        if not position_text.isdigit():
+            problems.append(f"row {number}: position {position_text!r} is not a number")
+            continue
+        base = {"position": int(position_text), "imprinted_id": imprinted, "extract_sha256": extract_sha}
+        if mark in MATCH_MARKS:
+            if heard:
+                problems.append(f"row {number} ({imprinted}): marked as a match, with {heard!r} heard instead")
+                continue
+            payloads.append(base | {"type": "entry", "content": {"match": True, "note": ""}})
+        elif mark in DIFFERENT_MARKS or (not mark and heard):
+            payloads.append(base | {"type": "entry", "content": {"match": False, "note": heard}})
+        elif mark in OTHER_BOARD_MARKS:
+            payloads.append(base | {"type": "other_board", "content": {}})
+        elif mark:
+            problems.append(f"row {number} ({imprinted}): {row[need['match']]!r} is not a mark this reads (yes, no or other board)")
+    if problems:
+        raise MarksError("; ".join(problems))
+    county = ident.get("county", "")
+    return build_report(payloads, observer=observer, county=county, board=str(board), extract_sha256=extract_sha)
+
+
+def report_from_record(record: Mapping[str, Any]) -> dict[str, Any]:
+    """The observation report of a record downloaded from the observer page (docs/RECEIPTS.md): its acknowledged entries, in the order signed.
+
+    Check the record against the published log first (``corla-observer check-record``): this only computes.
+    """
+    entries = [e for e in record.get("entries", []) if isinstance(e, Mapping) and e.get("receipt") and isinstance(e.get("payload"), Mapping)]
+    payloads = sorted((e["payload"] for e in entries), key=lambda p: p.get("device_seq") if type(p.get("device_seq")) is int else 0)
+    return build_report(
+        payloads, observer=str(record.get("observer", "")), county=str(record.get("county", "")),
+        board=str(record.get("board", "")), extract_sha256=str(record.get("extract_sha256", "")),
+    )  # fmt: skip
+
+
+def render_report(report: Mapping[str, Any]) -> str:
+    """A report as plain text: the summary, then each ballot that was not a match."""
+    s = report["summary"]
+    lines = [
+        f"Observation report: {report['county']} board {report['board']}, observer {report['observer'] or '(not named)'}",
+        f"Extract {report['extract_sha256']}",
+        f"{s['ballots']} ballots: {s['matches']} matched, {s['discrepancies']} with discrepancies "
+        f"({s['ballot_level']} noted without naming contests), {s['other_board']} another board's, {s['incomplete']} not finished",
+    ]
+    for contest, n in s["by_contest"].items():
+        lines.append(f"  {contest}: {n}")
+    for b in report["ballots"]:
+        if b["verdict"] == "match":
+            continue
+        detail = "; ".join(f"{c['contest']}: expected {c['expected'] or '(no vote)'}, {c['observed']}" for c in b["contests"]) or b["note"]
+        lines.append(f"  {b['position']:>5}  {b['imprinted_id']:<14} {b['verdict']}{': ' + detail if detail else ''}")
+    return "\n".join(lines) + "\n"
