@@ -208,6 +208,21 @@ def test_collect_evidence(ws: Workspace, log: EventLog, no_tools: Path) -> None:
     assert evidence.log_head == log.head()
     assert evidence.software.startswith("corla-observer ")
     assert [f.path for f in evidence.files] == sorted(f.path for f in evidence.files)
+    assert "derived/receipt-key.json" not in paths  # no receipt key published yet
+
+
+def test_the_receipt_key_is_committed(ws: Workspace, log: EventLog, no_tools: Path) -> None:
+    """The receipt key as last published: the canonical JSON of its event's data, so a device can hash the key it holds and compare."""
+    from corla_observer.events import canonical_json
+
+    first = {"algorithm": "Ed25519", "public_key": "A" * 44, "key_id": "1" * 64}
+    latest = {"algorithm": "Ed25519", "public_key": "B" * 44, "key_id": "2" * 64}
+    log.append("receipt.key_published", "system", data=first)
+    log.append("receipt.key_published", "system", data=latest)
+    paths = {f.path: f for f in collect_evidence(ws, log).files}
+    key = paths["derived/receipt-key.json"]
+    assert key.sha256 == sha(canonical_json(latest)) and key.origin == "receipt_key"
+    assert ws.get_bytes(key.sha256) == canonical_json(latest)
 
 
 def test_skip_path_without_tools(ws: Workspace, log: EventLog, out_repo: Path, no_tools: Path) -> None:
