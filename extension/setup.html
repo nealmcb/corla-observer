@@ -13,6 +13,10 @@
 <p>Paste the observer link you were sent. The observation page then runs from this extension's own code, and your signing key is kept in the extension, out of reach of any web page.</p>
 <form id="add" class="card form">
   <label>Observer link <input id="link" type="url" required placeholder="https://.../observe/..." spellcheck="false" autocapitalize="none"></label>
+  <label>Published commitments, optional: the public folder your coordinator gave you, such as
+    https://github.com/OWNER/REPO/tree/main/2026/general/observerfiles
+    <input id="commitments" type="url" placeholder="https://github.com/.../observerfiles" spellcheck="false" autocapitalize="none"></label>
+  <p class="meta">Take it from your coordinator directly, on paper or by email, not from the server: the extension then checks the extract you are shown against what was published there before the audit.</p>
   <button type="submit">Add and open</button>
   <p id="add-status" class="meta" role="status"></p>
 </form>

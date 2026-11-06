@@ -32,6 +32,24 @@ verifiability".
 - **The static files,** copied unchanged from `web/static`: the same code as the served page.
   `observe.js` knows when it runs in the extension only so that a change of list opens the
   extension's page rather than the server's.
+- **`verify.js`.** Runs after the page's scripts and checks every receipt the server returns, as
+  entries are sent:
+  - the server's Ed25519 signature over the receipt's canonical body, with the receipt key the
+    extension pinned for that server when it first saw it; a different key later is an alert;
+  - that the receipt is for the payload this device signed;
+  - that the log positions and heads it states agree with every other receipt from that server,
+    kept across sessions; two hashes for one position mean the server has shown two logs.
+
+  If the observer gave the published commitments' folder on the links page (from their
+  coordinator, on paper or by email, never from the server), it also reads every
+  `SHA256SUMS*.txt` there from GitHub, a source apart from the server. It says whether the extract
+  shown is one they list, and raises an alert if an anchored log head (each file's
+  `event-log-head`) differs from a head a receipt stated for the same position.
+
+  The result is shown at the top of the page ("Receipts checked by this extension: 12 verified"),
+  and any failure is an alert asking the observer to keep their record and tell their coordinator.
+  The page announces the receipt key and each receipt as events (`corla-observer:meta`,
+  `corla-observer:receipt`), which nothing on the served page listens to.
 - **`setup.html` and `setup.js`.** The observer's links: paste one, and the extension asks for
   access to that server only, then opens it. The page also shows the extension's version and its
   identity.
@@ -59,22 +77,33 @@ server at install, for tests.
 **Done:**
 - the build;
 - the links page;
-- the observation page running from the extension's code, with its key in the extension's storage.
+- the observation page running from the extension's code, with its key in the extension's storage;
+- the receipt checks;
+- the check of the extract shown against the published commitments.
 
 `tests/test_browser_extension.py` (marked `browser`) loads the built extension in Chromium against
 a local server. It opens an observer link through it and enters a ballot. It checks:
 - that the page runs from the extension;
 - that the entry is signed and answered with a receipt;
 - that the key's store is in the extension's origin;
-- that the server was never asked for the page or its scripts.
+- that the server was never asked for the page or its scripts;
+- that the extension verified the receipts, and raises an alert for a forged one;
+- that the extract shown is found in published commitments, served in GitHub's listing format.
+
+The receipt checks need Ed25519 in Web Crypto, in Chrome 137 and later and Firefox 129 and later.
+An older browser says it cannot check them. The test runs the newest Chromium in Playwright's
+cache, or `$CORLA_OBSERVER_CHROMIUM`. The extension page's policy forbids evaluating strings as
+code, so the test waits on selectors rather than on page functions.
 
 **To do:**
-- **Verify everything the server says:**
-  - each receipt's signature, against the server's published key;
-  - the consistency of the log heads in the receipts, with each other and with the published
-    anchors;
-  - the extract's hash, against the published commitments.
-- **Show those checks on the page,** and in the downloaded record.
+- **Check that the receipts and the anchors lie on one log.** A receipt's head and an anchor rarely
+  fall at the same position, so the extension needs the events between them, from a public endpoint
+  of the log. It would recompute their hash chain, which the server cannot fake. This needs that
+  endpoint on the server.
+- **Commit the receipt key and the targeted lists' extracts in the evidence.** Today the
+  commitments list each county's RLA extract, but neither the receipt key nor a targeted list's
+  extract. With both listed, the pinned key and every extract could be checked against them.
+- **Put the checks in the downloaded record.**
 - **Firefox:** test there, including on Android.
 - **Releases:** reproducible zips from tagged commits, their identity published and signed like the
   evidence commitments, and a signed Firefox listing.

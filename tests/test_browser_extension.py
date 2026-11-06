@@ -19,6 +19,7 @@ from typing import Any
 
 import pytest
 import uvicorn
+from fastapi.testclient import TestClient
 
 from corla_observer.events import EventLog
 from corla_observer.quicksetup import populate
@@ -44,9 +45,24 @@ def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path) 
                             "--allow-host", "http://127.0.0.1/*"], capture_output=True, text=True, check=False)  # fmt: skip
     assert built.returncode == 0, built.stderr[-2000:]
     paths: list[str] = []
-    app = create_app(AppConfig(workspace=store.root, secret=SECRET, secure_cookies=False, crawl=lambda ws, log: None))
+    config = AppConfig(workspace=store.root, secret=SECRET, secure_cookies=False, crawl=lambda ws, log: None)
+    # The extract's hash, from a first app instance: leaving a TestClient closes its app's log, so the served app is another.
+    with TestClient(create_app(config), base_url="https://testserver") as client:
+        extract_sha = client.get(f"/observe/{made.observer_token}/data.json").json()["extract_sha256"]
+    app = create_app(config)
+    # Published commitments listing that extract, as a GitHub folder would list them (served here, outside the app).
+    sums = (f"# event-log-head: 1 {'0' * 64}\n# files: 1\n{extract_sha}  derived/extract-Testland.json\n").encode()
+    fake = {
+        "/fake/listing.json": json.dumps([{"name": "SHA256SUMS.txt", "download_url": f"http://127.0.0.1:{port}/fake/SHA256SUMS.txt"}]).encode(),
+        "/fake/SHA256SUMS.txt": sums,
+    }
 
     async def recording(scope: Any, receive: Any, send: Any) -> None:
+        if scope["type"] == "http" and scope["path"] in fake:
+            body = fake[scope["path"]]
+            await send({"type": "http.response.start", "status": 200, "headers": [(b"content-type", b"text/plain"), (b"access-control-allow-origin", b"*")]})
+            await send({"type": "http.response.body", "body": body})
+            return
         if scope["type"] == "http":
             paths.append(f"{scope['method']} {scope['path']}")
         await app(scope, receive, send)
@@ -59,7 +75,8 @@ def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path) 
         while not server.started and time.monotonic() < deadline:
             time.sleep(0.05)
         link = f"http://127.0.0.1:{port}/observe/{made.observer_token}"
-        result = subprocess.run([python, str(SCRIPT), str(tmp_path / "extension"), link], capture_output=True, text=True, timeout=180, check=False)
+        listing = f"http://127.0.0.1:{port}/fake/listing.json"
+        result = subprocess.run([python, str(SCRIPT), str(tmp_path / "extension"), link, listing], capture_output=True, text=True, timeout=180, check=False)
         summary: dict[str, Any] = json.loads(result.stdout) if result.stdout.startswith("{") else {"ok": False, "error": result.stderr[-3000:]}
         assert result.returncode == 0 and summary["ok"], json.dumps(summary, indent=1)
     finally:

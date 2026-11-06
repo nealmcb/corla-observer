@@ -3,6 +3,8 @@
   "use strict";
   var api = typeof browser !== "undefined" ? browser : chrome;
   var PATTERN = /^(https?:\/\/[^\/?#]+)(\/[^?#]*?)?\/observe\/([A-Za-z0-9_\-]+)$/;
+  // A public GitHub folder of commitments: https://github.com/OWNER/REPO/tree/REF/PATH
+  var FOLDER = /^https:\/\/github\.com\/([^\/]+)\/([^\/]+)\/tree\/([^\/]+)\/(.+?)\/?$/;
 
   function stored() {
     return new Promise(function (resolve) { api.storage.local.get({ links: [] }, function (got) { resolve(got.links || []); }); });
@@ -35,12 +37,23 @@
     var link = document.getElementById("link").value.trim().replace(/[?#].*$/, "");
     var match = PATTERN.exec(link);
     if (!match) { status.textContent = "That is not an observer link (…/observe/…)."; return; }
-    // Access to this one server only, asked for now, while the person is pressing the button.
-    api.permissions.request({ origins: [match[1] + "/*"] }, function (granted) {
+    var folderText = document.getElementById("commitments").value.trim();
+    var folder = folderText ? FOLDER.exec(folderText) : null;
+    if (folderText && !folder) { status.textContent = "The commitments folder must be a GitHub folder (https://github.com/OWNER/REPO/tree/BRANCH/PATH)."; return; }
+    // Access to this one server only (and GitHub's, for the commitments), asked for now, while the person is pressing the button.
+    var origins = [match[1] + "/*"].concat(folder ? ["https://api.github.com/*", "https://raw.githubusercontent.com/*"] : []);
+    api.permissions.request({ origins: origins }, function (granted) {
       if (!granted) { status.textContent = "Without access to " + match[1] + " the page cannot reach the server."; return; }
+      var server = link.replace(/\/observe\/.*$/, "");
+      var commitments = folder ? { owner: folder[1], repo: folder[2], ref: folder[3], path: folder[4], url: folderText } : null;
       stored().then(function (links) {
         if (links.indexOf(link) < 0) links.push(link);
-        return save(links).then(function () { render(links); open(link); });
+        var writes = [save(links)];
+        if (commitments) {
+          var q = {}; q["commitments:" + server] = commitments;
+          writes.push(new Promise(function (resolve) { api.storage.local.set(q, resolve); }));
+        }
+        return Promise.all(writes).then(function () { render(links); open(link); });
       });
     });
   });

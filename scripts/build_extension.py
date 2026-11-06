@@ -10,7 +10,8 @@ What it builds, in OUT (default ``build/extension``):
   here by the real app, against a throwaway workspace, under a placeholder path prefix and token,
   so the extension's page can never drift from the served one. Its scripts and stylesheet are
   pointed at the extension's own copies, and ``boot.js`` is put before them: it fills in the real
-  server and token from the observer link at run time (``extension/boot.js``).
+  server and token from the observer link at run time (``extension/boot.js``); ``verify.js``, after
+  them, checks every receipt the server returns (``extension/verify.js``).
 - the static files that page uses, copied unchanged from ``web/static``, and the extension's own
   files from ``extension/`` (manifest, ``boot.js``, the links page ``setup.html`` and
   ``setup.js``, ``background.js``), with the manifest's version set;
@@ -45,7 +46,7 @@ STATIC = ROOT / "src" / "corla_observer" / "web" / "static"
 PLACEHOLDER_PREFIX = "/corla-observer-server"
 #: The placeholder token, in place of the throwaway link's random one, so that two builds of a commit are identical.
 PLACEHOLDER_TOKEN = "corla-observer-token"
-EXTENSION_FILES = ("manifest.json", "background.js", "boot.js", "setup.html", "setup.js")
+EXTENSION_FILES = ("manifest.json", "background.js", "boot.js", "verify.js", "setup.html", "setup.js")
 
 
 def render_page(workdir: Path) -> tuple[str, str]:
@@ -80,6 +81,9 @@ def client_html(page: str, token: str) -> tuple[str, list[str]]:
     page = page.replace(token, PLACEHOLDER_TOKEN)  # the throwaway link's random token: the same in every build
     first_script = page.index("<script ")
     page = page[:first_script] + '<script src="boot.js" defer></script>\n' + page[first_script:]
+    # The receipt checks (extension/verify.js), after the page's own scripts.
+    head_end = page.index("</head>")
+    page = page[:head_end] + '<script src="verify.js" defer></script>\n' + page[head_end:]
     page = page.replace("<body ", f'<body data-placeholder-base="{PLACEHOLDER_PREFIX}" data-placeholder-token="{PLACEHOLDER_TOKEN}" ', 1)
     return page, used
 

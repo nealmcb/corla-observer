@@ -396,6 +396,8 @@
         if (!receipt) return;
         r.receipt = receipt;
         progressed = true;
+        // For the browser extension's checks (extension/verify.js); nothing listens on the served page.
+        document.dispatchEvent(new CustomEvent("corla-observer:receipt", { detail: { payload_sha256: r.payload_sha256, receipt: receipt } }));
         lastReceipt = code(receipt);
         var entry = (r.payload.type === "entry" || r.payload.type === "other_board") && inList(r) ? local.entries[String(r.payload.position)] : null;
         if (entry && entry.device_seq === r.device_seq) entry.receipt = code(receipt);
@@ -1407,6 +1409,7 @@
         ident: data.ident, list: data.list, list_label: data.list_label, list_shas: data.list_shas, other_shas: data.other_shas };
       save(listStore + ":ballots", ballots);
       save(listStore + ":meta", meta);
+      document.dispatchEvent(new CustomEvent("corla-observer:meta", { detail: { server: prefix, receipt_key: data.receipt_key, extract_sha256: data.extract_sha256 } }));
       choices = data.choices || {};
       serverContests = data.contests || {};
       save(listStore + ":choices", choices);
