@@ -321,6 +321,10 @@ class ReceiptSigner:
         """What ``/receipt-key`` serves and ``receipt.key_published`` records."""
         return {"algorithm": RECEIPT_ALGORITHM, "public_key": self.public_b64, "key_id": self.key_id}
 
+    def sign(self, body: Mapping[str, Any]) -> str:
+        """The receipt key's signature over ``body``'s canonical serialization, in standard padded base64 (an observation report's, `corla_observer.obsreport`)."""
+        return b64encode(self._key.sign(canonical_json(dict(body))))
+
     def issue(self, event: Event, head: tuple[int, str], payload_hash: str) -> dict[str, JSONValue]:
         """The receipt for an event that recorded a payload: ``{"receipt": body, "signature": base64}``."""
         body: dict[str, JSONValue] = {

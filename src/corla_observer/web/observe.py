@@ -35,6 +35,12 @@ Routes (under the app's path prefix; TOKEN is a link's random token, see
     in its receipts and the published anchors lie on one log, which the
     server cannot fake. Not public: the log's publication during an audit
     is the coordinators' decision.
+``GET /observe/TOKEN/report.json?device=D&extract=SHA``
+    The observation report of one of the observer's devices on one extract
+    (`corla_observer.obsreport`), computed from the payloads the log holds
+    for it and signed with the receipt key, with the device and the log's
+    head. The browser extension computes the same report from the device's
+    own records and compares the two.
 ``GET /observe/TOKEN/data.json[?list=KEY]``
     The board's ballots from the list's committed extract
     (`corla_observer.extract`, recorded by ``extract.built``; by default
@@ -403,6 +409,25 @@ async def observe_page(request: Request, token: str) -> Response:
     )  # fmt: skip
     response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+@router.get("/observe/{token}/report.json")
+async def observe_report(request: Request, token: str) -> Response:
+    from corla_observer.obsreport import report_for_device, sign_report
+
+    state = get_state(request)
+    link = _link(state, token, "observer")
+    device, extract = request.query_params.get("device", ""), request.query_params.get("extract", "")
+    if not re.fullmatch(r"d-[0-9a-f]{32}", device) or not re.fullmatch(r"[0-9a-f]{64}", extract):
+        raise HTTPException(status_code=400, detail="device is a device ID and extract an extract's SHA-256.")
+
+    def signed() -> dict[str, Any]:
+        events = list(state.log.iter_events())
+        report = report_for_device(events, observer=link.actor, county=link.county, board=str(link.board), device_id=device, extract_sha256=extract)
+        head = (events[-1].seq, events[-1].hash) if events else (0, "0" * 64)
+        return sign_report(state.receipts, report, device_id=device, head=head)
+
+    return JSONResponse(await run_in_threadpool(signed), headers={"Cache-Control": "no-store"})
 
 
 #: The most event log lines served at once (``/observe/TOKEN/log``).
