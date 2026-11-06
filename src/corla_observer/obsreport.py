@@ -198,6 +198,19 @@ def report_for_device(events: Sequence[Any], *, observer: str, county: str, boar
     return build_report(device_payloads(events, device_id), observer=observer, county=county, board=board, extract_sha256=extract_sha256)
 
 
+def device_reports(events: Sequence[Any]) -> list[tuple[str, dict[str, Any]]]:
+    """Every device's report in a log: one per device and extract, with the device's ID, ordered by county, board, observer and device."""
+    keys: dict[tuple[str, str, str, str, str], None] = {}
+    for event in events:
+        payload = event.data.get("payload") if event.kind.startswith("observation.") and event.device_id else None
+        if isinstance(payload, dict) and payload.get("type") in ENTRY_TYPES and isinstance(payload.get("extract_sha256"), str):
+            keys.setdefault((event.county or "", str(event.board or ""), event.actor, event.device_id, payload["extract_sha256"]), None)
+    return [
+        (device, report_for_device(events, observer=actor, county=county, board=board, device_id=device, extract_sha256=extract))
+        for county, board, actor, device, extract in sorted(keys)
+    ]
+
+
 def sign_report(signer: Any, report: Mapping[str, Any], *, device_id: str, head: tuple[int, str]) -> dict[str, Any]:
     """The report signed with the server's receipt key, with the device it is for and the log's head it was computed at."""
     body = dict(report) | {"device_id": device_id, "head_seq": head[0], "head_hash": head[1], "key_id": signer.key_id}

@@ -14,6 +14,11 @@ observation report in any of its forms, told apart by content:
 ``report show SOURCE [--json]``
     Print the report.
 
+``report log EVENTS.jsonl [--county C] [--board N] [--out DIR] [--json]``
+    Every online observer's report, one per device and extract, computed from a published event
+    log (its verified part: the chain is checked first, as by ``verify-evidence``). ``--out``
+    writes each as ``COUNTY-boardN-DEVICE.json``, for ``report compare`` and ``report corla``.
+
 ``report compare A B [--json]``
     Compare two reports of one extract and board, ballot by ballot. Exits 1 if they differ.
 
@@ -111,6 +116,46 @@ def show(source: Path, board: BoardOption = None, observer: ObserverOption = "",
     """Print an observation report."""
     report, _, note = _load(source, board=board, observer=observer, server_key=server_key)
     typer.echo(json.dumps(report, indent=1, ensure_ascii=False) if as_json else f"({note})\n" + render_report(report))
+
+
+@report_app.command("log")
+def from_log(
+    events: Path,
+    county: Annotated[str | None, typer.Option("--county", help="Only this county.", show_default=False)] = None,
+    board: BoardOption = None,
+    out: Annotated[Path | None, typer.Option("--out", help="Write each report to this directory as JSON.", show_default=False)] = None,
+    as_json: JsonOption = False,
+) -> None:
+    """Every online observer's report, per device, from a published event log."""
+    from corla_observer.events import Event, verify_jsonl
+    from corla_observer.obsreport import device_reports
+
+    try:
+        checked = verify_jsonl(events)
+        loaded = []
+        with open(events, "rb") as f:
+            for n, line in enumerate(f):
+                if n >= checked.event_count:
+                    break
+                loaded.append(Event.from_dict(json.loads(line)))
+    except (OSError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    if not checked.ok:
+        typer.echo(f"warning: the log's chain breaks after event {checked.event_count}; only the events before it are used: {'; '.join(checked.errors)[:300]}", err=True)
+    found = [(d, r) for d, r in device_reports(loaded) if (county is None or r["county"] == county) and (board is None or r["board"] == str(board))]
+    if out is not None:
+        out.mkdir(parents=True, exist_ok=True)
+        for device, report in found:
+            name = f"{report['county'].replace(' ', '_')}-board{report['board']}-{device}-{report['extract_sha256'][:8]}.json"
+            (out / name).write_text(json.dumps(report, indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+    if as_json:
+        typer.echo(json.dumps([r | {"device_id": d} for d, r in found], indent=1, ensure_ascii=False))
+    else:
+        typer.echo(f"{len(found)} reports from {events} (events 1 to {checked.event_count}, head {checked.head_hash})")
+        for device, report in found:
+            typer.echo(f"\ndevice {device}\n" + render_report(report))
+    raise typer.Exit(0 if checked.ok else 1)
 
 
 @report_app.command("compare")

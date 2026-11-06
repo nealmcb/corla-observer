@@ -167,3 +167,27 @@ def test_the_report_commands(sheet: tuple[str, dict[str, Any], str], tmp_path: P
     assert against.exit_code == 0 and "agree: 1" in against.output, against.output
     corla_file.write_bytes(_corla_csv([]))
     assert runner.invoke(app, ["report", "corla", str(marked), str(corla_file)]).exit_code == 1
+
+
+def test_reports_from_a_published_log(tmp_path: Path) -> None:
+    """``report log``: each device's report from the JSONL log, the same as the server signs for it."""
+    from corla_observer.events import EventLog
+    from corla_observer.obsreport import device_reports
+
+    store = tmp_path / "ws"
+    sha = "e" * 64
+    with EventLog.open(store) as log:
+        for seq, (device, match) in enumerate((("d-" + "a" * 32, True), ("d-" + "b" * 32, False)), start=1):
+            payload = {"type": "entry", "position": 1, "imprinted_id": "1-1-1", "extract_sha256": sha, "device_id": device, "device_seq": seq,
+                       "content": {"match": match, "note": "" if match else "heard Bob"}}  # fmt: skip
+            log.append("observation.entry", "observer:ann", county="Delta", board="1", device_id=device, data={"payload": payload})
+        found = device_reports(list(log.iter_events()))
+    assert [(d[-1], r["summary"]["matches"]) for d, r in found] == [("a", 1), ("b", 0)]
+    jsonl = next(store.rglob("events.jsonl"))
+    result = CliRunner().invoke(app, ["report", "log", str(jsonl), "--county", "Delta", "--out", str(tmp_path / "out")])
+    assert result.exit_code == 0, result.output
+    assert "2 reports" in result.output and "heard Bob" in result.output
+    written = sorted((tmp_path / "out").glob("*.json"))
+    assert len(written) == 2
+    compared = CliRunner().invoke(app, ["report", "compare", str(written[0]), str(written[1])])
+    assert compared.exit_code == 1 and "verdicts_differ" in compared.output, compared.output
