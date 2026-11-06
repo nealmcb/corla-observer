@@ -43,8 +43,14 @@ verifiability".
   If the observer gave the published commitments' folder on the links page (from their
   coordinator, on paper or by email, never from the server), it also reads every
   `SHA256SUMS*.txt` there from GitHub, a source apart from the server. It says whether the extract
-  shown is one they list, and raises an alert if an anchored log head (each file's
-  `event-log-head`) differs from a head a receipt stated for the same position.
+  shown is one they list, and whether the receipt key is the one they list
+  (`derived/receipt-key.json`, the SHA-256 of the key's canonical JSON); a different key is an
+  alert.
+- **One log.** It checks that every head its receipts stated, and every anchored head (each
+  commitment's `event-log-head`), lies on one log. It fetches the log's lines between them
+  (`/observe/TOKEN/log`, for holders of an observer link), recomputes each line's hash from its
+  own bytes, and follows the `prev_hash` links (docs/EVENT_LOG.md). The server cannot fake a chain
+  through points it has already committed to. A break is an alert.
 
   The result is shown at the top of the page ("Receipts checked by this extension: 12 verified"),
   and any failure is an alert asking the observer to keep their record and tell their coordinator.
@@ -79,7 +85,8 @@ server at install, for tests.
 - the links page;
 - the observation page running from the extension's code, with its key in the extension's storage;
 - the receipt checks;
-- the check of the extract shown against the published commitments.
+- the check of the extract shown and the receipt key against the published commitments;
+- the check that the receipts' heads and the anchored heads lie on one log.
 
 `tests/test_browser_extension.py` (marked `browser`) loads the built extension in Chromium against
 a local server. It opens an observer link through it and enters a ballot. It checks:
@@ -88,7 +95,10 @@ a local server. It opens an observer link through it and enters a ballot. It che
 - that the key's store is in the extension's origin;
 - that the server was never asked for the page or its scripts;
 - that the extension verified the receipts, and raises an alert for a forged one;
-- that the extract shown is found in published commitments, served in GitHub's listing format.
+- that the extract shown and the receipt key are found in published commitments, served in
+  GitHub's listing format;
+- that the log is one chain through the receipts' heads and the anchored head, and, in a second
+  case with a false anchor, that the page raises an alert.
 
 The receipt checks need Ed25519 in Web Crypto, in Chrome 137 and later and Firefox 129 and later.
 An older browser says it cannot check them. The test runs the newest Chromium in Playwright's
@@ -96,13 +106,9 @@ cache, or `$CORLA_OBSERVER_CHROMIUM`. The extension page's policy forbids evalua
 code, so the test waits on selectors rather than on page functions.
 
 **To do:**
-- **Check that the receipts and the anchors lie on one log.** A receipt's head and an anchor rarely
-  fall at the same position, so the extension needs the events between them, from a public endpoint
-  of the log. It would recompute their hash chain, which the server cannot fake. This needs that
-  endpoint on the server.
-- **Commit the receipt key and the targeted lists' extracts in the evidence.** Today the
-  commitments list each county's RLA extract, but neither the receipt key nor a targeted list's
-  extract. With both listed, the pinned key and every extract could be checked against them.
+- **Long logs.** The chain check fetches every line between the earliest and the latest known
+  point on each page load, 2,000 at a time. For a long audit it should remember the stretch it has
+  already checked and fetch only what is new.
 - **Put the checks in the downloaded record.**
 - **Firefox:** test there, including on Android.
 - **Releases:** reproducible zips from tagged commits, their identity published and signed like the

@@ -10,7 +10,10 @@ With COMMITMENTS_LISTING (a listing of SHA256SUMS files in the format of GitHub'
 set as the published commitments for the link's server before the page opens, and the page must say
 the extract shown is in them.
 
-Usage: python3 scripts/browser_extension.py EXTENSION_DIR OBSERVER_LINK [COMMITMENTS_LISTING]
+With ``--expect-forked-log`` after the listing, the listing's anchor is a false one: the page must
+raise an alert that the server's log does not agree with it, instead of finding one chain.
+
+Usage: python3 scripts/browser_extension.py EXTENSION_DIR OBSERVER_LINK [COMMITMENTS_LISTING [--expect-forked-log]]
 """
 
 from __future__ import annotations
@@ -41,6 +44,7 @@ def newest_chromium() -> str | None:
 def main(argv: list[str]) -> int:
     extension, link = argv[0], argv[1]
     listing = argv[2] if len(argv) > 2 else None
+    forked = "--expect-forked-log" in argv[3:]
     checks: list[dict[str, Any]] = []
 
     def check(what: str, ok: bool, detail: Any = None) -> None:
@@ -93,11 +97,30 @@ def main(argv: list[str]) -> int:
         )
         check("the signing key's store is in the extension's own origin", keys is not None and keys["origin"] == f"chrome-extension://{extension_id}", keys)
         # The extension's receipt checks: every receipt verified, and a forged one is an alert.
-        page.wait_for_selector("#ext-verify:text-matches('[1-9][0-9]* verified')", timeout=15000)
+        try:
+            page.wait_for_selector("#ext-verify:text-matches('[1-9][0-9]* verified')", timeout=15000)
+        except Exception:  # noqa: BLE001 - reported as a failed check, with what the line said
+            check("the extension verified the receipts", False, page.inner_text("#ext-verify") if page.query_selector("#ext-verify") else None)
+            print(json.dumps({"ok": False, "checks": checks}))
+            return 1
         verdict = page.inner_text("#ext-verify")
         check("the extension verified the receipts", re.search(r"[1-9][0-9]* verified", verdict) is not None and "problem" not in verdict, verdict)
         if listing:
             check("the extract shown is in the published commitments", "is in the published commitments (SHA256SUMS.txt)" in verdict, verdict)
+        if forked:
+            # A false anchor: an alert that the log does not agree with it.
+            page.wait_for_selector("#ext-verify[role='alert']", timeout=20000)
+            alert = page.inner_text("#ext-verify")
+            check("a false published anchor is an alert", "not one chain" in alert or "differs from the published anchor" in alert, alert)
+            print(json.dumps({"ok": all(c["ok"] for c in checks), "checks": checks}))
+            context.close()
+            return 0 if all(c["ok"] for c in checks) else 1
+        # The log's chain through the receipts' heads and the published anchor, a few seconds after the last receipt.
+        page.wait_for_selector("#ext-verify:has-text('is one chain')", timeout=20000)
+        chained = page.inner_text("#ext-verify")
+        check("the log is one chain through the receipts' heads", "is one chain" in chained and "problem" not in chained, chained)
+        check("the receipt key is the one in the published commitments", "receipt key is the one in the published commitments" in chained, chained)
+        # Last: after a forged receipt the page shows only the alert.
         page.evaluate(
             "document.dispatchEvent(new CustomEvent('corla-observer:receipt', {detail: {payload_sha256: 'a'.repeat(64),"
             " receipt: {receipt: {key_id: 'x'}, signature: 'AAAA'}}}))"

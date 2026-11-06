@@ -9,6 +9,7 @@ page or its scripts, only for data and to take entries.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import subprocess
 import sys
@@ -21,8 +22,9 @@ import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
-from corla_observer.events import EventLog
+from corla_observer.events import EventLog, canonical_json
 from corla_observer.quicksetup import populate
+from corla_observer.receipts import ReceiptSigner
 from corla_observer.web.app import AppConfig, create_app
 from corla_observer.workspace import Workspace
 from test_browser_per_contest import free_port, playwright_python
@@ -33,25 +35,34 @@ ROOT = Path(__file__).parent.parent
 SCRIPT = ROOT / "scripts" / "browser_extension.py"
 
 
-def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path) -> None:
+@pytest.mark.parametrize("forked", [False, True], ids=["true-anchor", "false-anchor"])
+def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path, forked: bool) -> None:
     python = playwright_python()
     if python is None:
         pytest.skip("no Python with Playwright")
     store = Workspace.open(tmp_path / "ws")
     with EventLog.open(store.root) as log:
         made = populate(store, log, "Testland", "coordinator:ann")
+        anchor_seq, anchor_hash = log.head()  # the log's head, as a commitment would anchor it
     port = free_port()
     built = subprocess.run([sys.executable, str(ROOT / "scripts" / "build_extension.py"), "--out", str(tmp_path / "extension"),
                             "--allow-host", "http://127.0.0.1/*"], capture_output=True, text=True, check=False)  # fmt: skip
     assert built.returncode == 0, built.stderr[-2000:]
     paths: list[str] = []
-    config = AppConfig(workspace=store.root, secret=SECRET, secure_cookies=False, crawl=lambda ws, log: None)
+    # One receipt key for both app instances, as a server keeps one in its key file (without one, each instance makes its own).
+    config = AppConfig(workspace=store.root, secret=SECRET, secure_cookies=False, crawl=lambda ws, log: None, receipt_key=ReceiptSigner.generate())
     # The extract's hash, from a first app instance: leaving a TestClient closes its app's log, so the served app is another.
     with TestClient(create_app(config), base_url="https://testserver") as client:
-        extract_sha = client.get(f"/observe/{made.observer_token}/data.json").json()["extract_sha256"]
+        data = client.get(f"/observe/{made.observer_token}/data.json").json()
+    extract_sha = data["extract_sha256"]
+    # The receipt key as commit-evidence lists it: the SHA-256 of its canonical JSON.
+    key_sha = hashlib.sha256(canonical_json(data["receipt_key"])).hexdigest()
     app = create_app(config)
     # Published commitments listing that extract, as a GitHub folder would list them (served here, outside the app).
-    sums = (f"# event-log-head: 1 {'0' * 64}\n# files: 1\n{extract_sha}  derived/extract-Testland.json\n").encode()
+    if forked:  # a false anchor: the head's position, with another hash
+        anchor_hash = "f" * 64
+    sums = (f"# event-log-head: {anchor_seq} {anchor_hash}\n# files: 2\n{extract_sha}  derived/extract-Testland.json\n"
+            f"{key_sha}  derived/receipt-key.json\n").encode()
     fake = {
         "/fake/listing.json": json.dumps([{"name": "SHA256SUMS.txt", "download_url": f"http://127.0.0.1:{port}/fake/SHA256SUMS.txt"}]).encode(),
         "/fake/SHA256SUMS.txt": sums,
@@ -76,7 +87,8 @@ def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path) 
             time.sleep(0.05)
         link = f"http://127.0.0.1:{port}/observe/{made.observer_token}"
         listing = f"http://127.0.0.1:{port}/fake/listing.json"
-        result = subprocess.run([python, str(SCRIPT), str(tmp_path / "extension"), link, listing], capture_output=True, text=True, timeout=180, check=False)
+        command = [python, str(SCRIPT), str(tmp_path / "extension"), link, listing] + (["--expect-forked-log"] if forked else [])
+        result = subprocess.run(command, capture_output=True, text=True, timeout=180, check=False)
         summary: dict[str, Any] = json.loads(result.stdout) if result.stdout.startswith("{") else {"ok": False, "error": result.stderr[-3000:]}
         assert result.returncode == 0 and summary["ok"], json.dumps(summary, indent=1)
     finally:
