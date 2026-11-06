@@ -200,7 +200,7 @@ Apache License 2.0. See [LICENSE](LICENSE).
 ```
 corla-observer commit-evidence --workspace DIR --election 2026/general --out-repo MIRROR [--subdir PATH] [--actor coordinator:ID] [--no-push] [--include-files] [--cosign-key FILE]
 corla-observer upgrade-proofs --out-repo MIRROR --workspace DIR [--no-push]
-corla-observer verify-evidence SHA256SUMS.v2.txt [--workspace DIR] [--certificate-identity EMAIL --certificate-oidc-issuer URL]
+corla-observer verify-evidence SHA256SUMS-v2-20261116T160000Z.txt [--workspace DIR] [--certificate-identity EMAIL --certificate-oidc-issuer URL]
 ```
 
 ## Seed entry and the extract

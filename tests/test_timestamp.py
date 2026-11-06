@@ -15,6 +15,7 @@ import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 import pytest
 from typer.testing import CliRunner
@@ -176,8 +177,14 @@ def events(log: EventLog, kind: str) -> list[dict[str, object]]:
 
 
 def test_names_and_paths() -> None:
-    assert sums_name(1) == "SHA256SUMS.txt"
-    assert sums_name(3) == "SHA256SUMS.v3.txt"
+    moment = datetime(2026, 11, 6, 12, 37, 20, 999, tzinfo=ZoneInfo("America/Denver")).replace(microsecond=0)
+    assert sums_name(1, moment) == "SHA256SUMS-v1-20261106T193720Z.txt"
+    assert sums_name(3, moment) == "SHA256SUMS-v3-20261106T193720Z.txt"
+    assert sums_version("SHA256SUMS-v1-20261106T193720Z.txt") == 1
+    assert sums_version("SHA256SUMS-v12-20261106T193720Z.txt") == 12
+    assert sums_version("SHA256SUMS-v2-2026-11-06T19:37:20Z.txt") is None
+    assert sums_version("SHA256SUMS-v2-20261106T193720Z.txt.ots") is None
+    # The earlier names, as for the July 2026 primary.
     assert sums_version("SHA256SUMS.txt") == 1
     assert sums_version("SHA256SUMS.v12.txt") == 12
     assert sums_version("SHA256SUMS.v0.txt") is None
@@ -213,12 +220,12 @@ def test_collect_evidence(ws: Workspace, log: EventLog, no_tools: Path) -> None:
 def test_skip_path_without_tools(ws: Workspace, log: EventLog, out_repo: Path, no_tools: Path) -> None:
     head = log.head()
     result = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR, clock=lambda: NOW)
-    assert result.sums_name == "SHA256SUMS.txt" and result.version == 1
+    assert result.sums_name == "SHA256SUMS-v1-20261116T160000Z.txt" and result.version == 1
     status = {s.name: s.status for s in result.steps}
     assert status == {"opentimestamps": "skipped", "sigstore": "skipped", "git_commit": "done", "push": "skipped"}
     assert "not installed" in next(s.detail for s in result.steps if s.name == "opentimestamps")
     assert result.proofs == [] and not result.pushed and not result.failed
-    sums = (out_repo / SUBDIR / "SHA256SUMS.txt").read_bytes()
+    sums = (out_repo / SUBDIR / result.sums_name).read_bytes()
     parsed = parse_sums(sums.decode())
     assert parsed.header["event-log-head"] == f"{head[0]} {head[1]}"
     assert parsed.header["time"] == "2026-11-16T16:00:00Z"
@@ -226,7 +233,8 @@ def test_skip_path_without_tools(ws: Workspace, log: EventLog, out_repo: Path, n
     assert [p for _, p in parsed.entries] == sorted(p for _, p in parsed.entries)
     assert not parsed.malformed
     assert git(out_repo, "rev-parse", "HEAD").strip() == result.commit
-    assert git(out_repo, "show", "--name-only", "--format=", "HEAD").split() == [f"{SUBDIR}/SHA256SUMS.txt"]
+    assert git(out_repo, "show", "--name-only", "--format=", "HEAD").split() == [f"{SUBDIR}/{result.sums_name}"]
+    assert parsed.header["check"] == f"sha256sum --check --ignore-missing {result.sums_name}"
     assert "opentimestamps: skipped" in git(out_repo, "log", "-1", "--format=%B")
     [event] = events(log, "evidence.committed")
     assert event["sums_sha256"] == sha(sums) and event["commit"] == result.commit
@@ -244,20 +252,22 @@ def test_stamped_signed_and_versioned(ws: Workspace, log: EventLog, out_repo: Pa
     status = {s.name: s.status for s in first.steps}
     assert status["opentimestamps"] == "pending" and status["sigstore"] == "done"
     assert first.rekor_log_index == 4242
-    assert first.proofs == ["SHA256SUMS.txt.ots", "SHA256SUMS.txt.cosign-bundle"]
+    one = first.sums_name
+    assert one.startswith("SHA256SUMS-v1-") and first.proofs == [f"{one}.ots", f"{one}.cosign-bundle"]
     committed = set(git(out_repo, "show", "--name-only", "--format=", "HEAD").split())
-    assert committed == {f"{SUBDIR}/{n}" for n in ("SHA256SUMS.txt", *first.proofs)}
-    v1 = (out_repo / SUBDIR / "SHA256SUMS.txt").read_bytes()
-    assert '"key":"keyless"' in (out_repo / SUBDIR / "SHA256SUMS.txt.cosign-bundle").read_text()
+    assert committed == {f"{SUBDIR}/{n}" for n in (one, *first.proofs)}
+    v1 = (out_repo / SUBDIR / one).read_bytes()
+    assert '"key":"keyless"' in (out_repo / SUBDIR / f"{one}.cosign-bundle").read_text()
 
     second = commit_evidence(
         ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR, push=False, cosign=CosignOptions(key=out_repo / "k.key")
     )
-    assert second.sums_name == "SHA256SUMS.v2.txt" and second.version == 2
-    assert (out_repo / SUBDIR / "SHA256SUMS.txt").read_bytes() == v1
-    assert "k.key" in (out_repo / SUBDIR / "SHA256SUMS.v2.txt.cosign-bundle").read_text()
+    two = second.sums_name
+    assert two.startswith("SHA256SUMS-v2-") and second.version == 2
+    assert (out_repo / SUBDIR / one).read_bytes() == v1
+    assert "k.key" in (out_repo / SUBDIR / f"{two}.cosign-bundle").read_text()
     # The first commitment is now in the log the second one's header commits to.
-    head = parse_sums((out_repo / SUBDIR / "SHA256SUMS.v2.txt").read_text()).header["event-log-head"]
+    head = parse_sums((out_repo / SUBDIR / two).read_text()).header["event-log-head"]
     assert int(head.split()[0]) == events_seq(log, "evidence.committed")[0]
 
 
@@ -266,11 +276,16 @@ def events_seq(log: EventLog, kind: str) -> list[int]:
 
 
 def test_versions_never_reused(ws: Workspace, log: EventLog, out_repo: Path, no_tools: Path) -> None:
-    commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False)
-    git(out_repo, "rm", "--quiet", f"{SUBDIR}/SHA256SUMS.txt")
+    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False)
+    git(out_repo, "rm", "--quiet", f"{SUBDIR}/{first.sums_name}")
     git(out_repo, "commit", "--quiet", "-m", "remove")
     again = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False)
-    assert again.sums_name == "SHA256SUMS.v2.txt"
+    assert again.version == 2 and again.sums_name.startswith("SHA256SUMS-v2-")
+    # A version used under the earlier names counts too (SHA256SUMS.v3.txt, as for the July 2026 primary).
+    (out_repo / SUBDIR / "SHA256SUMS.v3.txt").write_text("# version: 3\n")
+    git(out_repo, "add", ".")
+    git(out_repo, "commit", "--quiet", "-m", "earlier name")
+    assert commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False).version == 4
 
 
 def test_failed_signing_is_reported(
@@ -285,9 +300,10 @@ def test_failed_signing_is_reported(
     assert result.exit_code == 1, result.output
     assert "sigstore: FAILED" in result.output and "no OIDC token" in result.output
     assert "opentimestamps: PENDING" in result.output
-    assert not (out_repo / SUBDIR / "SHA256SUMS.txt.cosign-bundle").exists()
     [event] = events(log, "evidence.committed")
-    assert event["proofs"] == ["SHA256SUMS.txt.ots"]
+    name = event["sums_name"] if "sums_name" in event else next((out_repo / SUBDIR).glob("SHA256SUMS-v1-*.txt")).name
+    assert not (out_repo / SUBDIR / f"{name}.cosign-bundle").exists()
+    assert event["proofs"] == [f"{name}.ots"]
 
 
 def test_cli_skip_path_and_push(ws: Workspace, out_repo: Path, tmp_path: Path, no_tools: Path) -> None:
@@ -304,7 +320,7 @@ def test_cli_skip_path_and_push(ws: Workspace, out_repo: Path, tmp_path: Path, n
     assert git(remote, "rev-parse", "main").strip() == head
     result = runner.invoke(app, [*args, "--subdir", "observerfiles/test", "--no-push"])
     assert result.exit_code == 0 and "(not pushed)" in result.output
-    assert (out_repo / "observerfiles/test/SHA256SUMS.v2.txt").is_file()
+    assert len(list((out_repo / "observerfiles/test").glob("SHA256SUMS-v2-*Z.txt"))) == 1
     assert git(remote, "rev-parse", "main").strip() == head
 
 
@@ -337,12 +353,13 @@ def test_include_files_and_verify(ws: Workspace, log: EventLog, out_repo: Path, 
     assert f"{SUBDIR}/{withheld[0].path}" not in committed
     assert any(p.endswith("Boulder_manifest.csv") for p in committed)
 
-    sums = target / "SHA256SUMS.txt"
+    name = result.sums_name
+    sums = target / name
     report = verify_evidence(sums)
     status = {c.subject: c.status for c in report.checks}
     assert status[withheld[0].path] == "missing"
-    assert status["SHA256SUMS.txt.ots"] == "pending"
-    assert status["SHA256SUMS.txt.cosign-bundle"] == "ok"
+    assert status[f"{name}.ots"] == "pending"
+    assert status[f"{name}.cosign-bundle"] == "ok"
     assert report.ok and report.count("mismatch") == 0
     # The withheld file is found by hash in the workspace.
     assert {c.subject: c.status for c in verify_evidence(sums, workspace=ws).checks}[withheld[0].path] == "ok"
@@ -356,26 +373,26 @@ def test_include_files_and_verify(ws: Workspace, log: EventLog, out_repo: Path, 
     assert "1 differ" in out.output
 
     upgraded = upgrade_proofs(log, out_repo=out_repo, push=False)
-    assert upgraded.upgraded == [f"{SUBDIR}/SHA256SUMS.txt.ots"] and upgraded.commit
-    assert not (target / "SHA256SUMS.txt.ots.bak").exists()
-    assert OTS_BITCOIN_TAG in (target / "SHA256SUMS.txt.ots").read_bytes()
-    assert {c.subject: c.status for c in verify_evidence(sums).checks}["SHA256SUMS.txt.ots"] == "ok"
+    assert upgraded.upgraded == [f"{SUBDIR}/{name}.ots"] and upgraded.commit
+    assert not (target / f"{name}.ots.bak").exists()
+    assert OTS_BITCOIN_TAG in (target / f"{name}.ots").read_bytes()
+    assert {c.subject: c.status for c in verify_evidence(sums).checks}[f"{name}.ots"] == "ok"
 
 
 def test_upgrade_proofs_cli(ws: Workspace, log: EventLog, out_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _bin(tmp_path, monkeypatch, ots=True, cosign=False)
-    commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False)
+    name = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False).sums_name
     runner = CliRunner()
     args = ["upgrade-proofs", "--out-repo", str(out_repo), "--workspace", str(ws.root), "--no-push"]
     result = runner.invoke(app, args)
     assert result.exit_code == 0, result.output
-    assert f"upgraded: {SUBDIR}/SHA256SUMS.txt.ots" in result.output and "commit " in result.output
+    assert f"upgraded: {SUBDIR}/{name}.ots" in result.output and "commit " in result.output
     result = runner.invoke(app, args)
     assert result.exit_code == 0 and "already complete" in result.output and "nothing to commit" in result.output
     upgrades = events(log, "evidence.proofs_upgraded")
-    assert len(upgrades) == 2 and upgrades[0]["upgraded"] == [f"{SUBDIR}/SHA256SUMS.txt.ots"]
+    assert len(upgrades) == 2 and upgrades[0]["upgraded"] == [f"{SUBDIR}/{name}.ots"]
     # The fake upgrade appends a Bitcoin attestation's tag without its block height.
-    assert upgrades[0]["bitcoin_blocks"] == {f"{SUBDIR}/SHA256SUMS.txt.ots": None}
+    assert upgrades[0]["bitcoin_blocks"] == {f"{SUBDIR}/{name}.ots": None}
 
     _bin(tmp_path, monkeypatch, ots=False, cosign=False)
     result = runner.invoke(app, [*args, "--all"])

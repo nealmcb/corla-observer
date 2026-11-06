@@ -12,8 +12,9 @@ command, `commit_evidence`:
    its printouts (each board's PDF in each layout, ``pdfs``).
    Every stored object is re-hashed on the way, so a corrupt store stops
    the commitment rather than committing to it.
-2. **Write** a new versioned SHA256SUMS file (``SHA256SUMS.txt``, then
-   ``SHA256SUMS.v2.txt``, ``SHA256SUMS.v3.txt`` and so on) in the output
+2. **Write** a new versioned SHA256SUMS file, named for its version and the
+   time it was written, in UTC (``SHA256SUMS-v1-20261106T193720Z.txt``, then
+   ``SHA256SUMS-v2-...`` and so on; `sums_name`), in the output
    repository: one ``<sha256>  <path>`` line per file in sorted path order,
    after a ``#`` header giving the election, the time (UTC), the event log's
    head (sequence number and hash, which commits to the whole log) and the
@@ -81,9 +82,13 @@ from corla_observer.events import EventLog, JSONValue, check_actor
 from corla_observer.redaction import PASS
 from corla_observer.workspace import Workspace, sha256_of_file
 
-#: The first SUMS file's name; later versions are ``SHA256SUMS.v<N>.txt``.
+#: A SUMS file's name: ``SHA256SUMS-v<N>-<UTC time, ISO 8601 basic format>.txt``. The time is the
+#: one in its header, when it was written, as the writer's clock gave it: the proof of time is in
+#: its OpenTimestamps proof and Sigstore entry, not its name. No colons, so it can be checked out
+#: on Windows. Names of the earlier form, ``SHA256SUMS.txt`` (version 1) and
+#: ``SHA256SUMS.v<N>.txt`` (as for the July 2026 primary), are still read.
 SUMS_BASENAME = "SHA256SUMS"
-SUMS_NAME_RE = re.compile(r"^SHA256SUMS(?:\.v([1-9][0-9]*))?\.txt$")
+SUMS_NAME_RE = re.compile(r"^SHA256SUMS(?:-v([1-9][0-9]*)-[0-9]{8}T[0-9]{6}Z|\.v([1-9][0-9]*))?\.txt$")
 OTS_SUFFIX = ".ots"
 COSIGN_SUFFIX = ".cosign-bundle"
 
@@ -295,15 +300,17 @@ def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | Non
 # SUMS files
 
 
-def sums_name(version: int) -> str:
-    return f"{SUMS_BASENAME}.txt" if version == 1 else f"{SUMS_BASENAME}.v{version}.txt"
+def sums_name(version: int, moment: datetime) -> str:
+    """The SUMS file's name for its version and the time it is written (see `SUMS_NAME_RE`)."""
+    return f"{SUMS_BASENAME}-v{version}-{moment.astimezone(UTC).strftime('%Y%m%dT%H%M%SZ')}.txt"
 
 
 def sums_version(name: str) -> int | None:
+    """A SUMS file's version from its name, in either form; None if it is not a SUMS file's name."""
     match = SUMS_NAME_RE.match(name)
     if match is None:
         return None
-    return int(match.group(1)) if match.group(1) else 1
+    return int(match.group(1) or match.group(2) or 1)
 
 
 def render_sums(evidence: EvidenceSet, election: str, version: int, moment: datetime) -> bytes:
@@ -316,7 +323,7 @@ def render_sums(evidence: EvidenceSet, election: str, version: int, moment: date
         f"# event-log-head: {seq} {head}",
         f"# software: {evidence.software}",
         f"# files: {len(evidence.files)}",
-        f"# check: sha256sum --check --ignore-missing {sums_name(version)}",
+        f"# check: sha256sum --check --ignore-missing {sums_name(version, moment)}",
     ]
     for item in sorted(evidence.files, key=lambda f: f.path):
         if "\n" in item.path or "\\" in item.path:
@@ -622,8 +629,8 @@ def commit_evidence(
 
     used = existing_versions(out_repo, subdir)
     version = max(used, default=0) + 1
-    name = sums_name(version)
-    moment = (clock or (lambda: datetime.now(UTC)))()
+    moment = (clock or (lambda: datetime.now(UTC)))().replace(microsecond=0)
+    name = sums_name(version, moment)
     content = render_sums(evidence, election, version, moment)
     sums_path = target / name
     try:
