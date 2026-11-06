@@ -200,7 +200,7 @@ class Run:
         if not evidence.exists():
             subprocess.run(["git", "init", "-q", str(evidence)], check=True)
         cli("commit-evidence", "--workspace", str(self.ws), "--election", "2026/general", "--out-repo", str(evidence),
-            "--actor", "coordinator:alice", "--no-ots", "--no-cosign", "--no-push")  # fmt: skip
+            "--actor", "coordinator:alice", "--no-ots", "--no-cosign")  # fmt: skip
 
         links: dict[str, str] = {}
         for role, name, label in [("observer", "ann", "ann"), ("observer", "ben", "ben"), ("reader", "rita", "rita")]:

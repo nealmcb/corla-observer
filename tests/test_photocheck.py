@@ -135,6 +135,11 @@ def test_commitments_and_proofs(ws: Workspace) -> None:
         assert [c.version for c in later] == [1, 2] and later[1].covers == ("extract",) and later[1].ots == "pending"
         assert later[1].rekor_log_index is None and later[1].sigstore == "skipped"
         assert commitments(ws, log, {"extract": "f" * 64}) == []
+        # Committed (with no git commit), then published: the published commit, pushed, its proof complete.
+        sums = commit_evidence_record(ws, log, {"derived/extract-Weld.json": record.sha256}, version=3, publish_commit="c" * 40, bitcoin_at_publish=921300)
+        third = commitments(ws, log, wanted)[2]
+        assert (third.commit, third.pushed, third.ots, third.bitcoin_block, third.sigstore) == ("c" * 40, True, "bitcoin", 921300, "done")
+        assert third.sums_sha256 == sums
 
 
 def test_bitcoin_block_heights() -> None:

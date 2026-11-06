@@ -175,12 +175,12 @@ Before the first ballot is read, commit to the evidence. For the demo, into a lo
 
 ```
 git init ~/demo/testland/evidence-repo
-uv run corla-observer commit-evidence --workspace ~/demo/testland/ws --election 2026/general --out-repo ~/demo/testland/evidence-repo --actor coordinator:alice --no-ots --no-cosign --no-push
+uv run corla-observer commit-evidence --workspace ~/demo/testland/ws --election 2026/general --out-repo ~/demo/testland/evidence-repo --actor coordinator:alice --no-ots --no-cosign
 ```
 
-You should see `2026/general/observerfiles/SHA256SUMS.txt: version 1, 0 files`, the event log's head, `git_commit: DONE`, and `opentimestamps`, `sigstore` and `push` each `SKIPPED`. It lists no files because a test county's files and extracts are never part of a commitment; in a real audit it lists every file of the evidence, the counties' extracts among them.
+You should see `2026/general/observerfiles/SHA256SUMS-v1-<time>Z.txt: version 1, 0 files` (the time it was written, in UTC), the event log's head, and `opentimestamps` and `sigstore` each `SKIPPED`. It lists no files because a test county's files and extracts are never part of a commitment; in a real audit it lists every file of the evidence, the counties' extracts among them.
 
-The real run leaves out `--no-ots --no-cosign --no-push`: the SHA256SUMS file is stamped with OpenTimestamps (a Bitcoin timestamp), signed with Sigstore, and pushed to the public mirror, with the project lead's approval for the public services (docs/TIMESTAMPING.md, docs/RUNBOOK-2026-GENERAL.md).
+The real run leaves out `--no-ots --no-cosign`: the SHA256SUMS file is stamped with OpenTimestamps (a Bitcoin timestamp) and signed with Sigstore, and once the Bitcoin timestamp is confirmed, `publish-evidence` publishes it to the public mirror, with the project lead's approval for the public services (docs/TIMESTAMPING.md, docs/RUNBOOK-2026-GENERAL.md).
 
 Narration: "Before the audit starts, we publish a fingerprint of all the evidence, so nothing can be changed afterwards without it showing."
 

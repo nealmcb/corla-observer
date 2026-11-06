@@ -1,7 +1,7 @@
 """Timestamping the evidence: versioned SHA256SUMS files, OpenTimestamps proofs and Sigstore signatures.
 
-This automates the July 2026 procedure (see docs/TIMESTAMPING.md) as one
-command, `commit_evidence`:
+This automates the July 2026 procedure (see docs/TIMESTAMPING.md) in two
+commands. `commit_evidence` makes the commitment:
 
 1. **Collect** the evidence set from the workspace: every file the data map
    uses (fetched audit center files, county uploads, files supplied by an
@@ -18,20 +18,26 @@ command, `commit_evidence`:
    repository: one ``<sha256>  <path>`` line per file in sorted path order,
    after a ``#`` header giving the election, the time (UTC), the event log's
    head (sequence number and hash, which commits to the whole log) and the
-   software version. A version number that exists, or ever existed in the
-   repository's history, is never used again, and the file is created
-   exclusively, so nothing is overwritten.
+   software version. A version number that exists, that ever existed in the
+   repository's history, or that the event log records, is never used
+   again, and the file is created exclusively, so nothing is overwritten.
 3. **Stamp** it with OpenTimestamps (``ots stamp``), if the ``ots`` command
    is installed, producing ``<sums>.ots``. The proof is pending until a
-   calendar's Bitcoin transaction confirms; `upgrade_proofs` fetches the
-   completed proof later.
+   calendar's Bitcoin transaction confirms.
 4. **Sign** it with Sigstore (``cosign sign-blob --bundle``), if ``cosign``
    is installed, producing ``<sums>.cosign-bundle``: keyless (an OIDC
    identity, recorded in the public Rekor log) unless a key file is given.
-5. **Commit** the SUMS file and its proofs (and, only if asked, copies of
-   the evidence files themselves) to the output repository, and push if it
-   has a remote and pushing was not turned off.
-6. **Record** an ``evidence.committed`` event.
+5. **Copy**, only if asked, the evidence files themselves next to it.
+6. **Record** an ``evidence.committed`` event: what is fixed from that
+   moment on (the SUMS file's hash, its proofs, the log head), and no git
+   commit, since none is final yet.
+
+`publish_evidence` publishes it, once, when the proof is complete: it
+completes the OpenTimestamps proof (``ots upgrade``), makes one commit in
+the output repository holding the SUMS file, its proofs and any copied
+files, pushes it, and only then records an ``evidence.published`` event
+naming that commit, which is never rewritten. So the event log names only
+commits that are public and final.
 
 Each step's outcome (done, pending, skipped because the tool is missing or
 was turned off, or failed with the tool's output) is returned and recorded;
@@ -48,11 +54,20 @@ Events written here (``data`` always JSON; ``file_sha256`` is the SUMS file's):
     ``files`` (how many), ``included_files`` (how many copied), ``log_head_seq``
     and ``log_head_hash`` (as written in the SUMS header), ``software``,
     ``steps`` (each step's ``status`` and ``detail``), ``proofs`` (the proof
-    file names made), ``rekor_log_index`` (or null), ``commit`` (the output
-    repository's commit hash) and ``pushed``.
+    file names made), ``included`` (the copied files, relative to
+    ``subdir``) and ``rekor_log_index`` (or null). (Events written before
+    publishing was a step of its own also have ``commit`` and ``pushed``.)
 ``evidence.commit_failed``
     ``sums_name``, ``sums_sha256``, ``version``, ``error``: the SUMS file was
-    written but could not be committed.
+    written but stamping, signing or copying failed.
+``evidence.published``
+    ``sums_name``, ``sums_sha256``, ``committed_in_event`` (the
+    ``evidence.committed`` event's number), ``repository`` (the remote's
+    address), ``branch``, ``commit`` (pushed), ``files`` (paths within the
+    repository), ``opentimestamps`` (``complete, Bitcoin block N``, or
+    ``pending``), ``rekor_log_index``, and ``replaces_unpublished_commits``:
+    any commit an earlier ``evidence.committed`` named that was never
+    published.
 ``evidence.proofs_upgraded``
     ``upgraded`` and ``still_pending`` (proof file paths within the output
     repository), ``skipped`` (why, if ``ots`` was not run), ``commit`` and
@@ -72,7 +87,8 @@ import re
 import shutil
 import subprocess
 import threading
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
+from typing import Any
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
@@ -474,6 +490,17 @@ def _push_step(repo: Path, push: bool, echo: Echo | None) -> Step:
     return Step("push", "skipped" if "no remote" in detail else "failed", detail)
 
 
+def logged_versions(log: EventLog, subdir: str) -> set[int]:
+    """Every SUMS version the event log records as committed (or failed) in ``subdir``, published or not."""
+    found: set[int] = set()
+    for event in log.iter_events():
+        if event.kind in ("evidence.committed", "evidence.commit_failed") and event.data.get("subdir") == subdir:
+            version = event.data.get("version")
+            if type(version) is int:
+                found.add(version)
+    return found
+
+
 def existing_versions(repo: Path, subdir: str) -> set[int]:
     """Every SUMS version in the directory now, or ever added there in the repository's history."""
     found: set[int] = set()
@@ -523,8 +550,6 @@ class CommitResult:
     steps: list[Step]
     proofs: list[str]
     included: list[str]
-    commit: str
-    pushed: bool
     event_seq: int
     rekor_log_index: int | None = None
 
@@ -626,21 +651,19 @@ def commit_evidence(
     out_repo: Path,
     subdir: str | None = None,
     actor: str = "system",
-    push: bool = True,
     include_files: bool = False,
     ots: bool = True,
     cosign: CosignOptions | None = None,
     timeout: float = DEFAULT_TOOL_TIMEOUT,
     clock: Callable[[], datetime] | None = None,
     echo: Echo | None = None,
-    title: str | None = None,
 ) -> CommitResult:
-    """Collect, write, stamp, sign, commit and record a new evidence version; see the module documentation.
+    """Collect, write, stamp, sign and record a new evidence version, to publish later; see the module documentation.
 
     Raises:
         TimestampError: if the evidence cannot be collected or the SUMS file
-            cannot be written or committed (a SUMS file written but not
-            committed is recorded as ``evidence.commit_failed``).
+            cannot be written (a SUMS file written whose stamping, signing or
+            copying then failed is recorded as ``evidence.commit_failed``).
     """
     check_actor(actor)
     check_election(election)
@@ -648,7 +671,6 @@ def commit_evidence(
     cosign = cosign or CosignOptions()
     out_repo = Path(out_repo)
     _check_repo(out_repo)
-    title = check_title(title)
     datamap = build_map(log, workspace)
     if datamap.election is not None and datamap.election != election:
         raise TimestampError(f"the data map's election is {datamap.election}, not {election}")
@@ -659,7 +681,7 @@ def commit_evidence(
     if include_files:
         _avoid_collisions(evidence, target)
 
-    used = existing_versions(out_repo, subdir)
+    used = existing_versions(out_repo, subdir) | logged_versions(log, subdir)
     version = max(used, default=0) + 1
     moment = (clock or (lambda: datetime.now(UTC)))().replace(microsecond=0)
     name = sums_name(version, moment)
@@ -697,11 +719,6 @@ def commit_evidence(
             if withheld:
                 detail += f"; withheld (no passing redaction check on record): {', '.join(withheld)}"
             steps.append(Step("include_files", "done", detail))
-        rel = [f"{subdir}/{p}" if subdir else p for p in [name, *proofs, *included]]
-        signer = bundle_identity(target / f"{name}{COSIGN_SUFFIX}") if any(p.endswith(COSIGN_SUFFIX) for p in proofs) else None
-        message = _commit_message(election, name, evidence, steps, included, title=title, signer=signer)
-        commit = _commit(out_repo, rel, message)
-        steps.append(Step("git_commit", "done", commit))
     except BaseException as exc:
         log.append(
             "evidence.commit_failed",
@@ -711,9 +728,6 @@ def commit_evidence(
         )
         raise
 
-    push_step = _push_step(out_repo, push, echo)
-    steps.append(push_step)
-    pushed = push_step.status == "done"
     event = log.append(
         "evidence.committed",
         actor,
@@ -731,9 +745,8 @@ def commit_evidence(
             "software": evidence.software,
             "steps": [s.to_dict() for s in steps],
             "proofs": list(proofs),
+            "included": list(included),
             "rekor_log_index": rekor_index,
-            "commit": commit,
-            "pushed": pushed,
         },
     )
     return CommitResult(
@@ -746,8 +759,6 @@ def commit_evidence(
         steps=steps,
         proofs=proofs,
         included=included,
-        commit=commit,
-        pushed=pushed,
         event_seq=event.seq,
         rekor_log_index=rekor_index,
     )
@@ -803,25 +814,184 @@ def verify_command(name: str, signer: tuple[str, str]) -> str:
             f"--certificate-oidc-issuer {signer[1]} {name}")  # fmt: skip
 
 
-def _commit_message(
-    election: str, name: str, evidence: EvidenceSet, steps: Sequence[Step], included: Sequence[str],
-    *, title: str | None = None, signer: tuple[str, str] | None = None,
-) -> str:  # fmt: skip
-    """The commit's message: ``title`` (or a default headline), then the SUMS file, the log head, the software and each step."""
-    seq, head = evidence.log_head
-    default = f"Observer evidence for {election}: {name} ({len(evidence.files)} files)"
+def _publish_message(
+    name: str, data: Mapping[str, Any], event_seq: int, *, title: str | None, ots_status: str, signer: tuple[str, str] | None
+) -> str:
+    """The published commit's message: ``title`` (or a default headline), then what it holds and how to check it."""
+    default = f"Observer evidence for {data.get('election')}: {name} ({data.get('files')} files)"
     lines = [title or default, ""]
     if title:
-        lines.append(f"{name}: {len(evidence.files)} files.")
-    lines += [f"Event log head: {seq} {head}", f"Software: {evidence.software}"]
-    for step in steps:
-        lines.append(f"{step.name}: {step.status} ({step.detail})")
+        lines.append(f"{name}: {data.get('files')} files.")
+    lines += [
+        f"Event log head: {data.get('log_head_seq')} {data.get('log_head_hash')}",
+        f"Software: {data.get('software')}",
+        f"OpenTimestamps: {ots_status}",
+    ]
     if signer is not None:
-        lines += [f"Signed keyless by {signer[0]} (issuer {signer[1]}). Check with:", verify_command(name, signer)]
-    if included:
-        lines.append(f"Includes copies of {len(included)} evidence files.")
-    lines.extend(f"Note: {note}" for note in evidence.notes)
+        lines += [f"Signed keyless by {signer[0]} (issuer {signer[1]}), Rekor log index {data.get('rekor_log_index')}. Check with:",
+                  verify_command(name, signer)]  # fmt: skip
+    elif data.get("rekor_log_index") is not None:
+        lines.append(f"Signed with Sigstore, Rekor log index {data.get('rekor_log_index')}.")
+    if data.get("included"):
+        lines.append(f"Includes copies of {len(data['included'])} evidence files.")
+    lines.append(f"Recorded in the observers' event log as event {event_seq}.")
     return "\n".join(lines) + "\n"
+
+
+# ---------------------------------------------------------------------------
+# Publishing
+
+
+@dataclass
+class PublishResult:
+    sums_name: str
+    sums_sha256: str
+    files: list[str]
+    message: str
+    opentimestamps: str
+    commit: str | None
+    event_seq: int | None
+    replaces: list[str]
+
+
+def _complete_proof(path: Path, *, timeout: float, echo: Echo | None) -> tuple[bool, int | None]:
+    """Try to complete an OpenTimestamps proof in place (``ots upgrade``); whether it is complete, and its Bitcoin block."""
+    if not proof_is_complete(path.read_bytes()):
+        ots = shutil.which("ots")
+        if ots is None:
+            raise TimestampError("the ots command (opentimestamps-client) is not installed")
+        before = path.read_bytes()
+        backup = path.with_name(path.name + ".bak")
+        had_backup = backup.exists()
+        run_tool([ots, "upgrade", path.name], cwd=path.parent, timeout=timeout, echo=echo)
+        if not had_backup:
+            backup.unlink(missing_ok=True)
+        if not path.is_file():  # never leave the proof missing
+            path.write_bytes(before)
+    data = path.read_bytes()
+    if not proof_is_complete(data):
+        return False, None
+    heights = bitcoin_block_heights(data)
+    return True, (min(heights) if heights else None)
+
+
+def _remote_address(repo: Path) -> str:
+    """The remote's address, without any credentials in it."""
+    remotes = _git(repo, "remote").stdout.split()
+    if not remotes:
+        raise TimestampError("the repository has no remote to publish to")
+    url = _git(repo, "remote", "get-url", "origin" if "origin" in remotes else remotes[0]).stdout.strip()
+    return re.sub(r"^(https?://)[^/@]+@", r"\1", url)
+
+
+def unpublished(log: EventLog) -> list[Any]:
+    """The ``evidence.committed`` events whose SUMS file no ``evidence.published`` event names, oldest first."""
+    committed: list[Any] = []
+    published: set[str] = set()
+    for event in log.iter_events():
+        if event.kind == "evidence.committed":
+            committed.append(event)
+        elif event.kind == "evidence.published":
+            published.add(str(event.data.get("sums_sha256")))
+    return [e for e in committed if e.data.get("sums_sha256") not in published]
+
+
+def publish_evidence(
+    log: EventLog,
+    *,
+    out_repo: Path,
+    sums_name: str | None = None,
+    actor: str = "system",
+    title: str | None = None,
+    allow_pending: bool = False,
+    dry_run: bool = False,
+    timeout: float = DEFAULT_TOOL_TIMEOUT,
+    echo: Echo | None = None,
+) -> PublishResult:
+    """Publish a commitment: complete its proof, make one commit holding it, push it, and record ``evidence.published``.
+
+    The commitment is the oldest one the log records and no ``evidence.published`` names (or the
+    one named ``sums_name``); its SUMS file must be in ``out_repo`` with the hash the log records.
+    The OpenTimestamps proof must be complete (a Bitcoin attestation) unless ``allow_pending``.
+    ``dry_run`` completes the proof if it can and returns the commit message and files, pending or
+    not, but commits, pushes and records nothing. The commit is made on the repository's current branch; the event
+    is recorded only once the push has succeeded, so the log names only a commit that is public.
+    If the last commit already holds exactly these files and has not been pushed (a push that
+    failed), it is pushed as it is.
+
+    Raises:
+        TimestampError: if there is nothing to publish, the SUMS file is missing or differs, the
+            proof is still pending, or the push fails.
+    """
+    check_actor(actor)
+    title = check_title(title)
+    out_repo = Path(out_repo)
+    _check_repo(out_repo)
+    waiting = unpublished(log)
+    if sums_name is not None:
+        waiting = [e for e in waiting if e.data.get("sums_name") == sums_name]
+    if not waiting:
+        raise TimestampError("no commitment waiting to be published" + (f" named {sums_name}" if sums_name else ""))
+    event = waiting[0]
+    data = event.data
+    name, subdir = str(data["sums_name"]), str(data.get("subdir") or "")
+    target = out_repo / subdir if subdir else out_repo
+    sums_path = target / name
+    if not sums_path.is_file():
+        raise TimestampError(f"{subdir}/{name} is not in the repository's working tree")
+    if hashlib.sha256(sums_path.read_bytes()).hexdigest() != data["sums_sha256"]:
+        raise TimestampError(f"{subdir}/{name} differs from the SUMS file the log records (event {event.seq})")
+
+    names = [name] + [p for p in data.get("proofs") or [] if (target / p).is_file()] + list(data.get("included") or [])
+    files = [f"{subdir}/{n}" if subdir else n for n in names]
+    ots_path = target / f"{name}{OTS_SUFFIX}"
+    if ots_path.is_file():
+        complete, block = _complete_proof(ots_path, timeout=timeout, echo=echo)
+        ots_status = (f"complete, Bitcoin block {block}" if block else "complete") if complete else "pending"
+        if not complete and not allow_pending and not dry_run:
+            raise TimestampError(f"{name}'s OpenTimestamps proof is still pending Bitcoin confirmation; publish later, or with --allow-pending")
+    else:
+        ots_status = "none"
+    bundle = target / f"{name}{COSIGN_SUFFIX}"
+    signer = bundle_identity(bundle) if bundle.is_file() else None
+    message = _publish_message(name, data, event.seq, title=title, ots_status=ots_status, signer=signer)
+    earlier = data.get("commit")
+    if dry_run:
+        return PublishResult(name, str(data["sums_sha256"]), files, message, ots_status, None, None, [])
+
+    head = _git(out_repo, "rev-parse", "HEAD").stdout.strip()
+    changed = _git(out_repo, "status", "--porcelain", "--untracked-files=all", "--", *files).stdout.strip()
+    in_head = set(_git(out_repo, "show", "--name-only", "--format=", "HEAD").stdout.split())
+    retry = not changed and set(files) <= in_head and not _git(out_repo, "branch", "-r", "--contains", head).stdout.strip()
+    if not retry:
+        if not changed:
+            raise TimestampError(f"{subdir}/{name} and its proofs are already committed; nothing to publish")
+        _git(out_repo, "add", "--", *files)
+        _git(out_repo, "commit", "--quiet", "-m", message, "--", *files)
+    commit = _git(out_repo, "rev-parse", "HEAD").stdout.strip()
+    pushed, detail = _push(out_repo, echo)
+    if not pushed:
+        raise TimestampError(f"committed {commit[:12]} but did not publish it ({detail}); nothing recorded. Fix that and run this again.")
+    branch = _git(out_repo, "rev-parse", "--abbrev-ref", "HEAD").stdout.strip()
+    replaces = [str(earlier)] if isinstance(earlier, str) and earlier and earlier != commit else []
+    published = log.append(
+        "evidence.published",
+        actor,
+        file_sha256=str(data["sums_sha256"]),
+        data={
+            "sums_name": name,
+            "sums_sha256": data["sums_sha256"],
+            "committed_in_event": event.seq,
+            "repository": _remote_address(out_repo),
+            "branch": branch,
+            "commit": commit,
+            "files": files,
+            "opentimestamps": ots_status,
+            "rekor_log_index": data.get("rekor_log_index"),
+            "replaces_unpublished_commits": replaces,
+        },
+    )
+    return PublishResult(name, str(data["sums_sha256"]), files, message, ots_status, commit, published.seq, replaces)
 
 
 # ---------------------------------------------------------------------------
@@ -883,35 +1053,17 @@ def upgrade_proofs(
     include_complete: bool = False,
     timeout: float = DEFAULT_TOOL_TIMEOUT,
     echo: Echo | None = None,
-    amend: bool = False,
-    title: str | None = None,
 ) -> UpgradeResult:
     """Run ``ots upgrade`` on the repository's pending ``.ots`` files, commit the upgraded ones and record an event.
 
-    With ``amend``, the proofs considered are only those of the last commit, which must not have
-    been pushed (no remote branch holds it): the upgraded proofs are folded into it, its message's
-    OpenTimestamps line says the proof is complete and in which Bitcoin block, and its headline is
-    ``title`` if given. The event records the commit it replaced (``amended``) and the new one, so
-    that the log names the commit that is published. One commit per commitment, holding the SUMS
-    file, its signature and its complete proof.
+    For proofs already committed (as for the July 2026 primary); a commitment published with
+    `publish_evidence` is published with its proof complete.
     """
     check_actor(actor)
     out_repo = Path(out_repo)
     _check_repo(out_repo)
-    title = check_title(title)
-    if title and not amend:
-        raise TimestampError("--title applies only with --amend")
     scope = check_subdir(subdir) if subdir else "."
     tracked = [p for p in _git(out_repo, "ls-files", "-z", "--", scope).stdout.split("\0") if p.endswith(OTS_SUFFIX)]
-    replaced: str | None = None
-    if amend:
-        replaced = _git(out_repo, "rev-parse", "HEAD").stdout.strip()
-        if _git(out_repo, "branch", "-r", "--contains", replaced).stdout.strip():
-            raise TimestampError(f"the last commit, {replaced[:12]}, has been pushed: it is never amended")
-        in_last = set(_git(out_repo, "show", "--name-only", "--format=", "HEAD").stdout.split())
-        tracked = [p for p in tracked if p in in_last]
-        if not tracked:
-            raise TimestampError("the last commit holds no OpenTimestamps proof to fold an upgrade into")
     upgraded: list[str] = []
     pending: list[str] = []
     complete: list[str] = []
@@ -953,25 +1105,7 @@ def upgrade_proofs(
             pending.append(rel)
     commit: str | None = None
     steps: list[Step] = []
-    done = [p for p in upgraded if p not in pending]
-    if amend and done:
-        old = _git(out_repo, "log", "-1", "--format=%B").stdout.rstrip("\n").split("\n")
-        block = ", ".join(f"Bitcoin block {blocks[p]}" if blocks.get(p) else "a Bitcoin block" for p in done)
-        body = [f"opentimestamps: complete ({block})" if line.startswith("opentimestamps:") else line for line in old[1:]]
-        if not any(line.startswith("Signed keyless by ") for line in body):
-            for rel in done:  # a commit made before the signer lines were added: add them from the certificate
-                sums = rel.removesuffix(OTS_SUFFIX)
-                signer = bundle_identity(out_repo / f"{sums}{COSIGN_SUFFIX}")
-                if signer is not None:
-                    name = PurePosixPath(sums).name
-                    body += [f"Signed keyless by {signer[0]} (issuer {signer[1]}). Check with:", verify_command(name, signer)]
-        message = "\n".join([title or old[0], *body]) + "\n"
-        # Only the upgraded proofs are folded in, whatever else may be staged.
-        _git(out_repo, "commit", "--quiet", "--amend", "-m", message, "--", *done)
-        commit = _git(out_repo, "rev-parse", "HEAD").stdout.strip()
-        steps.append(Step("git_commit", "done", f"{commit} (amended {replaced})"))
-        steps.append(_push_step(out_repo, push, echo))
-    elif upgraded and not amend:
+    if upgraded:
         message = f"Upgrade {len(upgraded)} OpenTimestamps proof(s)\n\n" + "\n".join(upgraded) + "\n"
         commit = _commit(out_repo, upgraded, message)
         steps.append(Step("git_commit", "done", commit))
@@ -988,7 +1122,6 @@ def upgrade_proofs(
             "commit": commit,
             "pushed": pushed,
             "bitcoin_blocks": dict(blocks),
-            **({"amended": replaced} if amend and commit else {}),
         },
     )
     return UpgradeResult(upgraded, pending, complete, failed, skipped, commit, pushed, event.seq, steps)

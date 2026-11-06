@@ -30,9 +30,9 @@ from corla_observer.timestamp import (
     commit_evidence,
     fetched_path,
     parse_sums,
+    publish_evidence,
     sums_name,
     sums_version,
-    upgrade_proofs,
     verify_evidence,
 )
 from corla_observer.uploads import receive
@@ -219,48 +219,47 @@ def test_collect_evidence(ws: Workspace, log: EventLog, no_tools: Path) -> None:
 
 def test_skip_path_without_tools(ws: Workspace, log: EventLog, out_repo: Path, no_tools: Path) -> None:
     head = log.head()
+    before = git(out_repo, "rev-parse", "HEAD").strip()
     result = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR, clock=lambda: NOW)
     assert result.sums_name == "SHA256SUMS-v1-20261116T160000Z.txt" and result.version == 1
     status = {s.name: s.status for s in result.steps}
-    assert status == {"opentimestamps": "skipped", "sigstore": "skipped", "git_commit": "done", "push": "skipped"}
+    assert status == {"opentimestamps": "skipped", "sigstore": "skipped"}
     assert "not installed" in next(s.detail for s in result.steps if s.name == "opentimestamps")
-    assert result.proofs == [] and not result.pushed and not result.failed
+    assert result.proofs == [] and not result.failed
     sums = (out_repo / SUBDIR / result.sums_name).read_bytes()
     parsed = parse_sums(sums.decode())
     assert parsed.header["event-log-head"] == f"{head[0]} {head[1]}"
     assert parsed.header["time"] == "2026-11-16T16:00:00Z"
     assert parsed.header["version"] == "1"
+    assert parsed.header["check"] == f"sha256sum --check --ignore-missing {result.sums_name}"
     assert [p for _, p in parsed.entries] == sorted(p for _, p in parsed.entries)
     assert not parsed.malformed
-    assert git(out_repo, "rev-parse", "HEAD").strip() == result.commit
-    assert git(out_repo, "show", "--name-only", "--format=", "HEAD").split() == [f"{SUBDIR}/{result.sums_name}"]
-    assert parsed.header["check"] == f"sha256sum --check --ignore-missing {result.sums_name}"
-    assert "opentimestamps: skipped" in git(out_repo, "log", "-1", "--format=%B")
+    # Nothing is committed: the SUMS file waits in the working tree, to be published.
+    assert git(out_repo, "rev-parse", "HEAD").strip() == before
+    assert git(out_repo, "status", "--porcelain", "--untracked-files=all").split() == ["??", f"{SUBDIR}/{result.sums_name}"]
     [event] = events(log, "evidence.committed")
-    assert event["sums_sha256"] == sha(sums) and event["commit"] == result.commit
+    assert event["sums_sha256"] == sha(sums) and "commit" not in event and "pushed" not in event
     assert event["log_head_seq"] == head[0] and event["log_head_hash"] == head[1]
-    assert event["version"] == 1 and event["proofs"] == [] and event["pushed"] is False
+    assert event["version"] == 1 and event["proofs"] == [] and event["included"] == []
     assert ws.has(sha(sums))
     # No local paths anywhere in what is published or recorded.
-    message = git(out_repo, "log", "-1", "--format=%B")
-    for text in (sums.decode(), message, json.dumps(event)):
+    for text in (sums.decode(), json.dumps(event)):
         assert str(out_repo.parent) not in text
 
 
 def test_stamped_signed_and_versioned(ws: Workspace, log: EventLog, out_repo: Path, fake_tools: Path) -> None:
-    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR, push=False)
+    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR)
     status = {s.name: s.status for s in first.steps}
     assert status["opentimestamps"] == "pending" and status["sigstore"] == "done"
     assert first.rekor_log_index == 4242
     one = first.sums_name
     assert one.startswith("SHA256SUMS-v1-") and first.proofs == [f"{one}.ots", f"{one}.cosign-bundle"]
-    committed = set(git(out_repo, "show", "--name-only", "--format=", "HEAD").split())
-    assert committed == {f"{SUBDIR}/{n}" for n in (one, *first.proofs)}
+    assert all((out_repo / SUBDIR / n).is_file() for n in (one, *first.proofs))
     v1 = (out_repo / SUBDIR / one).read_bytes()
     assert '"key":"keyless"' in (out_repo / SUBDIR / f"{one}.cosign-bundle").read_text()
 
     second = commit_evidence(
-        ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR, push=False, cosign=CosignOptions(key=out_repo / "k.key")
+        ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR, cosign=CosignOptions(key=out_repo / "k.key")
     )
     two = second.sums_name
     assert two.startswith("SHA256SUMS-v2-") and second.version == 2
@@ -276,16 +275,17 @@ def events_seq(log: EventLog, kind: str) -> list[int]:
 
 
 def test_versions_never_reused(ws: Workspace, log: EventLog, out_repo: Path, no_tools: Path) -> None:
-    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False)
-    git(out_repo, "rm", "--quiet", f"{SUBDIR}/{first.sums_name}")
-    git(out_repo, "commit", "--quiet", "-m", "remove")
-    again = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False)
+    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo)
+    (out_repo / SUBDIR / first.sums_name).unlink()  # never published, and gone: the log still has it
+    again = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo)
     assert again.version == 2 and again.sums_name.startswith("SHA256SUMS-v2-")
     # A version used under the earlier names counts too (SHA256SUMS.v3.txt, as for the July 2026 primary).
     (out_repo / SUBDIR / "SHA256SUMS.v3.txt").write_text("# version: 3\n")
-    git(out_repo, "add", ".")
+    git(out_repo, "add", f"{SUBDIR}/SHA256SUMS.v3.txt")
     git(out_repo, "commit", "--quiet", "-m", "earlier name")
-    assert commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False).version == 4
+    (out_repo / SUBDIR / "SHA256SUMS.v3.txt").unlink()
+    git(out_repo, "commit", "--quiet", "-am", "removed, but in the history")
+    assert commit_evidence(ws, log, election=ELECTION, out_repo=out_repo).version == 4
 
 
 def test_failed_signing_is_reported(
@@ -295,33 +295,44 @@ def test_failed_signing_is_reported(
     runner = CliRunner()
     result = runner.invoke(
         app,
-        ["commit-evidence", "--workspace", str(ws.root), "--election", ELECTION, "--out-repo", str(out_repo), "--no-push"],
+        ["commit-evidence", "--workspace", str(ws.root), "--election", ELECTION, "--out-repo", str(out_repo)],
     )
     assert result.exit_code == 1, result.output
     assert "sigstore: FAILED" in result.output and "no OIDC token" in result.output
     assert "opentimestamps: PENDING" in result.output
     [event] = events(log, "evidence.committed")
-    name = event["sums_name"] if "sums_name" in event else next((out_repo / SUBDIR).glob("SHA256SUMS-v1-*.txt")).name
+    name = str(event["sums_name"])
     assert not (out_repo / SUBDIR / f"{name}.cosign-bundle").exists()
     assert event["proofs"] == [f"{name}.ots"]
 
 
-def test_cli_skip_path_and_push(ws: Workspace, out_repo: Path, tmp_path: Path, no_tools: Path) -> None:
-    remote = tmp_path / "remote.git"
-    subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
+def _remote(out_repo: Path, ref: str = "main") -> Path:
+    """A bare remote for the repository, holding ``ref`` as its main."""
+    remote = out_repo.parent / "remote.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", str(remote)], check=True)
     git(out_repo, "remote", "add", "origin", str(remote))
+    git(out_repo, "push", "--quiet", "origin", f"{ref}:refs/heads/main")
+    return remote
+
+
+def test_cli_commit_then_publish(ws: Workspace, out_repo: Path, tmp_path: Path, no_tools: Path) -> None:
+    remote = _remote(out_repo)
     runner = CliRunner()
     args = ["commit-evidence", "--workspace", str(ws.root), "--election", ELECTION, "--out-repo", str(out_repo)]
     result = runner.invoke(app, [*args, "--subdir", "observerfiles/test", "--actor", ACTOR])
     assert result.exit_code == 0, result.output
-    assert "opentimestamps: SKIPPED" in result.output and "sigstore: SKIPPED" in result.output
-    assert "(pushed)" in result.output
-    head = git(out_repo, "rev-parse", "HEAD").strip()
-    assert git(remote, "rev-parse", "main").strip() == head
-    result = runner.invoke(app, [*args, "--subdir", "observerfiles/test", "--no-push"])
-    assert result.exit_code == 0 and "(not pushed)" in result.output
-    assert len(list((out_repo / "observerfiles/test").glob("SHA256SUMS-v2-*Z.txt"))) == 1
-    assert git(remote, "rev-parse", "main").strip() == head
+    assert "opentimestamps: SKIPPED" in result.output and "sigstore: SKIPPED" in result.output and "publish-evidence" in result.output
+    start = git(remote, "rev-parse", "main").strip()
+    publish = ["publish-evidence", "--out-repo", str(out_repo), "--workspace", str(ws.root), "--title", "A clear headline"]
+    shown = runner.invoke(app, [*publish, "--dry-run"])
+    assert shown.exit_code == 0 and "dry run" in shown.output and "| A clear headline" in shown.output, shown.output
+    assert git(remote, "rev-parse", "main").strip() == start
+    done = runner.invoke(app, publish)
+    assert done.exit_code == 0 and "published as commit" in done.output, done.output
+    assert git(remote, "rev-parse", "main").strip() == git(out_repo, "rev-parse", "HEAD").strip() != start
+    assert git(out_repo, "log", "-1", "--format=%s").strip() == "A clear headline"
+    again = runner.invoke(app, publish)
+    assert again.exit_code == 2 and "no commitment waiting" in again.output
 
 
 def test_bad_arguments(ws: Workspace, log: EventLog, out_repo: Path, tmp_path: Path, no_tools: Path) -> None:
@@ -343,15 +354,14 @@ def test_include_files_and_verify(ws: Workspace, log: EventLog, out_repo: Path, 
         "file.received", ACTOR, county="Weld", file_sha256=unchecked.sha256,
         data={"kind": "redacted_cvr", "original_name": "weld.csv", "sha256": unchecked.sha256, "size": unchecked.size},
     )
-    result = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False, include_files=True)
+    result = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include_files=True)
     target = out_repo / SUBDIR
     withheld = [f for f in result.evidence.files if not f.publishable]
     assert [f.sha256 for f in withheld] == [unchecked.sha256]
     assert not (target / withheld[0].path).exists()
     assert len(result.included) == len(result.evidence.files) - 1
-    committed = git(out_repo, "show", "--name-only", "--format=", "HEAD").split()
-    assert f"{SUBDIR}/{withheld[0].path}" not in committed
-    assert any(p.endswith("Boulder_manifest.csv") for p in committed)
+    assert not any(withheld[0].path == p for p in result.included)
+    assert any(p.endswith("Boulder_manifest.csv") for p in result.included)
 
     name = result.sums_name
     sums = target / name
@@ -372,16 +382,24 @@ def test_include_files_and_verify(ws: Workspace, log: EventLog, out_repo: Path, 
     assert out.exit_code == 1 and "MISMATCH" in out.output, out.output
     assert "1 differ" in out.output
 
-    upgraded = upgrade_proofs(log, out_repo=out_repo, push=False)
-    assert upgraded.upgraded == [f"{SUBDIR}/{name}.ots"] and upgraded.commit
+    manifest.write_bytes(MANIFEST)
+    # Published: the proof completed, one commit holding the SUMS file, its proofs and the copied files.
+    _remote(out_repo)
+    published = publish_evidence(log, out_repo=out_repo, actor=ACTOR)
+    assert published.opentimestamps == "complete" and published.commit
     assert not (target / f"{name}.ots.bak").exists()
     assert OTS_BITCOIN_TAG in (target / f"{name}.ots").read_bytes()
     assert {c.subject: c.status for c in verify_evidence(sums).checks}[f"{name}.ots"] == "ok"
+    committed = set(git(out_repo, "show", "--name-only", "--format=", "HEAD").split())
+    assert committed == {f"{SUBDIR}/{p}" for p in (name, f"{name}.ots", f"{name}.cosign-bundle", *result.included)}
+    assert f"{SUBDIR}/{withheld[0].path}" not in committed
 
 
 def test_upgrade_proofs_cli(ws: Workspace, log: EventLog, out_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _bin(tmp_path, monkeypatch, ots=True, cosign=False)
-    name = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False).sums_name
+    name = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo).sums_name
+    git(out_repo, "add", SUBDIR)  # committed with its pending proof, as in July 2026
+    git(out_repo, "commit", "--quiet", "-m", "evidence")
     runner = CliRunner()
     args = ["upgrade-proofs", "--out-repo", str(out_repo), "--workspace", str(ws.root), "--no-push"]
     result = runner.invoke(app, args)
@@ -402,7 +420,7 @@ def test_upgrade_proofs_cli(ws: Workspace, log: EventLog, out_repo: Path, tmp_pa
 
 def test_verify_without_tools(ws: Workspace, log: EventLog, out_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     _bin(tmp_path, monkeypatch, ots=True, cosign=True)
-    result = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False)
+    result = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo)
     _bin(tmp_path, monkeypatch, ots=False, cosign=False)
     sums = out_repo / SUBDIR / result.sums_name
     report = verify_evidence(sums)
@@ -473,53 +491,80 @@ def test_keyless_signing_uses_the_device_flow(tmp_path: Path, monkeypatch: pytes
     assert seen == [False, True]
 
 
-def test_title_and_one_commit_per_commitment(ws: Workspace, log: EventLog, out_repo: Path, fake_tools: Path) -> None:
-    """``--title`` heads the commit; ``upgrade-proofs --amend`` folds the completed proof into it, and the log names the commit that results."""
+def test_published_once_as_one_commit(ws: Workspace, log: EventLog, out_repo: Path, fake_tools: Path) -> None:
+    """``publish_evidence``: the proof completed, one commit with the title and the signer, pushed, then ``evidence.published``."""
     title = "2026 General: Auditcenter risk limit with digital timestamp"
-    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR, push=False, title=title)
-    message = git(out_repo, "log", "-1", "--format=%B")
-    assert message.splitlines()[0] == title and f"{first.sums_name}: " in message
-    assert "opentimestamps: pending" in message
-    with pytest.raises(TimestampError, match="only with --amend"):
-        upgrade_proofs(log, out_repo=out_repo, push=False, title="x")
-    (out_repo / "unrelated.txt").write_text("staged, but not part of the commitment\n")
-    git(out_repo, "add", "unrelated.txt")
-    upgraded = upgrade_proofs(log, out_repo=out_repo, actor=ACTOR, push=False, amend=True)
-    assert "unrelated.txt" not in git(out_repo, "show", "--name-only", "--format=", "HEAD")
-    git(out_repo, "reset", "--quiet", "unrelated.txt")
-    assert upgraded.upgraded == [f"{SUBDIR}/{first.sums_name}.ots"]
-    # One commit after the starting one, holding the SUMS file, its signature and its complete proof.
+    remote = _remote(out_repo)
+    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR)
+    name = first.sums_name
+    _keyless_bundle(out_repo / SUBDIR / f"{name}.cosign-bundle", "signer@example.org", "https://accounts.google.com")
+    # The bundle was replaced after the commitment: fine, the log holds the SUMS file's hash, not the bundle's.
+    shown = publish_evidence(log, out_repo=out_repo, title=title, dry_run=True)
+    assert shown.commit is None and git(out_repo, "status", "--porcelain").strip()  # nothing committed
+    assert events(log, "evidence.published") == []
+    published = publish_evidence(log, out_repo=out_repo, actor=ACTOR, title=title)
     assert git(out_repo, "rev-list", "--count", "HEAD").strip() == "2"
-    files = set(git(out_repo, "show", "--name-only", "--format=", "HEAD").split())
-    assert files == {f"{SUBDIR}/{first.sums_name}", f"{SUBDIR}/{first.sums_name}.ots", f"{SUBDIR}/{first.sums_name}.cosign-bundle"}
-    assert OTS_BITCOIN_TAG in (out_repo / SUBDIR / f"{first.sums_name}.ots").read_bytes()
     message = git(out_repo, "log", "-1", "--format=%B")
-    assert message.splitlines()[0] == title and "opentimestamps: complete (a Bitcoin block)" in message and "pending" not in message
-    event = events(log, "evidence.proofs_upgraded")[-1]
-    assert event["amended"] == first.commit and event["commit"] == git(out_repo, "rev-parse", "HEAD").strip() != first.commit
-    # A new headline when amending; and a pushed commit is never amended.
-    (out_repo / SUBDIR / f"{first.sums_name}.ots").write_bytes(b"FAKEOTS pending")
-    git(out_repo, "commit", "--quiet", "-am", "pending again")
-    again = upgrade_proofs(log, out_repo=out_repo, push=False, amend=True, title="Another headline")
-    assert again.commit and git(out_repo, "log", "-1", "--format=%s").strip() == "Another headline"
-    # A commit without signer lines gets them from the keyless certificate when amended.
-    _keyless_bundle(out_repo / SUBDIR / f"{first.sums_name}.cosign-bundle", "signer@example.org", "https://accounts.google.com")
-    (out_repo / SUBDIR / f"{first.sums_name}.ots").write_bytes(b"FAKEOTS pending")
-    git(out_repo, "commit", "--quiet", "-am", "Headline\n\nopentimestamps: pending (x)")
-    upgrade_proofs(log, out_repo=out_repo, push=False, amend=True)
-    message = git(out_repo, "log", "-1", "--format=%B")
-    assert "Signed keyless by signer@example.org (issuer https://accounts.google.com). Check with:" in message
-    assert f"--certificate-identity signer@example.org --certificate-oidc-issuer https://accounts.google.com {first.sums_name}" in message
-    remote = out_repo.parent / "remote.git"
-    subprocess.run(["git", "init", "--quiet", "--bare", str(remote)], check=True)
-    git(out_repo, "remote", "add", "origin", str(remote))
-    git(out_repo, "push", "--quiet", "origin", "main")
-    git(out_repo, "fetch", "--quiet", "origin")
-    with pytest.raises(TimestampError, match="has been pushed"):
-        upgrade_proofs(log, out_repo=out_repo, push=False, amend=True)
+    assert message.splitlines()[0] == title and f"{name}: " in message and "OpenTimestamps: complete" in message
+    assert "Signed keyless by signer@example.org (issuer https://accounts.google.com)" in message
+    assert f"--certificate-identity signer@example.org --certificate-oidc-issuer https://accounts.google.com {name}" in message
+    assert f"Recorded in the observers' event log as event {first.event_seq}." in message
+    assert git(remote, "rev-parse", "main").strip() == published.commit
+    [event] = events(log, "evidence.published")
+    assert event["sums_sha256"] == first.sums_sha256 and event["committed_in_event"] == first.event_seq
+    assert event["commit"] == published.commit and event["branch"] == "main" and event["repository"] == str(remote)
+    assert event["files"] == [f"{SUBDIR}/{n}" for n in (name, f"{name}.ots", f"{name}.cosign-bundle")]
+    assert event["opentimestamps"] == "complete" and event["replaces_unpublished_commits"] == []
+    with pytest.raises(TimestampError, match="no commitment waiting"):
+        publish_evidence(log, out_repo=out_repo)
+
+
+def test_publishing_refuses_pending_and_altered_files_and_records_only_a_push(
+    ws: Workspace, log: EventLog, out_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _bin(tmp_path, monkeypatch, ots=True, cosign=False)
+    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo)
+    ots = out_repo / SUBDIR / f"{first.sums_name}.ots"
+    (tmp_path / "bin" / "ots").write_text("#!/bin/sh\necho 'Pending confirmation in Bitcoin blockchain'\n")  # never completes
+    with pytest.raises(TimestampError, match="still pending"):
+        publish_evidence(log, out_repo=out_repo)
+    assert publish_evidence(log, out_repo=out_repo, dry_run=True).opentimestamps == "pending"  # shown, not refused
+    _bin(tmp_path, monkeypatch, ots=True, cosign=False)
+    sums = out_repo / SUBDIR / first.sums_name
+    original = sums.read_bytes()
+    sums.write_bytes(original + b"# changed\n")
+    with pytest.raises(TimestampError, match="differs from the SUMS file the log records"):
+        publish_evidence(log, out_repo=out_repo)
+    sums.write_bytes(original)
+    # No remote: committed, nothing recorded; with one, the same commit is pushed and recorded.
+    with pytest.raises(TimestampError, match="no remote"):
+        publish_evidence(log, out_repo=out_repo)
+    made = git(out_repo, "rev-parse", "HEAD").strip()
+    assert events(log, "evidence.published") == [] and OTS_BITCOIN_TAG in ots.read_bytes()
+    _remote(out_repo, "HEAD~1")  # the remote has everything but the commitment's commit
+    published = publish_evidence(log, out_repo=out_repo)
+    assert published.commit == made and git(out_repo, "rev-list", "--count", "HEAD").strip() == "2"
+
+
+def test_an_earlier_commit_the_log_names_is_said_to_be_replaced(log: EventLog, out_repo: Path, no_tools: Path) -> None:
+    """A commitment recorded before publishing was its own step names a commit that was never published: the published event says so."""
+    target = out_repo / SUBDIR
+    target.mkdir(parents=True)
+    content = b"# version: 1\n" + b"0" * 64 + b"  auditcenter/x.html\n"
+    (target / "SHA256SUMS-v1-20261106T203137Z.txt").write_bytes(content)
+    log.append("evidence.committed", ACTOR, file_sha256=sha(content), data={
+        "election": ELECTION, "sums_name": "SHA256SUMS-v1-20261106T203137Z.txt", "sums_sha256": sha(content), "version": 1,
+        "subdir": SUBDIR, "files": 1, "included_files": 0, "log_head_seq": 1, "log_head_hash": "0" * 64, "software": "x",
+        "steps": [], "proofs": [], "rekor_log_index": None, "commit": "b" * 40, "pushed": False,
+    })  # fmt: skip
+    _remote(out_repo)
+    published = publish_evidence(log, out_repo=out_repo, actor=ACTOR)
+    assert published.replaces == ["b" * 40]
+    assert events(log, "evidence.published")[0]["replaces_unpublished_commits"] == ["b" * 40]
 
 
 def test_titles_are_one_short_line(ws: Workspace, log: EventLog, out_repo: Path, no_tools: Path) -> None:
+    commit_evidence(ws, log, election=ELECTION, out_repo=out_repo)
     for bad in ("", "two\nlines", "x" * 101):
         with pytest.raises(TimestampError, match="one line"):
-            commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, push=False, title=bad)
+            publish_evidence(log, out_repo=out_repo, title=bad)

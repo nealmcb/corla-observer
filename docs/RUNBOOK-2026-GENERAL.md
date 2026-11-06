@@ -102,7 +102,13 @@ With the project lead's approval for the public services, once the pilot countie
 corla-observer commit-evidence --workspace WS --election 2026/general --out-repo MIRROR --actor coordinator:ID
 ```
 
-Run it again when a late file arrives; each run is a new version.
+Then, once the OpenTimestamps proof has its Bitcoin confirmation (an hour or two), publish it as one commit, checking it first with `--dry-run`:
+
+```
+corla-observer publish-evidence --workspace WS --out-repo MIRROR --actor coordinator:ID --title "2026 General: ..."
+```
+
+Run `commit-evidence` again when a late file arrives; each run is a new version, published in turn.
 
 ## Monday 16 November: roll morning
 
@@ -120,7 +126,7 @@ corla-observer schedule sprint --workspace WS --actor coordinator:ID --minutes 1
    - ballots at each board's ends that CORLA's random split may give to the next or previous board listed on both boards, marked **BOUNDARY: may be Board N's ballot. If this board doesn't pull it, skip it.** On the observer's screen, "Skipped: other board" settles one with a tap.
 
    From then on, each cycle rebuilds an interim extract when the prediction changes (a corrected manifest, CORLA's contest list with the real counts). Print only when the order is final, or print and mark the version.
-3. **Commit to the extracts** before the first ballot is read: `commit-evidence` again.
+3. **Commit to the extracts** before the first ballot is read: `commit-evidence` again, and `publish-evidence` once its proof is complete.
 4. **The county's pull list**, when it arrives: upload it (`/coord/upload`; it is recognized as a pull list by its columns) and build the extract again. It replaces the interim extract, with the county's own order and boards, and no BOUNDARY or POSSIBLE marks. If CORLA's posted selections came first, they define the extract and the pull list is checked against them (and gives its order and boards when it lists the same ballots). Any disagreement is the high-severity flag `extract_sources_disagree`: compare the extract's `checks.other_source` with both lists before the audit starts. Commit to the evidence again.
 5. **CORLA's contest list** for the round (with `contestSelection.csv`, after the roll) gives CORLA's counts: the estimates page then shows CORLA's count beside the estimate, and the prediction uses it.
 

@@ -1521,7 +1521,7 @@ def commit_evidence_command(
     workspace: WorkspaceOption,
     election: Annotated[str, typer.Option("--election", help="The election, such as 2026/general.", show_default=False)],
     out_repo: Annotated[
-        Path, typer.Option("--out-repo", help="A git checkout to commit the SUMS file and proofs to, such as a clone of the public mirror.", show_default=False)
+        Path, typer.Option("--out-repo", help="A git checkout to write the SUMS file and proofs into, such as a clone of the public mirror.", show_default=False)
     ],
     subdir: Annotated[
         str | None,
@@ -1529,7 +1529,6 @@ def commit_evidence_command(
     ] = None,
     actor: Annotated[str, typer.Option("--actor", help="Who is responsible, as coordinator:ID.")] = "system",
     log_path: LogOption = None,
-    no_push: Annotated[bool, typer.Option("--no-push", help="Commit, but do not push.")] = False,
     include_files: Annotated[
         bool, typer.Option("--include-files", help="Also copy the evidence files themselves (never a CVR without a passing redaction check).")
     ] = False,
@@ -1540,14 +1539,10 @@ def commit_evidence_command(
         typer.Option("--cosign-key", help="Sign with this cosign key file instead of keyless Sigstore signing.", show_default=False),
     ] = None,
     timeout: Annotated[int, typer.Option("--tool-timeout", min=1, help="Seconds allowed for each ots or cosign run.")] = 300,
-    title: Annotated[
-        str | None,
-        typer.Option("--title", help="The commit's headline, such as '2026 General: Auditcenter risk limit with digital timestamp'.", show_default=False),
-    ] = None,
 ) -> None:
-    """Write a new versioned SHA256SUMS file of the evidence, stamp, sign, commit and push it, and record it.
+    """Write a new versioned SHA256SUMS file of the evidence, stamp and sign it, and record it; publish it later with publish-evidence.
 
-    Exits 1 if a step failed (a missing tool is reported as skipped, not failed), 2 if nothing was committed.
+    Exits 1 if a step failed (a missing tool is reported as skipped, not failed), 2 if nothing was written.
     """
     from corla_observer.timestamp import CosignOptions, TimestampError, commit_evidence
 
@@ -1561,11 +1556,9 @@ def commit_evidence_command(
                 out_repo=out_repo,
                 subdir=subdir,
                 actor=actor,
-                push=not no_push,
                 include_files=include_files,
                 ots=not no_ots,
                 cosign=CosignOptions(enabled=not no_cosign, key=cosign_key),
-                title=title,
                 timeout=timeout,
                 echo=lambda line: typer.echo(f"    {line}", err=True),
             )
@@ -1581,10 +1574,53 @@ def commit_evidence_command(
         typer.echo(f"  note: {note}")
     for step in result.steps:
         _echo_step(step.name, step.status, step.detail)
-    typer.echo(f"commit {result.commit}" + (" (pushed)" if result.pushed else " (not pushed)"))
-    typer.echo(f"recorded as event {result.event_seq}")
+    typer.echo(f"recorded as event {result.event_seq}; publish it with publish-evidence once its OpenTimestamps proof is complete")
     if result.failed:
         raise typer.Exit(1)
+
+
+@app.command("publish-evidence")
+def publish_evidence_command(
+    out_repo: Annotated[Path, typer.Option("--out-repo", help="The git checkout holding the SUMS file and its proofs.", show_default=False)],
+    workspace: WorkspaceOption,
+    sums: Annotated[str | None, typer.Option("--sums", help="The SUMS file to publish (default: the oldest not yet published).", show_default=False)] = None,
+    title: Annotated[
+        str | None,
+        typer.Option("--title", help="The commit's headline, such as '2026 General: Auditcenter risk limit with digital timestamp'.", show_default=False),
+    ] = None,
+    actor: Annotated[str, typer.Option("--actor", help="Who is responsible, as coordinator:ID.")] = "system",
+    log_path: LogOption = None,
+    allow_pending: Annotated[bool, typer.Option("--allow-pending", help="Publish even if the OpenTimestamps proof is still pending.")] = False,
+    dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the commit's message and files; commit, push and record nothing.")] = False,
+    timeout: Annotated[int, typer.Option("--tool-timeout", min=1, help="Seconds allowed for the ots run.")] = 300,
+) -> None:
+    """Publish a commitment: complete its proof, make one commit holding it, push it, and record evidence.published.
+
+    Exits 2 if there is nothing to publish, the proof is still pending, or the push failed (then nothing is recorded).
+    """
+    from corla_observer.timestamp import TimestampError, publish_evidence
+
+    store = Workspace.open(workspace)
+    try:
+        with EventLog.open(log_path or store.root) as log:
+            result = publish_evidence(
+                log, out_repo=out_repo, sums_name=sums, actor=actor, title=title, allow_pending=allow_pending, dry_run=dry_run,
+                timeout=timeout, echo=lambda line: typer.echo(f"    {line}", err=True),
+            )  # fmt: skip
+    except (TimestampError, EventLogError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    typer.echo(f"{result.sums_name}: sha256 {result.sums_sha256}; OpenTimestamps {result.opentimestamps}")
+    for path in result.files:
+        typer.echo(f"  {path}")
+    typer.echo("message:")
+    typer.echo("".join(f"  | {line}\n" for line in result.message.splitlines()), nl=False)
+    if result.commit is None:
+        typer.echo("dry run: nothing committed, pushed or recorded")
+        return
+    typer.echo(f"published as commit {result.commit}; recorded as event {result.event_seq}")
+    for earlier in result.replaces:
+        typer.echo(f"  replaces the unpublished commit {earlier}")
 
 
 @app.command("upgrade-proofs")
@@ -1599,11 +1635,6 @@ def upgrade_proofs_command(
         bool, typer.Option("--all", help="Also try proofs that already have a Bitcoin attestation.")
     ] = False,
     timeout: Annotated[int, typer.Option("--tool-timeout", min=1, help="Seconds allowed for each ots run.")] = 300,
-    amend: Annotated[
-        bool,
-        typer.Option("--amend", help="Fold the completed proofs into the last commit, which must not have been pushed: one commit per commitment."),
-    ] = False,
-    title: Annotated[str | None, typer.Option("--title", help="With --amend: a new headline for that commit.", show_default=False)] = None,
 ) -> None:
     """Run `ots upgrade` on pending OpenTimestamps proofs, commit the upgraded ones and record it.
 
@@ -1623,8 +1654,6 @@ def upgrade_proofs_command(
                 include_complete=include_complete,
                 timeout=timeout,
                 echo=lambda line: typer.echo(f"    {line}", err=True),
-                amend=amend,
-                title=title,
             )
     except (TimestampError, EventLogError, ValueError) as exc:
         typer.echo(f"error: {exc}", err=True)

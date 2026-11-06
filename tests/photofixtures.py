@@ -143,11 +143,14 @@ def store_extract(ws: Workspace, log: EventLog, extract: dict[str, Any], *, acto
 
 
 def commit_evidence_record(
-    ws: Workspace, log: EventLog, files: dict[str, str], *, version: int = 1, ots: str = "pending", rekor: int | None = 4242, bitcoin: int | None = None
-) -> str:
+    ws: Workspace, log: EventLog, files: dict[str, str], *, version: int = 1, ots: str = "pending", rekor: int | None = 4242, bitcoin: int | None = None,
+    publish_commit: str | None = None, bitcoin_at_publish: int | None = None,
+) -> str:  # fmt: skip
     """Record an evidence commitment listing ``files`` (path to SHA-256), as ``commit-evidence`` would; return the SUMS file's hash.
 
-    With ``bitcoin``, also record the proof's upgrade to that Bitcoin block.
+    With ``bitcoin``, also record the proof's upgrade to that Bitcoin block, as ``upgrade-proofs`` would (the July 2026 way).
+    With ``publish_commit``, record it as ``commit-evidence`` does now, with no git commit, then its publishing as that commit,
+    as ``publish-evidence`` would, with its proof complete in ``bitcoin_at_publish``.
     """
     name = "SHA256SUMS.txt" if version == 1 else f"SHA256SUMS.v{version}.txt"
     lines = [f"# version: {version}", "# time: 2026-11-15T20:00:00Z", *(f"{sha}  {path}" for path, sha in sorted(files.items()))]
@@ -166,16 +169,19 @@ def commit_evidence_record(
             "files": len(files),
             "steps": [
                 {"name": "opentimestamps", "status": ots, "detail": "stamped"},
-                {"name": "cosign", "status": "done" if rekor is not None else "skipped", "detail": "signed"},
-                {"name": "git_commit", "status": "done", "detail": "a" * 40},
-                {"name": "push", "status": "done", "detail": "pushed"},
+                {"name": "sigstore" if publish_commit else "cosign", "status": "done" if rekor is not None else "skipped", "detail": "signed"},
+                *([] if publish_commit else [{"name": "git_commit", "status": "done", "detail": "a" * 40}, {"name": "push", "status": "done", "detail": "pushed"}]),
             ],
             "proofs": [name + ".ots", name + ".cosign-bundle"],
             "rekor_log_index": rekor,
-            "commit": "a" * 40,
-            "pushed": True,
+            **({} if publish_commit else {"commit": "a" * 40, "pushed": True}),
         },
     )
+    if publish_commit:
+        log.append("evidence.published", ACTOR, file_sha256=sums.sha256, data={
+            "sums_name": name, "sums_sha256": sums.sha256, "commit": publish_commit, "branch": "main",
+            "opentimestamps": f"complete, Bitcoin block {bitcoin_at_publish}" if bitcoin_at_publish else "pending",
+        })  # fmt: skip
     if bitcoin is not None:
         rel = f"{subdir}/{name}.ots"
         log.append(

@@ -415,8 +415,12 @@ def commitments(workspace: Workspace, log: EventLog, wanted: Mapping[str, str]) 
     found: list[Commitment] = []
     #: Each proof's latest known state: upgraded to Bitcoin (with its block, if recorded), or still pending.
     proof_state: dict[str, tuple[str, int | None]] = {}
+    #: Each published commitment (by its SUMS file's hash): the pushed commit, and its proof's state when published.
+    published: dict[str, tuple[str, str]] = {}
     events = list(log.iter_events())
     for event in events:
+        if event.kind == "evidence.published":
+            published[str(event.data.get("sums_sha256"))] = (str(event.data.get("commit") or ""), str(event.data.get("opentimestamps") or ""))
         if event.kind == "evidence.proofs_upgraded":
             raw_blocks = event.data.get("bitcoin_blocks")
             blocks: dict[str, Any] = raw_blocks if isinstance(raw_blocks, dict) else {}
@@ -455,6 +459,14 @@ def commitments(workspace: Workspace, log: EventLog, wanted: Mapping[str, str]) 
             ots = "pending"
         else:
             ots = ots_step
+        # Published (evidence.published): its pushed commit, and its proof as completed for publishing.
+        commit, pushed = (str(data["commit"]) if data.get("commit") else None), bool(data.get("pushed"))
+        if event.file_sha256 in published:
+            commit, proof = published[event.file_sha256]
+            pushed = True
+            if proof.startswith("complete"):
+                height = proof.removeprefix("complete").removeprefix(", Bitcoin block ").strip()
+                ots, block = "bitcoin", (int(height) if height.isdigit() else None)
         rekor = data.get("rekor_log_index")
         found.append(
             Commitment(
@@ -467,9 +479,9 @@ def commitments(workspace: Workspace, log: EventLog, wanted: Mapping[str, str]) 
                 ots=ots,
                 bitcoin_block=block,
                 rekor_log_index=rekor if isinstance(rekor, int) else None,
-                sigstore=steps.get("cosign", "none"),
-                commit=str(data["commit"]) if data.get("commit") else None,
-                pushed=bool(data.get("pushed")),
+                sigstore=steps.get("sigstore") or steps.get("cosign", "none"),  # "cosign" in early records
+                commit=commit or None,
+                pushed=pushed,
             )
         )
     return found

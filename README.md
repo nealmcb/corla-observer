@@ -195,11 +195,11 @@ Apache License 2.0. See [LICENSE](LICENSE).
 
 ## Timestamping the evidence
 
-`corla-observer commit-evidence` (`corla_observer.timestamp`) commits to the evidence publicly, as in July 2026: it writes a new, never-overwritten, versioned `SHA256SUMS` file listing every file the data map uses, the overrides, the adapters, the prediction and the extracts with their page indexes, with the event log's head and the software version in its header; stamps it with OpenTimestamps and signs it with Sigstore where `ots` and `cosign` are installed (reporting each step as done, pending, skipped or failed); commits and pushes it to a clone of the mirror; and records it in the event log. See [docs/TIMESTAMPING.md](docs/TIMESTAMPING.md) for when to run it and how anyone can check it.
+`corla-observer commit-evidence` (`corla_observer.timestamp`) commits to the evidence publicly, as in July 2026: it writes a new, never-overwritten, versioned `SHA256SUMS` file listing every file the data map uses, the overrides, the adapters, the prediction and the extracts with their page indexes, with the event log's head and the software version in its header; stamps it with OpenTimestamps and signs it with Sigstore where `ots` and `cosign` are installed (reporting each step as done, pending, skipped or failed); and records it in the event log. `publish-evidence`, once the OpenTimestamps proof has its Bitcoin confirmation, completes the proof, publishes the SUMS file and its proofs as one commit to a clone of the mirror, pushes it, and only then records the published commit. See [docs/TIMESTAMPING.md](docs/TIMESTAMPING.md) for when to run it and how anyone can check it.
 
 ```
-corla-observer commit-evidence --workspace DIR --election 2026/general --out-repo MIRROR [--subdir PATH] [--actor coordinator:ID] [--no-push] [--include-files] [--cosign-key FILE]
-corla-observer upgrade-proofs --out-repo MIRROR --workspace DIR [--no-push]
+corla-observer commit-evidence --workspace DIR --election 2026/general --out-repo MIRROR [--subdir PATH] [--actor coordinator:ID] [--include-files] [--cosign-key FILE]
+corla-observer publish-evidence --out-repo MIRROR --workspace DIR [--title TEXT] [--dry-run] [--actor coordinator:ID]
 corla-observer verify-evidence SHA256SUMS-v2-20261116T160000Z.txt [--workspace DIR] [--certificate-identity EMAIL --certificate-oidc-issuer URL]
 ```
 
