@@ -710,3 +710,23 @@ def test_version_page(workspace: Path, make_client: Factory) -> None:
         assert ("+dirty" in page.text) == identity.dirty
     data = client.get("/version.json").json()
     assert data["software"] == identity.software and data["commit"] == identity.commit and data["dirty"] == identity.dirty
+
+
+def test_an_observer_link_reads_the_log_lines_as_published(workspace: Path, make_client: Factory) -> None:
+    """``/observe/TOKEN/log``: the log's lines, byte for byte as in events.jsonl, for whoever holds an observer link."""
+    from corla_observer.practice import LinkStore
+
+    with EventLog.open(workspace) as log:
+        token, _ = LinkStore(workspace).create("observer", "ann", "Boulder", 1, log)
+        for n in range(5):
+            log.append("test.ping", "system", data={"n": n})
+    client = make_client()
+    with EventLog.open(workspace, read_only=True) as log:
+        head = log.head()[0]
+    jsonl = (workspace / "events.jsonl").read_bytes().splitlines(keepends=True)
+    got = client.get(f"/observe/{token}/log?from=2&to={head - 1}")
+    assert got.status_code == 200 and got.content == b"".join(jsonl[1 : head - 1])
+    assert client.get(f"/observe/{token}/log?from=0&to=2").status_code == 400
+    assert client.get(f"/observe/{token}/log?from=1&to={head + 50}").status_code == 400
+    assert client.get(f"/observe/{token}/log?from=1&to=3001").status_code == 400
+    assert client.get("/observe/not-a-token/log?from=1&to=2").status_code in (403, 404, 410)

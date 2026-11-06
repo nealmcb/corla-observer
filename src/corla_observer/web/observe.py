@@ -27,6 +27,14 @@ Routes (under the app's path prefix; TOKEN is a link's random token, see
     never merged into one. ``data.json?list=lookup`` returns the observer's
     earlier lookups on the board, so a reload restores them; it has no
     extract, so ``extract_sha256`` is the redacted CVR's hash.
+``GET /observe/TOKEN/log?from=A&to=B``
+    The event log's lines from position A to B, inclusive, exactly as in
+    ``events.jsonl`` (docs/EVENT_LOG.md): at most `MAX_LOG_LINES` at once,
+    for whoever holds an observer link. The browser extension
+    (docs/EXTENSION.md) recomputes their hash chain to check that the heads
+    in its receipts and the published anchors lie on one log, which the
+    server cannot fake. Not public: the log's publication during an audit
+    is the coordinators' decision.
 ``GET /observe/TOKEN/data.json[?list=KEY]``
     The board's ballots from the list's committed extract
     (`corla_observer.extract`, recorded by ``extract.built``; by default
@@ -395,6 +403,34 @@ async def observe_page(request: Request, token: str) -> Response:
     )  # fmt: skip
     response.headers["Cache-Control"] = "no-cache"
     return response
+
+
+#: The most event log lines served at once (``/observe/TOKEN/log``).
+MAX_LOG_LINES = 2000
+
+
+@router.get("/observe/{token}/log")
+async def observe_log(request: Request, token: str) -> Response:
+    state = get_state(request)
+    _link(state, token, "observer")
+    try:
+        first, last = int(request.query_params.get("from", "")), int(request.query_params.get("to", ""))
+    except ValueError:
+        raise HTTPException(status_code=400, detail="from and to are log positions.") from None
+    head = state.log.head()[0]
+    if not 1 <= first <= last or last - first >= MAX_LOG_LINES or last > head:
+        raise HTTPException(status_code=400, detail=f"from 1 to the head ({head}), at most {MAX_LOG_LINES} lines at once.")
+
+    def lines() -> bytes:
+        out = []
+        for event in state.log.iter_events(after_seq=first - 1):
+            if event.seq > last:
+                break
+            out.append(event.to_line() + b"\n")
+        return b"".join(out)
+
+    body = await run_in_threadpool(lines)
+    return Response(body, media_type="application/x-ndjson", headers={"Cache-Control": "no-store"})
 
 
 @router.get("/observe/{token}/data.json")
