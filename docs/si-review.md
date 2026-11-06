@@ -190,8 +190,11 @@ Any failure raises an alert asking the observer to keep their record and tell th
 Our tests check that each check passes on an honest server, and that a forged receipt and a false
 anchor are each caught.
 
+The checks' results go into the observer's downloadable record, and the record checker reports any
+alert the extension raised.
+
 **Not yet done:** testing in Firefox and on Android; signed releases, published like the evidence
-commitments; carrying the checks' results into the downloadable record.
+commitments.
 
 **Limits:** Chrome on Android doesn't support extensions, and Safari on iPhone supports them only
 inside an App Store app. Observers on those phones keep the served page, and paper, the spreadsheet

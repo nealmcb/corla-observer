@@ -113,7 +113,9 @@ a local server. It opens an observer link through it and enters a ballot. It che
   case with a false anchor, that the page raises an alert;
 - that the server's signed report of the entry matches the device's own, and, in a third case
   where the server signs a false one with its real key, that the page raises an alert;
-- that, reloaded with nothing new, the page does not fetch the log again.
+- that, reloaded with nothing new, the page does not fetch the log again;
+- that the links page shows the identity the build computed, refuses what is not an observer
+  link, and keeps and opens one that is.
 
 `tests/test_obsreport.py` runs `report.js` in Node and `corla_observer.obsreport` on the same 300
 random sets of entries and checks the reports are identical.
@@ -127,5 +129,6 @@ code, so the test waits on selectors rather than on page functions.
 - **Firefox:** test there, including on Android.
 - **Releases:** reproducible zips from tagged commits, their identity published and signed like the
   evidence commitments, and a signed Firefox listing.
-- **Test the links page,** and the permission request it makes.
+- **Test the permission request** the links page makes for a server not allowed at install, and
+  for GitHub (a headless browser cannot answer the prompt).
 - **The observer's guide:** when to use the extension, and how to check it.

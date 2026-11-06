@@ -15,7 +15,12 @@ raise an alert that the server's log does not agree with it, instead of finding 
 ``--expect-false-report``, the server signs a false report of the entries: the page must raise an
 alert that it differs from the device's own.
 
+With ``--links-page`` first, it checks the links page instead (setup.html): that it shows the
+extension's identity as the build computed it (IDENTITY), refuses what is not an observer link,
+and keeps and opens one that is.
+
 Usage: python3 scripts/browser_extension.py EXTENSION_DIR OBSERVER_LINK [COMMITMENTS_LISTING [--expect-forked-log | --expect-false-report]]
+       python3 scripts/browser_extension.py --links-page EXTENSION_DIR OBSERVER_LINK IDENTITY
 """
 
 from __future__ import annotations
@@ -43,7 +48,53 @@ def newest_chromium() -> str | None:
     return found[-1] if found else None
 
 
+def launch(p: Any, profile: str, extension: str) -> tuple[Any, str]:
+    """Chromium with the extension loaded, and the extension's ID."""
+    # Chromium's own new headless mode, which loads extensions (Playwright's headless option uses the old one,
+    # which does not); asked for directly, so no window opens.
+    context = p.chromium.launch_persistent_context(
+        profile, headless=False, executable_path=newest_chromium(),
+        args=["--headless=new", f"--disable-extensions-except={extension}", f"--load-extension={extension}"],
+    )  # fmt: skip
+    worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker", timeout=15000)
+    return context, worker.url.split("/")[2]
+
+
+def links_page(extension: str, link: str, identity: str) -> int:
+    """The links page: the identity shown, a link refused, and one kept and opened."""
+    checks: list[dict[str, Any]] = []
+
+    def check(what: str, ok: bool, detail: Any = None) -> None:
+        checks.append({"check": what, "ok": bool(ok), "detail": detail})
+
+    with sync_playwright() as p, tempfile.TemporaryDirectory() as profile:
+        context, extension_id = launch(p, profile, extension)
+        page = context.new_page()
+        page.goto(f"chrome-extension://{extension_id}/setup.html")
+        page.wait_for_selector("#code-hash:not(:has-text('computing'))", timeout=15000)
+        shown = (page.text_content("#code-hash") or "").replace(" ", "").replace("\u200b", "").strip()
+        check("the links page shows the identity the build computed", shown == identity, {"shown": shown, "built": identity})
+        page.fill("#link", "https://example.org/not-an-observer-link")
+        page.click("#add button[type=submit], #add input[type=submit]")
+        status = page.text_content("#add-status") or ""
+        check("it refuses what is not an observer link", "not an observer link" in status, status)
+        with context.expect_page(timeout=15000) as opened:
+            page.fill("#link", link)
+            page.click("#add button[type=submit], #add input[type=submit]")
+        tab = opened.value
+        check("it opens the link through the extension", tab.url.startswith(f"chrome-extension://{extension_id}/client.html#"), tab.url)
+        page.wait_for_selector("#links li", timeout=5000)
+        kept = page.evaluate("new Promise(r => chrome.storage.local.get({links: []}, g => r(g.links)))")
+        check("it keeps the link", kept == [link], kept)
+        context.close()
+    ok = all(c["ok"] for c in checks)
+    print(json.dumps({"ok": ok, "checks": checks}))
+    return 0 if ok else 1
+
+
 def main(argv: list[str]) -> int:
+    if argv[:1] == ["--links-page"]:
+        return links_page(argv[1], argv[2], argv[3])
     extension, link = argv[0], argv[1]
     listing = argv[2] if len(argv) > 2 else None
     forked = "--expect-forked-log" in argv[3:]
@@ -54,14 +105,7 @@ def main(argv: list[str]) -> int:
         checks.append({"check": what, "ok": bool(ok), "detail": detail})
 
     with sync_playwright() as p, tempfile.TemporaryDirectory() as profile:
-        # Chromium's own new headless mode, which loads extensions (Playwright's headless option uses the old one,
-        # which does not); asked for directly, so no window opens.
-        context = p.chromium.launch_persistent_context(
-            profile, headless=False, executable_path=newest_chromium(),
-            args=["--headless=new", f"--disable-extensions-except={extension}", f"--load-extension={extension}"],
-        )  # fmt: skip
-        worker = context.service_workers[0] if context.service_workers else context.wait_for_event("serviceworker", timeout=15000)
-        extension_id = worker.url.split("/")[2]
+        context, extension_id = launch(p, profile, extension)
         page = context.new_page()
         errors: list[str] = []
         page.on("pageerror", lambda e: errors.append(str(e)))

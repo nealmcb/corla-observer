@@ -123,3 +123,19 @@ def test_the_extension_runs_the_observer_page_from_its_own_code(tmp_path: Path, 
     with EventLog.open(store.root, read_only=True) as log:
         entries = [e for e in log.iter_events() if e.kind.startswith("observation.") and e.actor == "observer:ann" and e.device_id]
     assert entries, "no entry recorded from the extension"
+
+
+def test_the_links_page(tmp_path: Path) -> None:
+    """The links page shows the identity the build computed, refuses what is not an observer link, and keeps and opens one."""
+    python = playwright_python()
+    if python is None:
+        pytest.skip("no Python with Playwright")
+    built = subprocess.run([sys.executable, str(ROOT / "scripts" / "build_extension.py"), "--out", str(tmp_path / "extension"),
+                            "--allow-host", "http://127.0.0.1/*"], capture_output=True, text=True, check=False)  # fmt: skip
+    assert built.returncode == 0, built.stderr[-2000:]
+    identity = built.stdout.strip().rsplit(" ", 1)[-1]
+    link = f"http://127.0.0.1:{free_port()}/observe/" + "t" * 32
+    result = subprocess.run([python, str(SCRIPT), "--links-page", str(tmp_path / "extension"), link, identity],
+                            capture_output=True, text=True, timeout=120, check=False)  # fmt: skip
+    summary: dict[str, Any] = json.loads(result.stdout) if result.stdout.startswith("{") else {"ok": False, "error": result.stderr[-3000:]}
+    assert result.returncode == 0 and summary["ok"], json.dumps(summary, indent=1)
