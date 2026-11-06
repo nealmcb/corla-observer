@@ -171,49 +171,83 @@
     chainTimer = setTimeout(function () { queue = queue.then(checkReport).then(checkChain).catch(function (error) { chainNote = "The log could not be checked (" + error + ")."; show(); }); }, 3000);
   }
 
+  // The stretch of the log already checked (kept per server: {lo, hi, points: {seq: hash}}), so a page load
+  // fetches only the lines around points not yet checked, not the whole log again.
   function checkChain() {
-    return storageGet("heads:" + server, {}).then(function (heads) {
+    return Promise.all([storageGet("heads:" + server, {}), storageGet("chain:" + server, null)]).then(function (got) {
+      var heads = got[0], done = got[1];
       var points = {};
       Object.keys(heads).forEach(function (seq) { points[seq] = heads[seq]; });
       Object.keys(anchors).forEach(function (seq) { points[seq] = anchors[seq]; });
       var seqs = Object.keys(points).map(Number).sort(function (a, b) { return a - b; });
       if (seqs.length < 2) return null;
-      var lo = seqs[0], hi = seqs[seqs.length - 1];
+      var verified = done && done.points ? done.points : {};
+      for (var k in verified) {
+        if (points[k] !== undefined && points[k] !== verified[k]) {
+          problem("the server's log is not one chain through your receipts and the published anchors: position " + k +
+            " is not the one a receipt or a published anchor states");
+          return null;
+        }
+      }
+      var known = Object.keys(verified).map(Number).sort(function (a, b) { return a - b; });
+      // The stretches to fetch: each new point to its nearest checked neighbours (or, with none checked yet, the whole span).
+      var spans = [];
+      seqs.forEach(function (seq) {
+        if (verified[String(seq)] !== undefined) return;
+        if (!known.length) { spans.push([seqs[0], seqs[seqs.length - 1]]); return; }
+        var below = known.filter(function (k) { return k < seq; }), above = known.filter(function (k) { return k > seq; });
+        spans.push([below.length ? below[below.length - 1] : seq, above.length ? above[0] : seq]);
+      });
+      spans.sort(function (a, b) { return a[0] - b[0]; });
+      var merged = [];
+      spans.forEach(function (span) {
+        var last = merged[merged.length - 1];
+        if (last && span[0] <= last[1]) last[1] = Math.max(last[1], span[1]);
+        else merged.push([span[0], span[1]]);
+      });
       var token = document.body.getAttribute("data-token");
       var base = server + "/observe/" + encodeURIComponent(token) + "/log";
-      var previous = null, checkedPoints = 0, at = lo;
-      function page() {
-        if (at > hi) return Promise.resolve();
-        var to = Math.min(hi, at + LOG_LINES - 1);
-        return fetch(base + "?from=" + at + "&to=" + to).then(function (r) {
-          if (!r.ok) throw new Error("HTTP " + r.status);
-          return r.arrayBuffer();
-        }).then(function (buffer) {
-          var bytes = new Uint8Array(buffer), lines = [], start = 0;
-          for (var i = 0; i < bytes.length; i++) if (bytes[i] === 10) { lines.push(bytes.subarray(start, i)); start = i + 1; }
-          return lines.reduce(function (done, line, index) {
-            return done.then(function () { return lineHash(line); }).then(function (computed) {
-              var event = JSON.parse(new TextDecoder().decode(line));
-              var seq = at + index;
-              if (event.seq !== seq) throw new Error("position " + seq + " is missing");
-              if (event.hash !== computed) throw new Error("position " + seq + "'s hash does not match its content");
-              if (previous !== null && event.prev_hash !== previous) throw new Error("the chain breaks at position " + seq);
-              previous = computed;
-              if (points[String(seq)] !== undefined) {
-                if (points[String(seq)] !== computed) throw new Error("position " + seq + " is not the one a receipt or a published anchor states");
-                checkedPoints += 1;
-              }
+      var fetched = 0;
+      function segment(lo, hi) {
+        var previous = null, at = lo;
+        function page() {
+          if (at > hi) return Promise.resolve();
+          var to = Math.min(hi, at + LOG_LINES - 1);
+          return fetch(base + "?from=" + at + "&to=" + to).then(function (r) {
+            if (!r.ok) throw new Error("HTTP " + r.status);
+            return r.arrayBuffer();
+          }).then(function (buffer) {
+            var bytes = new Uint8Array(buffer), lines = [], start = 0;
+            for (var i = 0; i < bytes.length; i++) if (bytes[i] === 10) { lines.push(bytes.subarray(start, i)); start = i + 1; }
+            return lines.reduce(function (chain, line, index) {
+              return chain.then(function () { return lineHash(line); }).then(function (computed) {
+                var event = JSON.parse(new TextDecoder().decode(line));
+                var seq = at + index;
+                if (event.seq !== seq) throw new Error("position " + seq + " is missing");
+                if (event.hash !== computed) throw new Error("position " + seq + "'s hash does not match its content");
+                if (previous !== null && event.prev_hash !== previous) throw new Error("the chain breaks at position " + seq);
+                previous = computed;
+                var want = points[String(seq)] !== undefined ? points[String(seq)] : verified[String(seq)];
+                if (want !== undefined && want !== computed) throw new Error("position " + seq + " is not the one a receipt or a published anchor states");
+              });
+            }, Promise.resolve()).then(function () {
+              if (lines.length !== to - at + 1) throw new Error("the server gave " + lines.length + " lines for " + (to - at + 1) + " positions");
+              fetched += lines.length;
+              at = to + 1;
+              return page();
             });
-          }, Promise.resolve()).then(function () {
-            if (lines.length !== to - at + 1) throw new Error("the server gave " + lines.length + " lines for " + (to - at + 1) + " positions");
-            at = to + 1;
-            return page();
           });
-        });
+        }
+        return page();
       }
-      return page().then(function () {
-        chainNote = "The log from position " + lo + " to " + hi + " is one chain, through all " + checkedPoints + " points your receipts and the published anchors state.";
+      return merged.reduce(function (chain, span) { return chain.then(function () { return segment(span[0], span[1]); }); }, Promise.resolve()).then(function () {
+        seqs.forEach(function (seq) { verified[String(seq)] = points[String(seq)]; });
+        var all = Object.keys(verified).map(Number);
+        var lo = Math.min.apply(null, all), hi = Math.max.apply(null, all);
+        chainNote = "The log from position " + lo + " to " + hi + " is one chain, through all " + all.length +
+          " points your receipts and the published anchors state" + (merged.length ? "" : " (checked before)") + ".";
         show();
+        return storageSet("chain:" + server, { lo: lo, hi: hi, points: verified });
       }, function (error) {
         problem("the server's log is not one chain through your receipts and the published anchors: " + error.message);
       });

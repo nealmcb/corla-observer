@@ -67,6 +67,8 @@ def main(argv: list[str]) -> int:
         page.on("pageerror", lambda e: errors.append(str(e)))
         console: list[str] = []
         page.on("console", lambda m: console.append(m.text))
+        requests: list[str] = []
+        context.on("request", lambda r: requests.append(r.url))
         if listing:
             # As the links page stores them, for the link's server.
             setup = context.new_page()
@@ -131,6 +133,16 @@ def main(argv: list[str]) -> int:
         check("the log is one chain through the receipts' heads", "is one chain" in chained and "problem" not in chained, chained)
         check("the receipt key is the one in the published commitments", "receipt key is the one in the published commitments" in chained, chained)
         check("the server's signed report matches the device's own", "signed report of your entries matches your device's: 1 ballots, 0 with discrepancies" in chained, chained)
+        # Reloaded with nothing new, the chain is not fetched again: the stretch checked is remembered.
+        log_fetches = len([r for r in requests if "/log?" in r])
+        page.reload()
+        try:
+            page.wait_for_selector("#ext-verify:has-text('checked before')", timeout=20000)
+        except Exception:  # noqa: BLE001 - reported below, with what the line said
+            pass
+        again = page.inner_text("#ext-verify") if page.query_selector("#ext-verify") else ""
+        check("reloaded, the stretch of the log already checked is not fetched again",
+              log_fetches > 0 and "checked before" in again and "problem" not in again and len([r for r in requests if "/log?" in r]) == log_fetches, {"line": again, "log fetches": [r for r in requests if "/log?" in r]})  # fmt: skip
         # Last: after a forged receipt the page shows only the alert.
         page.evaluate(
             "document.dispatchEvent(new CustomEvent('corla-observer:receipt', {detail: {payload_sha256: 'a'.repeat(64),"

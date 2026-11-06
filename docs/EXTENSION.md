@@ -50,7 +50,10 @@ verifiability".
   commitment's `event-log-head`), lies on one log. It fetches the log's lines between them
   (`/observe/TOKEN/log`, for holders of an observer link), recomputes each line's hash from its
   own bytes, and follows the `prev_hash` links (docs/EVENT_LOG.md). The server cannot fake a chain
-  through points it has already committed to. A break is an alert.
+  through points it has already committed to. A break is an alert. It remembers the points it
+  has checked (per server, in the extension's storage), so later it fetches only the lines from
+  each new point to its nearest checked neighbours, 2,000 at a time; a checked point whose hash a
+  receipt or an anchor later states differently is an alert.
 - **The observation report.** Once every entry has been sent, it computes the observer's
   observation report (`report.js`, the same definition as `corla_observer.obsreport`) from the
   entries the server acknowledged, as the device recorded them. It fetches the report the server
@@ -107,7 +110,8 @@ a local server. It opens an observer link through it and enters a ballot. It che
 - that the log is one chain through the receipts' heads and the anchored head, and, in a second
   case with a false anchor, that the page raises an alert;
 - that the server's signed report of the entry matches the device's own, and, in a third case
-  where the server signs a false one with its real key, that the page raises an alert.
+  where the server signs a false one with its real key, that the page raises an alert;
+- that, reloaded with nothing new, the page does not fetch the log again.
 
 `tests/test_obsreport.py` runs `report.js` in Node and `corla_observer.obsreport` on the same 300
 random sets of entries and checks the reports are identical.
@@ -118,9 +122,6 @@ cache, or `$CORLA_OBSERVER_CHROMIUM`. The extension page's policy forbids evalua
 code, so the test waits on selectors rather than on page functions.
 
 **To do:**
-- **Long logs.** The chain check fetches every line between the earliest and the latest known
-  point on each page load, 2,000 at a time. For a long audit it should remember the stretch it has
-  already checked and fetch only what is new.
 - **Put the checks in the downloaded record.**
 - **Firefox:** test there, including on Android.
 - **Releases:** reproducible zips from tagged commits, their identity published and signed like the
