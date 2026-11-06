@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "corla-observer: observer client",
+  "short_name": "corla-observer",
+  "version": "0.1.0",
+  "description": "The corla-observer observation page, run from this extension's own published code rather than from the server, with the signing key kept in the extension.",
+  "action": {
+    "default_title": "corla-observer: observer links"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "permissions": [
+    "storage"
+  ],
+  "optional_host_permissions": [
+    "https://*/*",
+    "http://127.0.0.1/*",
+    "http://localhost/*"
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self'; object-src 'none'; base-uri 'none'"
+  }
+}

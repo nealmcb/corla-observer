@@ -7,3 +7,6 @@ dist/
 *.egg-info/
 /workspace/
 neal_ignore/
+
+# The browser extension, built by scripts/build_extension.py
+/build/

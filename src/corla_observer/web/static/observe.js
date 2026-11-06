@@ -54,6 +54,11 @@
   var prefix = body.getAttribute("data-prefix") || "";
   var token = body.getAttribute("data-token");
   var base = prefix + "/observe/" + encodeURIComponent(token);
+  // The page for a list: the server's, or, in the browser extension (extension/boot.js), the extension's own.
+  function pageFor(key) {
+    var target = base + (key === "rla" ? "" : "?list=" + encodeURIComponent(key));
+    return body.getAttribute("data-client") === "extension" ? "client.html#" + encodeURIComponent(target) : target;
+  }
   var storeKey = "corla-observer:" + token;
   // The pull list shown: "rla" (the RLA sample) or a targeted list's key. Its entries and place are kept under listStore.
   var listKey = body.getAttribute("data-list") || "rla";
@@ -475,7 +480,7 @@
   function switchList() {
     var select = el("obs-list");
     flushNow();
-    window.location.href = base + (select.value === "rla" ? "" : "?list=" + encodeURIComponent(select.value));
+    window.location.href = pageFor(select.value);
   }
 
   function message(text) {
@@ -1392,7 +1397,7 @@
       // The data is another list's than the page's (the default moved, or a page kept from before): reload on that list.
       var shown = data.error ? data["default"] : data.list;
       if (shown && shown !== listKey) {
-        window.location.replace(base + (shown === "rla" ? "" : "?list=" + encodeURIComponent(shown)));
+        window.location.replace(pageFor(shown));
         return;
       }
       if (data.error) { showNothing(data.error, data.lists); return; }

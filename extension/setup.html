@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>corla-observer: observer links</title>
+<link rel="stylesheet" href="app.css">
+<script src="setup.js" defer></script>
+</head>
+<body>
+<main>
+<h1>corla-observer: observer links</h1>
+<p>Paste the observer link you were sent. The observation page then runs from this extension's own code, and your signing key is kept in the extension, out of reach of any web page.</p>
+<form id="add" class="card form">
+  <label>Observer link <input id="link" type="url" required placeholder="https://.../observe/..." spellcheck="false" autocapitalize="none"></label>
+  <button type="submit">Add and open</button>
+  <p id="add-status" class="meta" role="status"></p>
+</form>
+<section>
+  <h2>Your links</h2>
+  <ul id="links"></ul>
+  <p id="none" class="muted">None yet.</p>
+</section>
+<section>
+  <h2>This extension</h2>
+  <p class="meta">Version <span id="version"></span>. SHA-256 of its code, to compare with the published release: <code id="code-hash" class="hash full">computing…</code></p>
+</section>
+</main>
+</body>
+</html>
