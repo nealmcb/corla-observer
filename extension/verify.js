@@ -80,6 +80,19 @@
   }
   function problem(text) { if (problems.indexOf(text) < 0) problems.push(text); show(); }
 
+  // What the checks found, for the observer's downloaded record (observe.js adds it as extension_checks).
+  window.CorlaExtensionChecks = function () {
+    return {
+      extension_version: chrome.runtime.getManifest().version,
+      checked_at: new Date().toISOString(),
+      receipts_verified: verified,
+      receipt_key_id: key ? key.key_id : null,
+      problems: problems.slice(),
+      report: reportNote, receipt_key: keyNote, extract: extractNote, chain: chainNote,
+      unsupported: !!unsupported
+    };
+  };
+
   document.addEventListener("corla-observer:meta", function (event) {
     var detail = event.detail || {};
     var offered = detail.receipt_key;

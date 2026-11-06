@@ -179,6 +179,8 @@ The page keeps every payload, its signature, and its receipt (or the server's re
 }
 ```
 
+A record made in the browser extension (docs/EXTENSION.md) also has `extension_checks`: the extension's version, when it was read, the receipts it verified, the receipt key's ID, any `problems` it raised, and what its checks of the observation report, the receipt key, the extract and the log's chain found; `null` from the served page. `check-record` notes them, and reports each problem as one.
+
 `receipt` is `null` for an entry not yet acknowledged, and `refused` is `{"code": ..., "error": ...}` for one the server refused. `page` records the software version, the subresource integrity hashes of the page's scripts, and the entry mode the page was in. The **CSV** button saves the same entries as a spreadsheet, one row each: `device_seq`, `type`, `position`, `imprinted_id`, `match`, `note_or_heard` (`first reading` for a first reading), `edit`, `client_time`, `payload_sha256`, `receipt` (the code), `event_seq`, `server_time`, `status` (received, queued, or refused with the reason), and for contest-by-contest entries `contest` (its row and name), `reading` and `outcome`, with any cell that could be read as a formula prefixed with `'`.
 
 The record is the device's own: it is only on the device until the observer downloads it, and it holds nothing the observer didn't enter, apart from the server's receipts.

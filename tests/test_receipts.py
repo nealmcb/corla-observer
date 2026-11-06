@@ -321,6 +321,16 @@ def test_checker_passes_an_honest_record(server: Server, tmp_path: Path) -> None
     # Without an independent key, the log's own copy is used, and that is noted.
     report = check_record(load_record(path), server.jsonl)
     assert report.ok and {f.kind for f in report.findings} == {"server_key"}
+    # Made in the browser extension: its checks are noted, and any alert it raised is a problem.
+    made = record_of(device, outcomes) | {"extension_checks": {"extension_version": "0.1.0", "checked_at": "2026-11-05T12:00:00Z", "receipts_verified": 3,
+                                                               "problems": [], "chain": "The log from position 1 to 9 is one chain."}}  # fmt: skip
+    path.write_text(json.dumps(made))
+    report = check_record(load_record(path), server.jsonl, server_key=server.signer.public_raw)
+    assert report.ok and [f.kind for f in report.findings] == ["extension"] and "3 receipts verified" in report.findings[0].message
+    made["extension_checks"]["problems"] = ["the server's receipt key changed"]
+    path.write_text(json.dumps(made))
+    report = check_record(load_record(path), server.jsonl, server_key=server.signer.public_raw)
+    assert not report.ok and [f.kind for f in report.problems] == ["extension_alert"]
     with pytest.raises(RecordError):
         path.write_text('{"format": "something else"}')
         load_record(path)

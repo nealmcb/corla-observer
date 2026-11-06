@@ -96,7 +96,9 @@ server at install, for tests.
 - the receipt checks;
 - the check of the extract shown and the receipt key against the published commitments;
 - the check that the receipts' heads and the anchored heads lie on one log;
-- the comparison of the device's observation report with the server's signed one.
+- the comparison of the device's observation report with the server's signed one;
+- the checks' results in the observer's downloaded record (`extension_checks`), which
+  `corla-observer check-record` reports, each alert the extension raised as a problem.
 
 `tests/test_browser_extension.py` (marked `browser`) loads the built extension in Chromium against
 a local server. It opens an observer link through it and enters a ballot. It checks:
@@ -122,7 +124,6 @@ cache, or `$CORLA_OBSERVER_CHROMIUM`. The extension page's policy forbids evalua
 code, so the test waits on selectors rather than on page functions.
 
 **To do:**
-- **Put the checks in the downloaded record.**
 - **Firefox:** test there, including on Android.
 - **Releases:** reproducible zips from tagged commits, their identity published and signed like the
   evidence commitments, and a signed Firefox listing.

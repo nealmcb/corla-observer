@@ -518,7 +518,9 @@
       time_zone: "America/Denver (Colorado local time, with its offset from UTC; the signed payloads' client_time is UTC, as signed)",
       entries: records.map(function (r) {
         return { payload: r.payload, signature: r.signature, payload_sha256: r.payload_sha256, receipt: r.receipt, refused: r.refused };
-      })
+      }),
+      // From the browser extension, when the page runs in it (docs/EXTENSION.md): what its checks found.
+      extension_checks: typeof window.CorlaExtensionChecks === "function" ? window.CorlaExtensionChecks() : null
     };
   }
 

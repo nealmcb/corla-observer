@@ -23,7 +23,9 @@ log. It reports:
 - **entries in the log under this observer and device that the device did
   not make:** events without a signature that verifies with the device's
   key. Events the device did sign that the record lacks (a record
-  downloaded before them) are noted, not counted as problems.
+  downloaded before them) are noted, not counted as problems;
+- **the browser extension's checks**, for a record made in it (``extension_checks``,
+  docs/EXTENSION.md): noted, and each alert the extension raised is a problem.
 """
 
 from __future__ import annotations
@@ -415,6 +417,16 @@ def check_record(
                 problem("anchor_mismatch", f"{what} is event {seq}, which is not in the verified part of the log")
         elif at["hash"] != digest:
             problem("anchor_mismatch", f"{what}: event {seq}'s hash in the log is {at['hash'][:16]}..., not {digest[:16]}...")
+
+    # -- the browser extension's own checks, when the record was made in it --
+    ext = record.get("extension_checks")
+    if isinstance(ext, Mapping):
+        found = [str(x) for x in ext.get("problems") or [] if isinstance(x, str)]
+        for text in found:
+            problem("extension_alert", f"the browser extension reported, at {ext.get('checked_at')}: {text}")
+        if not found:
+            said = " ".join(str(ext.get(k)) for k in ("report", "receipt_key", "extract", "chain") if ext.get(k))
+            note("extension", f"made in the browser extension {ext.get('extension_version')}: {ext.get('receipts_verified')} receipts verified as they came. {said}".strip())
 
     return RecordReport(
         observer=observer,

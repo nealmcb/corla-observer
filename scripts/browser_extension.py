@@ -133,6 +133,10 @@ def main(argv: list[str]) -> int:
         check("the log is one chain through the receipts' heads", "is one chain" in chained and "problem" not in chained, chained)
         check("the receipt key is the one in the published commitments", "receipt key is the one in the published commitments" in chained, chained)
         check("the server's signed report matches the device's own", "signed report of your entries matches your device's: 1 ballots, 0 with discrepancies" in chained, chained)
+        # The checks' results, as the downloaded record carries them (extension_checks).
+        carried = page.evaluate("window.CorlaExtensionChecks ? window.CorlaExtensionChecks() : null")
+        check("the downloaded record would carry the extension's checks",
+              carried is not None and carried["receipts_verified"] >= 1 and not carried["problems"] and "one chain" in carried["chain"], carried)  # fmt: skip
         # Reloaded with nothing new, the chain is not fetched again: the stretch checked is remembered.
         log_fetches = len([r for r in requests if "/log?" in r])
         page.reload()
