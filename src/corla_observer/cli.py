@@ -1600,6 +1600,7 @@ def publish_evidence_command(
     log_path: LogOption = None,
     allow_pending: Annotated[bool, typer.Option("--allow-pending", help="Publish even if the OpenTimestamps proof is still pending.")] = False,
     dry_run: Annotated[bool, typer.Option("--dry-run", help="Show the commit's message and files; commit, push and record nothing.")] = False,
+    no_log: Annotated[bool, typer.Option("--no-log", help="Do not publish the event log (events.jsonl) with it.")] = False,
     timeout: Annotated[int, typer.Option("--tool-timeout", min=1, help="Seconds allowed for the ots run.")] = 300,
 ) -> None:
     """Publish a commitment: complete its proof, make one commit holding it, push it, and record evidence.published.
@@ -1612,7 +1613,7 @@ def publish_evidence_command(
     try:
         with EventLog.open(log_path or store.root) as log:
             result = publish_evidence(
-                log, out_repo=out_repo, sums_name=sums, actor=actor, title=title, allow_pending=allow_pending, dry_run=dry_run,
+                log, out_repo=out_repo, sums_name=sums, actor=actor, title=title, allow_pending=allow_pending, dry_run=dry_run, include_log=not no_log,
                 timeout=timeout, echo=lambda line: typer.echo(f"    {line}", err=True),
             )  # fmt: skip
     except (TimestampError, EventLogError, ValueError) as exc:

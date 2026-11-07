@@ -21,7 +21,7 @@ import pytest
 from typer.testing import CliRunner
 
 from corla_observer.cli import app
-from corla_observer.events import EventLog, canonical_json
+from corla_observer.events import EventLog, canonical_json, verify_jsonl
 from corla_observer.timestamp import (
     OTS_BITCOIN_TAG,
     CosignOptions,
@@ -270,6 +270,10 @@ def test_stamped_signed_and_versioned(ws: Workspace, log: EventLog, out_repo: Pa
     assert int(head.split()[0]) == events_seq(log, "evidence.committed")[0]
 
 
+def event_seq_of(log: EventLog, kind: str) -> int:
+    return [e.seq for e in log.iter_events() if e.kind == kind][-1]
+
+
 def events_seq(log: EventLog, kind: str) -> list[int]:
     return [e.seq for e in log.iter_events() if e.kind == kind]
 
@@ -391,7 +395,7 @@ def test_include_files_and_verify(ws: Workspace, log: EventLog, out_repo: Path, 
     assert OTS_BITCOIN_TAG in (target / f"{name}.ots").read_bytes()
     assert {c.subject: c.status for c in verify_evidence(sums).checks}[f"{name}.ots"] == "ok"
     committed = set(git(out_repo, "show", "--name-only", "--format=", "HEAD").split())
-    assert committed == {f"{SUBDIR}/{p}" for p in (name, f"{name}.ots", f"{name}.cosign-bundle", *result.included)}
+    assert committed == {f"{SUBDIR}/{p}" for p in (name, f"{name}.ots", f"{name}.cosign-bundle", "events.jsonl", *result.included)}
     assert f"{SUBDIR}/{withheld[0].path}" not in committed
 
 
@@ -513,8 +517,14 @@ def test_published_once_as_one_commit(ws: Workspace, log: EventLog, out_repo: Pa
     [event] = events(log, "evidence.published")
     assert event["sums_sha256"] == first.sums_sha256 and event["committed_in_event"] == first.event_seq
     assert event["commit"] == published.commit and event["branch"] == "main" and event["repository"] == str(remote)
-    assert event["files"] == [f"{SUBDIR}/{n}" for n in (name, f"{name}.ots", f"{name}.cosign-bundle")]
+    assert event["files"] == [f"{SUBDIR}/{n}" for n in (name, f"{name}.ots", f"{name}.cosign-bundle", "events.jsonl")]
     assert event["opentimestamps"] == "complete" and event["replaces_unpublished_commits"] == []
+    # The event log, as it stood: it verifies, passes through the SUMS file's head, and ends just before this event.
+    published_log = out_repo / SUBDIR / "events.jsonl"
+    checked = verify_jsonl(published_log)
+    assert checked.ok and checked.head_seq == event_seq_of(log, "evidence.published") - 1
+    assert event["log"] == {"path": f"{SUBDIR}/events.jsonl", "events": checked.head_seq, "head_hash": checked.head_hash}
+    assert f"Event log: events.jsonl, events 1 to {checked.head_seq} (head {checked.head_hash})." in message
     with pytest.raises(TimestampError, match="no commitment waiting"):
         publish_evidence(log, out_repo=out_repo)
 
@@ -558,7 +568,7 @@ def test_an_earlier_commit_the_log_names_is_said_to_be_replaced(log: EventLog, o
         "steps": [], "proofs": [], "rekor_log_index": None, "commit": "b" * 40, "pushed": False,
     })  # fmt: skip
     _remote(out_repo)
-    published = publish_evidence(log, out_repo=out_repo, actor=ACTOR)
+    published = publish_evidence(log, out_repo=out_repo, actor=ACTOR, include_log=False)  # its log head is made up
     assert published.replaces == ["b" * 40]
     assert events(log, "evidence.published")[0]["replaces_unpublished_commits"] == ["b" * 40]
 
@@ -641,6 +651,29 @@ def test_a_replaced_file_is_called_out_with_where_its_previous_version_is(ws: Wo
                 assert "Changed since" not in published.message and events(log, "evidence.published")[-1]["replaced"] == {}
         assert events(log, "evidence.published")[-1]["replaced"] == {path: first}
     assert f"Changed since its last publication: {path}\n  previous version: commit {first}\n" in published.message
+    assert "events.jsonl\n  previous version" not in published.message  # the log only grows: never called out
     assert _web_link("https://github.com/nealmcb/auditcenter.git", "abc", "x/y.html") == "https://github.com/nealmcb/auditcenter/blob/abc/x/y.html"
     assert _web_link("git@github.com:nealmcb/auditcenter.git", "abc", "x/y.html") == "https://github.com/nealmcb/auditcenter/blob/abc/x/y.html"
     assert _web_link("/srv/some/bare.git", "abc", "x") is None
+
+
+def test_the_previous_version_is_found_in_a_shallow_clone(tmp_path: Path) -> None:
+    """In a shallow clone the oldest commit present seems to have added every file: history is fetched further back."""
+    from corla_observer.timestamp import _last_change
+
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    git(origin, "init", "--quiet", "-b", "main")
+    git(origin, "config", "user.email", "t@example.org")
+    git(origin, "config", "user.name", "T")
+    (origin / "page.html").write_text("one\n")
+    git(origin, "add", ".")
+    git(origin, "commit", "--quiet", "-m", "the page")
+    published = git(origin, "rev-parse", "HEAD").strip()
+    for n in range(3):
+        (origin / f"other{n}.txt").write_text("x\n")
+        git(origin, "add", ".")
+        git(origin, "commit", "--quiet", "-m", f"other {n}")
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "--quiet", "--depth", "1", f"file://{origin}", str(clone)], check=True)
+    assert _last_change(clone, "page.html") == published

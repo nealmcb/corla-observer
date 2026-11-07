@@ -105,7 +105,7 @@ from urllib.parse import unquote, urlsplit
 
 from corla_observer.classify import is_test_county
 from corla_observer.datamap import DataMap, build_map
-from corla_observer.events import EventLog, JSONValue, check_actor
+from corla_observer.events import EventLog, JSONValue, check_actor, verify_jsonl
 from corla_observer.redaction import PASS
 from corla_observer.workspace import Workspace, sha256_of_file
 
@@ -845,13 +845,29 @@ def _web_link(remote: str, commit: str, path: str) -> str | None:
     return f"https://github.com/{match.group(1)}/{match.group(2)}/blob/{commit}/{path}" if match else None
 
 
+def _last_change(repo: Path, path: str, tries: int = 8) -> str | None:
+    """The commit that last changed ``path``. In a shallow clone, the oldest commit present seems to have added every
+    file, so history is fetched further back until the commit found is not that edge (or ``tries`` runs out: None)."""
+    for _ in range(tries):
+        last = _git(repo, "log", "-1", "--format=%H", "--", path, check=False).stdout.strip()
+        shallow = repo / ".git" / "shallow"
+        edge = set(shallow.read_text().split()) if shallow.is_file() else set()
+        if not last or last not in edge:
+            return last or None
+        if _git(repo, "fetch", "--quiet", "--deepen=100", check=False).returncode != 0:
+            return None
+    return None
+
+
 def _replaced_files(repo: Path, files: Sequence[str]) -> dict[str, str]:
     """Of ``files``, those already in the repository with other content: each with the commit that last published it."""
     replaced: dict[str, str] = {}
     for line in _git(repo, "status", "--porcelain", "--", *files).stdout.splitlines():
         if line[:2] != "??" and "M" in line[:2]:  # a tracked file, modified
             path = line[3:].strip()
-            last = _git(repo, "log", "-1", "--format=%H", "--", path, check=False).stdout.strip()
+            if PurePosixPath(path).name == LOG_NAME:
+                continue  # the event log only grows: each publication is the earlier one and more
+            last = _last_change(repo, path)
             if last:
                 replaced[path] = last
     return replaced
@@ -859,7 +875,7 @@ def _replaced_files(repo: Path, files: Sequence[str]) -> dict[str, str]:
 
 def _publish_message(
     name: str, data: Mapping[str, Any], event_seq: int, *, title: str | None, ots_status: str, signer: tuple[str, str] | None,
-    replaced: Mapping[str, str] | None = None, remote: str | None = None,
+    replaced: Mapping[str, str] | None = None, remote: str | None = None, log: Mapping[str, Any] | None = None,
 ) -> str:  # fmt: skip
     """The published commit's message: ``title`` (or a default headline), then what it holds and how to check it."""
     default = f"Observer evidence for {data.get('election')}: {name} ({data.get('files')} files)"
@@ -881,6 +897,8 @@ def _publish_message(
     for path, previous in sorted((replaced or {}).items()):
         link = _web_link(remote, previous, path) if remote else None
         lines += [f"Changed since its last publication: {path}", f"  previous version: commit {previous}" + (f", {link}" if link else "")]
+    if log is not None:
+        lines.append(f"Event log: {PurePosixPath(str(log['path'])).name}, events 1 to {log['events']} (head {log['head_hash']}).")
     lines.append(f"Recorded in the observers' event log as event {event_seq}.")
     return "\n".join(lines) + "\n"
 
@@ -931,6 +949,21 @@ def _remote_address(repo: Path) -> str:
     return re.sub(r"^(https?://)[^/@]+@", r"\1", url)
 
 
+#: The published event log's name, beside the SUMS files.
+LOG_NAME = "events.jsonl"
+
+
+def _check_log_passes(path: Path, seq: int, digest: str) -> None:
+    """Refuse a log that does not hold event ``seq`` with hash ``digest`` (the head a SUMS file's header names)."""
+    with open(path, "rb") as f:
+        for n, line in enumerate(f, start=1):
+            if n == seq:
+                if json.loads(line).get("hash") != digest:
+                    raise TimestampError(f"the event log's event {seq} is not the head the SUMS file names")
+                return
+    raise TimestampError(f"the event log has no event {seq}, the head the SUMS file names")
+
+
 def unpublished(log: EventLog) -> list[Any]:
     """The ``evidence.committed`` events whose SUMS file no ``evidence.published`` event names, oldest first."""
     committed: list[Any] = []
@@ -954,6 +987,7 @@ def publish_evidence(
     dry_run: bool = False,
     timeout: float = DEFAULT_TOOL_TIMEOUT,
     echo: Echo | None = None,
+    include_log: bool = True,
 ) -> PublishResult:
     """Publish a commitment: complete its proof, make one commit holding it, push it, and record ``evidence.published``.
 
@@ -965,6 +999,12 @@ def publish_evidence(
     is recorded only once the push has succeeded, so the log names only a commit that is public.
     If the last commit already holds exactly these files and has not been pushed (a push that
     failed), it is pushed as it is.
+
+    With ``include_log`` (the default), the commit also holds the event log as it stands, written
+    as ``events.jsonl`` beside the SUMS file (`LOG_NAME`), so that the log head in every SUMS
+    file's header can be checked against it: it must verify, and pass through that head. Each
+    publication replaces it with the longer log; it only ever grows. Its event range and head
+    are in the commit's message and the ``evidence.published`` event (``log``).
 
     Raises:
         TimestampError: if there is nothing to publish, the SUMS file is missing or differs, the
@@ -1004,7 +1044,21 @@ def publish_evidence(
     replaced = _replaced_files(out_repo, files)
     remotes = _git(out_repo, "remote").stdout.split()
     remote = _remote_address(out_repo) if remotes else None
-    message = _publish_message(name, data, event.seq, title=title, ots_status=ots_status, signer=signer, replaced=replaced, remote=remote)
+    published_log: dict[str, Any] | None = None
+    if include_log:
+        log_rel = f"{subdir}/{LOG_NAME}" if subdir else LOG_NAME
+        head_seq, head_hash = log.head()
+        if not dry_run:
+            exported = target / LOG_NAME
+            log.export_jsonl(exported)
+            checked = verify_jsonl(exported)
+            if not checked.ok or (checked.head_seq, checked.head_hash) != (head_seq, head_hash):
+                raise TimestampError(f"the exported event log does not verify: {'; '.join(checked.errors)[:300]}")
+            _check_log_passes(exported, int(data["log_head_seq"]), str(data["log_head_hash"]))
+        files.append(log_rel)
+        published_log = {"path": log_rel, "events": head_seq, "head_hash": head_hash}
+    message = _publish_message(name, data, event.seq, title=title, ots_status=ots_status, signer=signer, replaced=replaced, remote=remote,
+                               log=published_log)  # fmt: skip
     earlier = data.get("commit")
     if dry_run:
         return PublishResult(name, str(data["sums_sha256"]), files, message, ots_status, None, None, [])
@@ -1040,6 +1094,7 @@ def publish_evidence(
             "rekor_log_index": data.get("rekor_log_index"),
             "replaces_unpublished_commits": replaces,
             "replaced": dict(replaced),
+            "log": published_log,
         },
     )
     return PublishResult(name, str(data["sums_sha256"]), files, message, ots_status, commit, published.seq, replaces)

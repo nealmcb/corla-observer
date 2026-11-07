@@ -4,7 +4,7 @@ Format version 1, 2026-10-23
 
 Everything the tool does or records is an event in an append-only log: every upload, fetch, check result, seed entry, timestamp commitment, login, and every observer's match tap, note, edit or undo. Each event carries the SHA-256 hash of the one before it, so changing, removing, inserting or reordering any event breaks the chain.
 
-The log is published as a JSONL file, `events.jsonl`, with one event per line. This document specifies that file precisely enough for anyone to verify a copy of it independently, in any language, without this project's software. A complete verifier in Python is given below, and the worked example at the end lets an implementation in another language be checked byte for byte.
+The log is published as a JSONL file, `events.jsonl`, with one event per line: with each publication of the evidence, beside the SUMS files (docs/TIMESTAMPING.md, `publish-evidence`), such as `2026/general/observerfiles/events.jsonl` in the public audit center mirror. This document specifies that file precisely enough for anyone to verify a copy of it independently, in any language, without this project's software. A complete verifier in Python is given below, and the worked example at the end lets an implementation in another language be checked byte for byte.
 
 ## Events
 
