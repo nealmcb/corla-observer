@@ -679,3 +679,23 @@ def test_a_pre_layout_sums_files_audit_center_files_go_where_the_mirror_keeps_th
     assert place(page, "2026-11-07T00:24:08.123Z") == "auditCenters/auditCenter-2026-11-06T17:24:08-07:00.html"
     assert place(page, "2026-07-07T18:30:05.000Z") == "auditCenters/auditCenter-2026-07-07T12:30:05-06:00.html"
     assert place("auditcenter/example.org/x.html", None) is None and place("observerfiles/x", None) is None
+
+
+def test_a_post_is_proposed_before_signing_until_the_seed_is_recorded(
+    ws: Workspace, log: EventLog, out_repo: Path, no_tools: Path
+) -> None:
+    from corla_observer.election import init_setup
+    from corla_observer.seeds import enter_seed
+
+    init_setup(ws, ELECTION)
+    shown: list[str] = []
+    first = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, clock=lambda: NOW, echo=shown.append)
+    assert first.post is not None and first.sums_sha256 in first.post.text and not first.post.too_long
+    assert first.post.text.splitlines()[0].endswith(
+        "Seed dice roll at 10 AM: https://www.coloradosos.gov/pubs/elections/auditCenter.html"
+    )
+    assert shown[0].startswith("proposed post before the seed is rolled") and first.post.text.splitlines()[1] in shown
+    enter_seed(log, "12345678901234567890", ACTOR, "dice")
+    shown.clear()
+    second = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, clock=lambda: NOW, echo=shown.append)
+    assert second.post is None and not any("proposed post" in line for line in shown)

@@ -106,6 +106,7 @@ from urllib.parse import unquote, urlsplit
 from corla_observer.classify import is_test_county
 from corla_observer.datamap import DataMap, build_map
 from corla_observer.localtime import to_colorado
+from corla_observer.post import ProposedPost
 from corla_observer.events import EventLog, JSONValue, check_actor, verify_jsonl
 from corla_observer.redaction import PASS
 from corla_observer.workspace import Workspace, sha256_of_file
@@ -616,6 +617,8 @@ class CommitResult:
     included: list[str]
     event_seq: int
     rekor_log_index: int | None = None
+    #: The post proposed before the seed is rolled, giving the SUMS file's hash (None once a seed is recorded).
+    post: ProposedPost | None = None
 
     @property
     def failed(self) -> list[Step]:
@@ -707,6 +710,31 @@ def bundle_identity(bundle: Path) -> tuple[str, str] | None:
         return None
 
 
+def _pre_roll_post(workspace: Workspace, log: EventLog, sums_sha: str, moment: datetime, echo: Echo | None) -> ProposedPost | None:
+    """Before a seed is recorded, the post giving the SUMS file's hash (`corla_observer.post`), shown before signing so it can be posted meanwhile."""
+    from corla_observer.election import SetupError, load_setup
+    from corla_observer.post import X_LIMIT, propose_post
+    from corla_observer.seeds import seed_state
+
+    if seed_state(log.iter_events()).seed is not None:
+        return None
+    try:
+        setup = load_setup(workspace)
+    except SetupError:
+        setup = None
+    roll = setup.milestone("roll") if setup is not None else None
+    post = propose_post(sums_sha, roll.time if roll is not None else None, moment)
+    if echo is not None:
+        echo(f"proposed post before the seed is rolled ({post.length} of {X_LIMIT} characters as X counts them):")
+        echo("")
+        for line in post.text.splitlines():
+            echo(line)
+        echo("")
+        if post.too_long:
+            echo(f"warning: the post is over X's limit of {X_LIMIT} characters")
+    return post
+
+
 def commit_evidence(
     workspace: Workspace,
     log: EventLog,
@@ -759,6 +787,7 @@ def commit_evidence(
         raise TimestampError(f"{subdir}/{name} already exists; it is never overwritten") from None
     sums_sha = hashlib.sha256(content).hexdigest()
     workspace.put_bytes(content)
+    post = _pre_roll_post(workspace, log, sums_sha, moment, echo)
 
     try:
         steps: list[Step] = []
@@ -824,6 +853,7 @@ def commit_evidence(
         included=included,
         event_seq=event.seq,
         rekor_log_index=rekor_index,
+        post=post,
     )
 
 
