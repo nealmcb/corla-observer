@@ -15,6 +15,7 @@ import subprocess
 from collections.abc import Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 from zoneinfo import ZoneInfo
 
 import pytest
@@ -198,20 +199,20 @@ def test_names_and_paths() -> None:
 def test_collect_evidence(ws: Workspace, log: EventLog, no_tools: Path) -> None:
     evidence = collect_evidence(ws, log)
     paths = {f.path: f for f in evidence.files}
-    assert paths["uploads/Boulder/county_manifest/Boulder_manifest.csv"].sha256 == sha(MANIFEST)
+    assert paths["observerfiles/uploads/Boulder/county_manifest/Boulder_manifest.csv"].sha256 == sha(MANIFEST)
     cvr = next(f for f in evidence.files if f.sha256 == sha(GOOD_CVR))
-    assert cvr.publishable and cvr.path.startswith("uploads/Boulder/")
+    assert cvr.publishable and cvr.path.startswith("observerfiles/uploads/Boulder/")
     assert sha(BAD_CVR) not in {f.sha256 for f in evidence.files}
-    assert "derived/prediction.json" in paths
-    assert "derived/extract-Boulder.json" in paths
-    assert "derived/extract-Boulder-pages.json" not in paths  # no page index recorded
-    assert paths["derived/extract-Adams-pages.json"].origin == "page_index"
-    assert paths["derived/extract-Adams-pages.json"].sha256 == next(
+    assert "observerfiles/derived/prediction.json" in paths
+    assert "observerfiles/derived/extract-Boulder.json" in paths
+    assert "observerfiles/derived/extract-Boulder-pages.json" not in paths  # no page index recorded
+    assert paths["observerfiles/derived/extract-Adams-pages.json"].origin == "page_index"
+    assert paths["observerfiles/derived/extract-Adams-pages.json"].sha256 == next(
         e.data["page_index_sha256"] for e in log.iter_events() if e.kind == "extract.built"
     )
     # Each board's printout in each layout, the PDF whose hash the event records.
-    assert paths["derived/extract-Adams-board1-landscape-3.pdf"].origin == "printout"
-    assert paths["derived/extract-Adams-board1-landscape-3.pdf"].sha256 == sha(b"%PDF-1.3 a printout")
+    assert paths["observerfiles/derived/extract-Adams-board1-landscape-3.pdf"].origin == "printout"
+    assert paths["observerfiles/derived/extract-Adams-board1-landscape-3.pdf"].sha256 == sha(b"%PDF-1.3 a printout")
     assert evidence.log_head == log.head()
     assert evidence.software.startswith("corla-observer ")
     assert [f.path for f in evidence.files] == sorted(f.path for f in evidence.files)
@@ -231,7 +232,8 @@ def test_skip_path_without_tools(ws: Workspace, log: EventLog, out_repo: Path, n
     assert parsed.header["event-log-head"] == f"{head[0]} {head[1]}"
     assert parsed.header["time"] == "2026-11-16T16:00:00Z"
     assert parsed.header["version"] == "1"
-    assert parsed.header["check"] == f"sha256sum --check --ignore-missing {result.sums_name}"
+    assert parsed.header["check"] == f"(from {ELECTION}/) sha256sum --check observerfiles/{result.sums_name}"
+    assert parsed.header["base"] == ".."
     assert [p for _, p in parsed.entries] == sorted(p for _, p in parsed.entries)
     assert not parsed.malformed
     # Nothing is committed: the SUMS file waits in the working tree, to be published.
@@ -360,9 +362,10 @@ def test_include_files_and_verify(ws: Workspace, log: EventLog, out_repo: Path, 
     )
     result = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="all")
     target = out_repo / SUBDIR
+    folder = out_repo / ELECTION  # copies are at their paths in the election's folder
     withheld = [f for f in result.evidence.files if not f.publishable]
     assert [f.sha256 for f in withheld] == [unchecked.sha256]
-    assert not (target / withheld[0].path).exists()
+    assert not (folder / withheld[0].path).exists()
     assert len(result.included) == len(result.evidence.files) - 1
     assert not any(withheld[0].path == p for p in result.included)
     assert any(p.endswith("Boulder_manifest.csv") for p in result.included)
@@ -378,7 +381,7 @@ def test_include_files_and_verify(ws: Workspace, log: EventLog, out_repo: Path, 
     # The withheld file is found by hash in the workspace.
     assert {c.subject: c.status for c in verify_evidence(sums, workspace=ws).checks}[withheld[0].path] == "ok"
 
-    manifest = next(target / f.path for f in result.evidence.files if f.path.endswith("Boulder_manifest.csv"))
+    manifest = next(folder / f.path for f in result.evidence.files if f.path.endswith("Boulder_manifest.csv"))
     manifest.chmod(0o644)
     manifest.write_bytes(MANIFEST + b"extra\r\n")
     runner = CliRunner()
@@ -395,8 +398,8 @@ def test_include_files_and_verify(ws: Workspace, log: EventLog, out_repo: Path, 
     assert OTS_BITCOIN_TAG in (target / f"{name}.ots").read_bytes()
     assert {c.subject: c.status for c in verify_evidence(sums).checks}[f"{name}.ots"] == "ok"
     committed = set(git(out_repo, "show", "--name-only", "--format=", "HEAD").split())
-    assert committed == {f"{SUBDIR}/{p}" for p in (name, f"{name}.ots", f"{name}.cosign-bundle", "events.jsonl", *result.included)}
-    assert f"{SUBDIR}/{withheld[0].path}" not in committed
+    assert committed == {f"{SUBDIR}/{p}" for p in (name, f"{name}.ots", f"{name}.cosign-bundle", "events.jsonl")} | {f"{ELECTION}/{p}" for p in result.included}
+    assert f"{ELECTION}/{withheld[0].path}" not in committed
 
 
 def test_upgrade_proofs_cli(ws: Workspace, log: EventLog, out_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -580,73 +583,61 @@ def test_titles_are_one_short_line(ws: Workspace, log: EventLog, out_repo: Path,
             publish_evidence(log, out_repo=out_repo, title=bad)
 
 
-def test_the_default_includes_only_the_fetched_files(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
-    """``commit-evidence`` copies the Audit Center's files by default (public already), never the counties' uploads or the extracts."""
-    page = ws.put_bytes(b"<html>the risk limit page</html>")
-    url = "https://www.coloradosos.gov/pubs/elections/RLA/2026/general/riskLimit.html"
+def _fetched(ws: Workspace, log: EventLog, url: str, body: bytes, kind: str, normalized: str | None = None) -> str:
+    """Record ``body`` as fetched from ``url`` and classified as ``kind``, as a crawl would."""
+    stored = ws.put_bytes(body)
+    data: dict[str, Any] = {"url": url, "status": 200, "sha256": stored.sha256, "size": stored.size}
+    if normalized is not None:
+        data["normalized_sha256"] = normalized
+    log.append("fetch.file", "system", file_sha256=stored.sha256, data=data)
+    log.append("fetch.classified", "system", file_sha256=stored.sha256, data={"url": url, "sha256": stored.sha256, "kind": kind, "county": None, "evidence": {}})
+    return stored.sha256
+
+
+RLA_URL = "https://www.coloradosos.gov/pubs/elections/RLA/"
+
+
+def test_the_audit_centers_files_at_their_mirror_paths_and_no_volatile_ones(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
+    """A commitment lists the Audit Center's files at the paths the mirror keeps them (relative to the election's folder),
+    copies them there by default, and leaves out files that change routinely, such as pages and the upload status."""
     with EventLog.open(ws.root) as log:
-        log.append("fetch.file", "system", file_sha256=page.sha256, data={"url": url, "status": 200, "sha256": page.sha256, "size": page.size})
+        targets = _fetched(ws, log, RLA_URL + "2026/general/files/2026GeneralRLAContestList.xlsx", b"PK targets", "target_contests")
+        _fetched(ws, log, RLA_URL + "2026/general/riskLimit.html", b"<html>3%</html>", "html_page", normalized="c" * 64)
+        _fetched(ws, log, RLA_URL + "2026/general/files/uploadStatus.csv", b"county,status", "upload_status")
     runner = CliRunner()
     args = ["commit-evidence", "--workspace", str(ws.root), "--election", ELECTION, "--out-repo", str(out_repo)]
     result = runner.invoke(app, args)
     assert result.exit_code == 0, result.output
-    target = out_repo / SUBDIR
-    copied = sorted(str(p.relative_to(target)) for p in target.rglob("*") if p.is_file() and not p.name.startswith("SHA256SUMS"))
-    assert copied == ["auditcenter/2026/general/riskLimit.html"], copied
     assert "1 copied (the files fetched from the Audit Center)" in result.output
+    assert (out_repo / ELECTION / "files" / "2026GeneralRLAContestList.xlsx").read_bytes() == b"PK targets"
+    assert not (out_repo / ELECTION / "riskLimit.html").exists() and not (out_repo / ELECTION / "files" / "uploadStatus.csv").exists()
+    sums = next((out_repo / SUBDIR).glob("SHA256SUMS-v1-*.txt"))
+    lines = parse_sums(sums.read_text()).entries
+    assert (targets, "files/2026GeneralRLAContestList.xlsx") in lines
+    assert not any(p.endswith(("riskLimit.html", "uploadStatus.csv")) for _, p in lines)
+    # The check line works as written, from the election's folder; and verify-evidence finds the files by the base.
+    check = subprocess.run(["sha256sum", "--check", "--ignore-missing", f"observerfiles/{sums.name}"], cwd=out_repo / ELECTION,
+                           capture_output=True, text=True, check=False)  # fmt: skip
+    assert check.returncode == 0 and "2026GeneralRLAContestList.xlsx: OK" in check.stdout, check.stdout + check.stderr
+    assert {c.subject: c.status for c in verify_evidence(sums).checks}["files/2026GeneralRLAContestList.xlsx"] == "ok"
     with EventLog.open(ws.root, read_only=True) as log:
-        assert events(log, "evidence.committed")[-1]["included"] == ["auditcenter/2026/general/riskLimit.html"]
+        assert events(log, "evidence.committed")[-1]["included"] == ["files/2026GeneralRLAContestList.xlsx"]
     bad = runner.invoke(app, [*args, "--include", "everything"])
     assert bad.exit_code == 2 and "include must be one of none, fetched, all" in bad.output
-    hashes_only = runner.invoke(app, [*args, "--include", "none"])
-    assert hashes_only.exit_code == 0 and "include_files" not in hashes_only.output
-
-
-def test_a_page_refetched_with_only_a_new_token_is_published_once(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
-    """A page whose content, with Cloudflare's per-response token stripped, is unchanged is listed as its earliest fetch:
-    its published copy stays as it is. A page whose content changed replaces the copy at the same path, never beside it."""
-    url = "https://www.coloradosos.gov/pubs/elections/RLA/2026/general/riskLimit.html"
-    rel = "auditcenter/2026/general/riskLimit.html"
-
-    def fetch(log: EventLog, body: bytes, content: str) -> str:
-        stored = ws.put_bytes(body)
-        log.append("fetch.file", "system", file_sha256=stored.sha256,
-                   data={"url": url, "status": 200, "sha256": stored.sha256, "size": stored.size, "normalized_sha256": content})  # fmt: skip
-        return stored.sha256
-
-    target = out_repo / SUBDIR
-    with EventLog.open(ws.root) as log:
-        first = fetch(log, b"<html>risk limit 3% <i>token 1</i></html>", "c" * 64)
-        one = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="fetched")
-        assert (rel, first) in [(f.path, f.sha256) for f in one.evidence.files]
-        git(out_repo, "add", ".")
-        git(out_repo, "commit", "--quiet", "-m", "published")
-        fetch(log, b"<html>risk limit 3% <i>token 2</i></html>", "c" * 64)  # the same page, a new token
-        two = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="fetched")
-        assert (rel, first) in [(f.path, f.sha256) for f in two.evidence.files]
-        assert git(out_repo, "status", "--porcelain", "--", f"{SUBDIR}/auditcenter").strip() == ""  # nothing new to publish
-        changed = fetch(log, b"<html>risk limit 2% <i>token 3</i></html>", "d" * 64)  # the content changed
-        three = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="fetched")
-    assert (rel, changed) in [(f.path, f.sha256) for f in three.evidence.files]
-    assert (target / rel).read_bytes() == b"<html>risk limit 2% <i>token 3</i></html>"
-    assert [p.name for p in (target / rel).parent.iterdir()] == ["riskLimit.html"]  # replaced, no copy beside it
 
 
 def test_a_replaced_file_is_called_out_with_where_its_previous_version_is(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
     """Publishing a file that replaces an earlier version names it, and the commit that published that version, in the commit and the event."""
     from corla_observer.timestamp import _web_link
 
-    url = "https://www.coloradosos.gov/pubs/elections/RLA/2026/general/riskLimit.html"
-    path = f"{SUBDIR}/auditcenter/2026/general/riskLimit.html"
+    path = f"{ELECTION}/files/Weld.csv"
     _remote(out_repo)
     with EventLog.open(ws.root) as log:
-        for body, content in ((b"<html>3%</html>", "c" * 64), (b"<html>2%</html>", "d" * 64)):
-            page = ws.put_bytes(body)
-            log.append("fetch.file", "system", file_sha256=page.sha256,
-                       data={"url": url, "status": 200, "sha256": page.sha256, "size": page.size, "normalized_sha256": content})  # fmt: skip
+        for body in (b"County,Tabulator\r\nWeld,1\r\n", b"County,Tabulator\r\nWeld,2\r\n"):
+            _fetched(ws, log, RLA_URL + "2026/general/files/Weld.csv", body, "county_manifest")
             commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, include="fetched")
             published = publish_evidence(log, out_repo=out_repo, actor=ACTOR)
-            if content == "c" * 64:
+            if body.endswith(b"1\r\n"):
                 first = published.commit
                 assert "Changed since" not in published.message and events(log, "evidence.published")[-1]["replaced"] == {}
         assert events(log, "evidence.published")[-1]["replaced"] == {path: first}
@@ -677,3 +668,14 @@ def test_the_previous_version_is_found_in_a_shallow_clone(tmp_path: Path) -> Non
     clone = tmp_path / "clone"
     subprocess.run(["git", "clone", "--quiet", "--depth", "1", f"file://{origin}", str(clone)], check=True)
     assert _last_change(clone, "page.html") == published
+
+
+def test_a_pre_layout_sums_files_audit_center_files_go_where_the_mirror_keeps_them() -> None:
+    from corla_observer.timestamp import legacy_mirror_place as place
+
+    assert place("auditcenter/2026/general/files/2026GeneralRLAContestList.xlsx", None) == "2026/general/files/2026GeneralRLAContestList.xlsx"
+    assert place("auditcenter/faqs.html", None) == "faqs.html"
+    page = "auditcenter/www.coloradosos.gov/pubs/elections/auditCenter.html"
+    assert place(page, "2026-11-07T00:24:08.123Z") == "auditCenters/auditCenter-2026-11-06T17:24:08-07:00.html"
+    assert place(page, "2026-07-07T18:30:05.000Z") == "auditCenters/auditCenter-2026-07-07T12:30:05-06:00.html"
+    assert place("auditcenter/example.org/x.html", None) is None and place("observerfiles/x", None) is None

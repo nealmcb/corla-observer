@@ -105,6 +105,7 @@ from urllib.parse import unquote, urlsplit
 
 from corla_observer.classify import is_test_county
 from corla_observer.datamap import DataMap, build_map
+from corla_observer.localtime import to_colorado
 from corla_observer.events import EventLog, JSONValue, check_actor, verify_jsonl
 from corla_observer.redaction import PASS
 from corla_observer.workspace import Workspace, sha256_of_file
@@ -215,14 +216,36 @@ def software_version() -> str:
     return software()
 
 
-def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | None = None) -> EvidenceSet:
+#: Kinds of Audit Center file that change routinely as the audit goes on: they are mirrored, and their
+#: history is in the event log, but they are not committed to, so a published check fails only when a
+#: file that should not change did.
+VOLATILE_KINDS = frozenset({"html_page", "upload_status", "audit_activity_report", "vote_totals", "unknown"})
+
+
+def mirror_path(url: str) -> str | None:
+    """Where the audit center mirror keeps a file fetched from ``url``: its path under the RLA directory, as
+    the Audit Center publishes it (``2026/general/files/X.xlsx``); None for a file outside that directory."""
+    path = unquote(urlsplit(url).path)
+    if _RLA_PATH not in path:
+        return None
+    rest = path.split(_RLA_PATH, 1)[1]
+    return _safe_path(rest.split("/")) if rest and not rest.endswith("/") else None
+
+
+def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | None = None, election: str | None = None) -> EvidenceSet:
     """The evidence set: see the module documentation.
+
+    Paths are relative to the election's folder in the mirror (``election``, else the data map's
+    election): an Audit Center file at the path the Audit Center publishes it under that folder
+    (`mirror_path`), as the mirror keeps it, everything else under ``observerfiles/``. Audit Center
+    files of `VOLATILE_KINDS`, or outside the election's folder, are not listed.
 
     Raises:
         TimestampError: if a stored object is missing or corrupt.
     """
     log_head = log.head()
     datamap = datamap or build_map(log, workspace)
+    folder = (election or datamap.election or "").strip("/")
     adapter_sources: dict[str, tuple[str, str]] = {}  # output sha -> (module, source sha)
     redaction_passed: set[str] = set()
     prediction: tuple[int, str] | None = None
@@ -262,11 +285,14 @@ def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | Non
 
     candidates: list[EvidenceFile] = []
     notes: list[str] = []
+    volatile = 0
 
     def add(
         path: str, sha256: str, origin: str, ref: str, *,
         kind: str | None = None, county: str | None = None, publishable: bool = True,
     ) -> None:
+        if origin != "fetch":
+            path = "observerfiles/" + path
         candidates.append(EvidenceFile(path, sha256, 0, origin, ref, kind, county, publishable))
 
     ignored = 0
@@ -276,7 +302,12 @@ def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | Non
             continue
         county = entry.county
         if entry.source == "fetch":
-            path = fetched_path(entry.ref)
+            kind = entry.classified_kind or entry.kind
+            mirrored = mirror_path(entry.ref)
+            if kind in VOLATILE_KINDS or mirrored is None or not (mirrored + "/").startswith(folder + "/") or not folder:
+                volatile += 1
+                continue
+            path = mirrored[len(folder) + 1 :]
             content = normalized_of.get(entry.sha256)
             if content is not None:
                 add(path, earliest.get((entry.ref, content), entry.sha256), entry.source, entry.ref, kind=entry.kind, county=county)
@@ -297,6 +328,8 @@ def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | Non
         add(path, entry.sha256, entry.source, entry.ref, kind=entry.kind, county=county, publishable=publishable)
     if ignored:
         notes.append(f"{ignored} file(s) the data map ignores are not listed")
+    if volatile:
+        notes.append(f"{volatile} Audit Center file(s) that change routinely (pages, status files) or lie outside the election's folder are not listed; the event log records them")
     if datamap.overrides_sha256 and not datamap.preview:
         add("overrides/overrides.toml", datamap.overrides_sha256, "overrides", f"event {datamap.overrides_seq}")
     if prediction is not None:
@@ -354,9 +387,16 @@ def sums_version(name: str) -> int | None:
     return int(match.group(1) or match.group(2) or 1)
 
 
-def render_sums(evidence: EvidenceSet, election: str, version: int, moment: datetime) -> bytes:
-    """The SUMS file's content: a ``#`` header, then ``<sha256>  <path>`` lines in sorted path order."""
+def render_sums(evidence: EvidenceSet, election: str, version: int, moment: datetime, subdir: str = "") -> bytes:
+    """The SUMS file's content: a ``#`` header, then ``<sha256>  <path>`` lines in sorted path order.
+
+    The paths are relative to the election's folder (``base:``, from the SUMS file's own folder,
+    ``subdir``); the ``check:`` line is the command that checks them, run from that folder.
+    """
     seq, head = evidence.log_head
+    rel = PurePosixPath(subdir).relative_to(election).as_posix() if subdir and (subdir + "/").startswith(election + "/") else ""
+    base = "/".join(".." for _ in PurePosixPath(rel).parts) if rel and rel != "." else "."
+    name = sums_name(version, moment)
     lines = [
         f"# SHA-256 digests of the observers' evidence for election {election}, written by corla-observer.",
         f"# version: {version}",
@@ -364,7 +404,8 @@ def render_sums(evidence: EvidenceSet, election: str, version: int, moment: date
         f"# event-log-head: {seq} {head}",
         f"# software: {evidence.software}",
         f"# files: {len(evidence.files)}",
-        f"# check: sha256sum --check --ignore-missing {sums_name(version, moment)}",
+        f"# base: {base}",
+        f"# check: (from {election}/) sha256sum --check {rel + '/' if rel and rel != '.' else ''}{name}",
     ]
     for item in sorted(evidence.files, key=lambda f: f.path):
         if "\n" in item.path or "\\" in item.path:
@@ -697,7 +738,7 @@ def commit_evidence(
     datamap = build_map(log, workspace)
     if datamap.election is not None and datamap.election != election:
         raise TimestampError(f"the data map's election is {datamap.election}, not {election}")
-    evidence = collect_evidence(workspace, log, datamap)
+    evidence = collect_evidence(workspace, log, datamap, election=election)
     target = out_repo / subdir if subdir else out_repo
     target.mkdir(parents=True, exist_ok=True)
 
@@ -707,7 +748,7 @@ def commit_evidence(
     version = max(used, default=0) + 1
     moment = (clock or (lambda: datetime.now(UTC)))().replace(microsecond=0)
     name = sums_name(version, moment)
-    content = render_sums(evidence, election, version, moment)
+    content = render_sums(evidence, election, version, moment, subdir)
     sums_path = target / name
     try:
         with open(sums_path, "xb") as f:
@@ -734,7 +775,7 @@ def commit_evidence(
         if step.status == "done":
             proofs.append(name + COSIGN_SUFFIX)
 
-        included = _copy_included(workspace, evidence, target, echo, include) if include != "none" else []
+        included = _copy_included(workspace, evidence, out_repo / election, echo, include) if include != "none" else []
         if include != "none":
             withheld = [f.path for f in evidence.files if not f.publishable and (include == "all" or f.origin == "fetch")]
             detail = f"{len(included)} copied" + (" (the files fetched from the Audit Center)" if include == "fetched" else "")
@@ -949,6 +990,30 @@ def _remote_address(repo: Path) -> str:
     return re.sub(r"^(https?://)[^/@]+@", r"\1", url)
 
 
+def _first_fetched(log: EventLog, sha: str | None) -> str | None:
+    """The server time of the first fetch whose bytes have SHA-256 ``sha``."""
+    for event in log.iter_events():
+        if event.kind == "fetch.file" and event.data.get("sha256") == sha:
+            return event.server_time
+    return None
+
+
+def legacy_mirror_place(rel: str, fetched_at: str | None) -> str | None:
+    """Where the mirror keeps a file a pre-layout SUMS file lists as ``auditcenter/...``: its path under the RLA
+    directory; for the Audit Center's main page, a snapshot in ``auditCenters/`` named for its fetch time in
+    Colorado time (``auditCenter-2026-11-06T17:24:08-07:00.html``); None for anything else."""
+    if not rel.startswith("auditcenter/"):
+        return None
+    rest = rel.removeprefix("auditcenter/")
+    if rest == "www.coloradosos.gov/pubs/elections/auditCenter.html":
+        if fetched_at is None:
+            return None
+        local = to_colorado(datetime.fromisoformat(fetched_at.replace("Z", "+00:00")))
+        return f"auditCenters/auditCenter-{local.isoformat(timespec='seconds')}.html"
+    first = rest.split("/", 1)[0]
+    return None if "." in first and "/" in rest else rest
+
+
 #: The published event log's name, beside the SUMS files.
 LOG_NAME = "events.jsonl"
 
@@ -988,6 +1053,7 @@ def publish_evidence(
     timeout: float = DEFAULT_TOOL_TIMEOUT,
     echo: Echo | None = None,
     include_log: bool = True,
+    workspace: Workspace | None = None,
 ) -> PublishResult:
     """Publish a commitment: complete its proof, make one commit holding it, push it, and record ``evidence.published``.
 
@@ -1029,8 +1095,31 @@ def publish_evidence(
     if hashlib.sha256(sums_path.read_bytes()).hexdigest() != data["sums_sha256"]:
         raise TimestampError(f"{subdir}/{name} differs from the SUMS file the log records (event {event.seq})")
 
-    names = [name] + [p for p in data.get("proofs") or [] if (target / p).is_file()] + list(data.get("included") or [])
+    names = [name] + [p for p in data.get("proofs") or [] if (target / p).is_file()]
     files = [f"{subdir}/{n}" if subdir else n for n in names]
+    # Copied files: relative to the election's folder (``base`` in the SUMS header); in earlier SUMS files, to its own.
+    parsed_sums = parse_sums(sums_path.read_text(encoding="utf-8", errors="replace"))
+    if "base" in parsed_sums.header:
+        root = str(data.get("election") or "")
+        files += [f"{root}/{n}" if root else str(n) for n in data.get("included") or []]
+    else:
+        # A SUMS file from before the mirror layout (``auditcenter/...`` paths beside it): its Audit Center files
+        # are placed where the mirror keeps them (`legacy_mirror_place`), from the workspace by hash.
+        by_path = {path: sha for sha, path in parsed_sums.entries}
+        for rel in data.get("included") or []:
+            sha = by_path.get(str(rel))
+            dest = legacy_mirror_place(str(rel), _first_fetched(log, sha)) if sha else None
+            if dest is None or workspace is None or sha is None:
+                files.append(f"{subdir}/{rel}" if subdir else str(rel))
+                continue
+            if not dry_run:
+                path = out_repo / dest
+                if not (path.is_file() and sha256_of_file(path)[0] == sha):
+                    path.parent.mkdir(parents=True, exist_ok=True)
+                    path.unlink(missing_ok=True)
+                    workspace.copy_to(sha, path)
+                    os.chmod(path, 0o644)
+            files.append(dest)
     ots_path = target / f"{name}{OTS_SUFFIX}"
     if ots_path.is_file():
         complete, block = _complete_proof(ots_path, timeout=timeout, echo=echo)
@@ -1275,9 +1364,12 @@ def verify_evidence(
     directory), then, by hash, in ``workspace`` if given.
     """
     sums_path = Path(sums_path)
-    base = Path(base) if base is not None else sums_path.parent
     data = sums_path.read_bytes()
     parsed = parse_sums(data.decode("utf-8", errors="replace"))
+    if base is None:
+        declared = parsed.header.get("base", ".")
+        base = sums_path.parent / declared if _is_safe_relative(declared) or set(PurePosixPath(declared).parts) <= {".."} else sums_path.parent
+    base = Path(base)
     checks: list[Check] = [Check("ok", sums_path.name, f"sha256 {hashlib.sha256(data).hexdigest()}")]
     for line in parsed.malformed:
         checks.append(Check("error", "malformed line", line))

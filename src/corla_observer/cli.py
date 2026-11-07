@@ -1614,6 +1614,7 @@ def publish_evidence_command(
         with EventLog.open(log_path or store.root) as log:
             result = publish_evidence(
                 log, out_repo=out_repo, sums_name=sums, actor=actor, title=title, allow_pending=allow_pending, dry_run=dry_run, include_log=not no_log,
+                workspace=store,
                 timeout=timeout, echo=lambda line: typer.echo(f"    {line}", err=True),
             )  # fmt: skip
     except (TimestampError, EventLogError, ValueError) as exc:
