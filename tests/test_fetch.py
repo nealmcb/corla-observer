@@ -8,6 +8,7 @@ local server, over plain HTTP.
 
 from __future__ import annotations
 
+import hashlib
 import socket
 import threading
 from collections.abc import Iterator
@@ -22,6 +23,7 @@ from typer.testing import CliRunner
 from corla_observer.cli import app
 from corla_observer.events import Event, EventLog
 from corla_observer.fetch import (
+    state_digest,
     DEFAULT_ALLOWED_HOSTS,
     CrawlReport,
     FetchFailed,
@@ -624,22 +626,36 @@ def test_first_crawl_fetches_stores_classifies_and_logs(election: Site, store: S
 
 
 def test_unchanged_crawl_ignores_cloudflare_tokens(election: Site, store: Store) -> None:
-    run(election, store)
+    """A crawl that finds everything unchanged (a page differing only by Cloudflare's token) records no event per file:
+    only its summary, with the counts and the digest of what it found, as the log last recorded each file."""
+    first, _ = run(election, store)
     election.routes[START].body = audit_center("61fc872608ef829e8cc7a8dd", DEFAULT_LINKS)
+    new_page_sha = hashlib.sha256(election.routes[START].body).hexdigest()
     events, report = run(election, store)
-    assert kinds(events, "fetch.changed") == []
-    unchanged = by_url(events, "fetch.unchanged")
-    assert len(unchanged) == 7
-    page = unchanged[election.url(START)]
-    assert page.data["compared"] == "normalized_html"
-    assert page.data["sha256"] != page.data["previous_sha256"]
-    assert unchanged[election.url(RLA + "2026/general/files/Adams.csv")].data["compared"] == "bytes"
-    # The page's new raw bytes are stored and fetched as usual, but not reclassified.
-    assert len(kinds(events, "fetch.file")) == 7
-    assert kinds(events, "fetch.classified") == []
-    assert kinds(events, "fetch.alert") == []
+    assert [e.kind for e in events] == ["fetch.crawl_started", "fetch.crawl_finished"]
+    assert report.count("unchanged") == 7
+    finished = events[-1].data
+    assert finished["counts"]["unchanged"] == 7 and finished["files"] == 7
+    recorded = {str(e.data["url"]): str(e.data["sha256"]) for e in kinds(first, "fetch.file")}
+    assert finished["state_sha256"] == state_digest({u: ("", 0, sha) for u, sha in recorded.items()})
+    assert finished["state_sha256"] == kinds(first, "fetch.crawl_finished")[0].data["state_sha256"]
+    # The page's new bytes, differing only by the token, are not stored.
+    assert not store.workspace.has(new_page_sha)
     # Re-fetched in full by default: no conditional headers sent.
     assert all("If-None-Match" not in headers for _, headers in election.requests)
+
+
+def test_a_file_back_after_going_missing_is_recorded_in_full(election: Site, store: Store) -> None:
+    run(election, store)
+    path = RLA + "2026/general/files/Adams.csv"
+    kept = election.routes[path]
+    election.routes[path] = Route(status=404)
+    events, _ = run(election, store)
+    assert list(by_url(events, "fetch.missing")) == [election.url(path)]
+    election.routes[path] = kept
+    events, _ = run(election, store)
+    assert list(by_url(events, "fetch.file")) == [election.url(path)]
+    assert list(by_url(events, "fetch.unchanged")) == [election.url(path)]
 
 
 def test_changed_file_is_recorded_alerted_and_reclassified(election: Site, store: Store) -> None:
@@ -758,11 +774,9 @@ def test_conditional_crawl_skips_unchanged_downloads(election: Site, store: Stor
     run(election, store)
     election.requests.clear()
     events, report = run(election, store, conditional=True)
-    not_modified = by_url(events, "fetch.unchanged")
     adams = election.url(RLA + "2026/general/files/Adams.csv")
-    assert not_modified[adams].data["not_modified"] is True
-    assert not_modified[adams].data["status"] == 304
-    assert adams not in by_url(events, "fetch.file")
+    assert by_url(events, "fetch.unchanged") == {} and adams not in by_url(events, "fetch.file")
+    assert kinds(events, "fetch.crawl_finished")[0].data["counts"]["not_modified"] == 2
     sent = dict(election.requests)
     assert sent[RLA + "2026/general/files/Adams.csv"]["If-None-Match"] == '"adams-1"'
     assert "If-None-Match" not in sent[RLA + "2026/general/finalReports/ContestIDsByCounty.csv"]

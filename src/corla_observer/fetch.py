@@ -19,7 +19,15 @@ Two layers:
 Events written by `crawl` (actor ``system``; ``data`` always has ``url``):
 
 ``fetch.crawl_started``, ``fetch.crawl_finished``
-    The crawl's settings, and its counts and duplicate groups.
+    The crawl's settings, and its counts and duplicate groups. The
+    finished event also has ``files`` (how many were found) and
+    ``state_sha256``: the SHA-256 of the canonical JSON of
+    ``{"files": [[url, sha256], ...]}``, sorted, for every file found, its
+    content as the log last recorded it (`state_digest`). A file found unchanged since the log last
+    recorded it (for HTML, by ``normalized_sha256``, so a page differing
+    only by Cloudflare's per-response token is unchanged) gets no event of
+    its own and its bytes are not stored again: it is counted as
+    ``unchanged`` here, and the digest covers it.
 ``fetch.file``
     A successful (2xx) fetch: ``sha256``, ``size``, ``status``,
     ``final_url``, ``headers``, ``linked_from``, ``depth``, ``attempts``;
@@ -28,8 +36,10 @@ Events written by `crawl` (actor ``system``; ``data`` always has ``url``):
 ``fetch.new``, ``fetch.changed``, ``fetch.unchanged``
     The comparison with the previous fetch of the same URL in the log. HTML
     is compared by ``normalized_sha256``, everything else byte for byte.
-    A ``304 Not Modified`` answer to a conditional request is recorded as
-    ``fetch.unchanged`` with ``not_modified`` true and no ``fetch.file``.
+    ``fetch.unchanged`` is recorded only for a file found again after it
+    went missing (and was, before 7 November 2026, recorded on every crawl).
+    A ``304 Not Modified`` answer to a conditional request is counted as
+    ``not_modified`` in the crawl's summary, with no event of its own.
 ``fetch.missing``
     A linked URL that now fails (an HTTP error, a network error or a
     refused redirect), or a URL linked before that is no longer linked.
@@ -101,7 +111,7 @@ from typing import IO, Any, Protocol
 from corla_observer import __version__
 from corla_observer.classify import classify_bytes, county_from_filename
 from corla_observer.datamap import audit_times, election_from_url
-from corla_observer.events import Event, EventLog, JSONValue
+from corla_observer.events import Event, EventLog, JSONValue, canonical_json
 from corla_observer.flags import WATCHED_KINDS, change_rule
 from corla_observer.workspace import Workspace
 
@@ -833,18 +843,7 @@ class _Crawl:
             self.missing(report, url, f"{type(exc).__name__}: {exc}")
             return False, None
         if result.not_modified and before is not None and before.sha256:
-            self.append(
-                "fetch.unchanged",
-                {
-                    "url": url,
-                    "sha256": before.sha256,
-                    "not_modified": True,
-                    "status": result.status,
-                    "headers": dict(result.headers),
-                    "previous_seq": before.seq,
-                },
-                file_sha256=before.sha256,
-            )
+            # Unchanged: counted in the crawl's summary, and covered by its digest; no event of its own.
             self.current[url] = (before.compare_sha256 or before.sha256, 1, before.sha256)
             report.entries.append(CrawlEntry(url, "not_modified", result.status, before.sha256))
             # A page not re-fetched is not re-parsed: its links are as before.
@@ -865,9 +864,21 @@ class _Crawl:
                 slow(url, result.status, "blocked_page")
             return False, None
 
-        stored = self.workspace.put_bytes(result.body)
         html = is_html(result.body, result.headers.get("content_type"))
         normalized = hashlib.sha256(normalize_html(result.body)).hexdigest() if html else None
+        compare = normalized or result.sha256
+        if (
+            before is not None and before.sha256 and not before.missing
+            and compare == before.compare_sha256 and before.classified_sha256 is not None
+        ):  # fmt: skip
+            # Unchanged since the log last recorded it (a page: but for Cloudflare's per-response token). Counted in
+            # the crawl's summary, and covered by its digest, as the content recorded then; nothing stored or recorded.
+            self.current[url] = (compare, result.size, before.sha256)
+            self.kinds[url] = before.kind
+            report.entries.append(CrawlEntry(url, "unchanged", result.status, before.sha256, result.size, before.kind, None))
+            return True, (result if html else None)
+
+        stored = self.workspace.put_bytes(result.body)
         data: dict[str, JSONValue] = {
             "url": url,
             "final_url": result.final_url,
@@ -885,7 +896,6 @@ class _Crawl:
             data["normalized_sha256"] = normalized
         moment = self.moment(self.append("fetch.file", data, file_sha256=stored.sha256))
 
-        compare = normalized or stored.sha256
         self.current[url] = (compare, stored.size, stored.sha256)
         if before is None or before.sha256 is None:
             outcome = "new"
@@ -1069,6 +1079,8 @@ def crawl(
             "alerts": len(report.alerts),
             "skipped_links": len(report.skipped_links),
             "duplicates": groups[:_MAX_DUPLICATE_GROUPS],
+            "files": len(run.current),
+            "state_sha256": state_digest(run.current),
         },
     )
     return report
@@ -1123,9 +1135,16 @@ def fetch_urls(
             "alerts": len(report.alerts),
             "skipped_links": 0,
             "duplicates": groups[:_MAX_DUPLICATE_GROUPS],
+            "files": len(run.current),
+            "state_sha256": state_digest(run.current),
         },
     )
     return report
+
+
+def state_digest(current: Mapping[str, tuple[str, int, str]]) -> str:
+    """The SHA-256 of the canonical JSON of ``{"files": [[url, sha256], ...]}``, sorted, for every file a crawl found, as the log records it."""
+    return hashlib.sha256(canonical_json({"files": sorted([url, sha] for url, (_, _, sha) in current.items())})).hexdigest()
 
 
 def iter_alerts(log: EventLog) -> Iterable[dict[str, JSONValue]]:
