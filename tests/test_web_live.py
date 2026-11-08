@@ -46,7 +46,9 @@ def test_schedule_page_and_sprint(workspace: Path, make_client: Factory) -> None
     client: TestClient = make_client()
     login(client)
     page = client.get("/coord/schedule")
-    assert page.status_code == 200 and "roll day" in page.text and "idle" in page.text
+    # Whether a cycle is due depends on today's date, inside the election's windows or not.
+    assert page.status_code == 200 and "roll day" in page.text
+    assert "idle" in page.text or "a cycle is due" in page.text
     # No scheduler has looked at the workspace: the page says so, and a sprint is refused.
     assert "never seen for this workspace" in page.text and "Start the sprint</button>" in page.text and " disabled>Start the sprint" in page.text
     refused = client.post("/coord/schedule/sprint", data={"csrf": csrf_of(page), "minutes": "30", "every": "60"}, follow_redirects=False)

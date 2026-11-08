@@ -404,6 +404,6 @@ def test_sent_lists_are_evidence(tmp_path: Path) -> None:
         _send(log, root, ["1-1-3"])  # the demonstration county's: not evidence
         evidence = collect_evidence(store, log)
     paths = {f.path: f.sha256 for f in evidence.files}
-    assert paths.get("derived/extract-Delta-targeted-list-1.json") == sent.extract_sha256
-    assert any(p.startswith("derived/extract-Delta-targeted-list-1-board1-") for p in paths)
+    assert paths.get("observerfiles/derived/extract-Delta-targeted-list-1.json") == sent.extract_sha256
+    assert any(p.startswith("observerfiles/derived/extract-Delta-targeted-list-1-board1-") for p in paths)
     assert not any("2020" in p for p in paths)

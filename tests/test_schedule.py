@@ -171,7 +171,9 @@ def test_cli(tmp_path: Path) -> None:
     root = str(tmp_path / "ws")
     assert runner.invoke(app, ["schedule", "init", "--workspace", root]).exit_code == 0
     shown = runner.invoke(app, ["schedule", "show", "--workspace", root])
-    assert shown.exit_code == 0 and "roll day" in shown.output and "idle" in shown.output
+    # Whether a cycle is due depends on today's date, inside the election's windows or not.
+    assert shown.exit_code == 0 and "roll day" in shown.output
+    assert "now: idle" in shown.output or "now: a cycle is due" in shown.output
     asked = runner.invoke(app, ["schedule", "sprint", "--workspace", root, "--actor", "coordinator:c1", "--minutes", "30"])
     assert asked.exit_code == 0 and "sprint requested" in asked.output
     assert "sprint until" in runner.invoke(app, ["schedule", "show", "--workspace", root]).output
