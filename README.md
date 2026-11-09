@@ -169,7 +169,7 @@ uv run pytest
 uv run mypy
 ```
 
-`uv run pytest` runs the fast tests: small synthetic fixtures, no real election data, and no network beyond a test server on the loopback interface, in a few seconds.
+`uv run pytest` runs the fast tests: small synthetic fixtures, no real election data, and no network beyond a test server on the loopback interface, in a few minutes.
 
 ```
 uv run pytest -m slow
@@ -184,6 +184,25 @@ uv run pytest -m browser
 drives the observer page's contest-by-contest entry in a real browser on a Testland 60-contest ballot, at phone and desktop sizes (`scripts/browser_per_contest.py`; needs a `python3` with Playwright and its Chromium, or `$CORLA_OBSERVER_PLAYWRIGHT_PYTHON` naming one, and is skipped otherwise). `$CORLA_OBSERVER_SCREENSHOTS` names a directory to keep its screenshots in.
 
 If the environment variable `CORLA_OBSERVER_ANONYMIZER` names a local checkout of the public CVR anonymizer, https://github.com/nealmcb/anonymize_cvr, the slow tests also compare the redaction check with that anonymizer's own check, on synthetic files and on the real CVRs. No code of the anonymizer is copied into this repository. The definitional differences between the two are listed in [tests/acceptance/test_redaction_crosscheck.py](tests/acceptance/test_redaction_crosscheck.py).
+
+The tests that reproduce the 2026 primary's selections, extracts and intake need `CORLA_OBSERVER_MIRROR` to name a git clone of the mirror, not just the download cache; the results tests also need `CORLA_OBSERVER_ENR` to name a directory holding the files downloaded from Clarity's election 126592 (https://results.enr.clarityelections.com/CO/126592/): `reports_detailxml.zip`, `reports_detailxlsx.zip`, `reports_summary.zip` and `LaPlata_summary.json`. With all of these set, nothing is skipped:
+
+```
+export CORLA_OBSERVER_MIRROR=/path/to/auditcenter
+export CORLA_OBSERVER_ANONYMIZER=/path/to/anonymize_cvr
+export CORLA_OBSERVER_ENR=/path/to/clarity-126592
+export CORLA_OBSERVER_PLAYWRIGHT_PYTHON=/usr/bin/python3
+uv run pytest -m "slow or browser"
+```
+
+The browser tests run their scripts with that `python3`, so its Playwright must match the browsers installed for it (`python3 -m playwright install chromium`); a newer Playwright added with `uv run --with playwright` looks for a newer Chromium and fails to start it. The slow and browser tests together take about 20 minutes.
+
+To measure coverage, with branches, and list each module's functions by the lines the tests miss:
+
+```
+uv run --with pytest-cov pytest --cov=corla_observer --cov-branch --cov-report=term-missing:skip-covered
+uv run --with coverage python scripts/coverage_by_function.py src/corla_observer/timestamp.py
+```
 
 ## Security
 
