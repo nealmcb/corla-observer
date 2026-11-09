@@ -183,7 +183,7 @@ uv run pytest -m browser
 
 drives the observer page's contest-by-contest entry in a real browser on a Testland 60-contest ballot, at phone and desktop sizes (`scripts/browser_per_contest.py`; needs a `python3` with Playwright and its Chromium, or `$CORLA_OBSERVER_PLAYWRIGHT_PYTHON` naming one, and is skipped otherwise). `$CORLA_OBSERVER_SCREENSHOTS` names a directory to keep its screenshots in.
 
-If the environment variable `CORLA_OBSERVER_ANONYMIZER` names a local checkout of the public CVR anonymizer, https://github.com/loriinboulder/anonymize_cvr, the slow tests also compare the redaction check with that anonymizer's own check, on synthetic files and on the real CVRs. No code of the anonymizer is copied into this repository. The definitional differences between the two are listed in [tests/acceptance/test_redaction_crosscheck.py](tests/acceptance/test_redaction_crosscheck.py).
+If the environment variable `CORLA_OBSERVER_ANONYMIZER` names a local checkout of the public CVR anonymizer, https://github.com/nealmcb/anonymize_cvr, the slow tests also compare the redaction check with that anonymizer's own check, on synthetic files and on the real CVRs. No code of the anonymizer is copied into this repository. The definitional differences between the two are listed in [tests/acceptance/test_redaction_crosscheck.py](tests/acceptance/test_redaction_crosscheck.py).
 
 ## Security
 

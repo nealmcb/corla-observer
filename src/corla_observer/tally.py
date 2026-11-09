@@ -3,7 +3,7 @@
 `tally_cvr` adds up every vote column of a Dominion CVR export
 (`corla_observer.cvr.CvrReader` reads its layout): each cell that is a
 whole number counts that many votes for its choice. So the aggregate rows
-the public anonymizer (https://github.com/loriinboulder/anonymize_cvr)
+the public anonymizer (https://github.com/nealmcb/anonymize_cvr)
 writes in place of the ballots it combines, whose cells hold the combined
 counts, count in full; redaction markers (``*``, ``X``, ``Redacted``) and
 blanks count nothing, so a ballot whose votes were redacted without being

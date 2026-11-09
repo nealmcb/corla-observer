@@ -108,7 +108,7 @@ Each observer's device holds a full record of what that observer entered. It can
 - **A Python package, `corla_observer`,** with a library layer, a Typer command line and a FastAPI web app. It brings in:
   - a reimplementation of CORLA's sampling: its SHA-256 pseudo-random number generator, the combining of county manifests into sampling domains, and sample selection. The project's existing code for this has been checked against CORLA's historical selections and is to be copied into this repository with its tests.
   - CVR reading tolerant of county export quirks: Excel `="..."` wrapping, Latin-1 files, redaction markers, aggregate rows.
-  - the redaction analysis from the public anonymizer, https://github.com/loriinboulder/anonymize_cvr
+  - the redaction analysis from the public anonymizer, https://github.com/nealmcb/anonymize_cvr
   - the extract and spreadsheet generation of the RLAAuditHelper, also used as the independent check of the selections
   - verification of OpenTimestamps and Sigstore proofs
 - **One workspace per election** stores every accepted file unmodified, named by its SHA-256. A SQLite database holds an append-only event table and derived tables (checks, predictions, ballot observations).

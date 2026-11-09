@@ -2,9 +2,8 @@
 
 Marked ``slow``, and skipped unless the environment variable
 ``CORLA_OBSERVER_ANONYMIZER`` names a local checkout of
-https://github.com/loriinboulder/anonymize_cvr. That repository has no
-license file, so none of its code is copied here: its ``anonymize_cvr.py``
-is imported from the checkout at test time, and its own check
+https://github.com/nealmcb/anonymize_cvr. None of its code is copied
+here: its ``anonymize_cvr.py`` is imported from the checkout at test time, and its own check
 (``CvrDatabase``, ``build_row_index`` in check mode and
 ``check_redaction_needs``, with ``redact_on_precinct`` set when the file
 carries precinct information) is compared with `analyze_redaction`: the
@@ -74,7 +73,7 @@ pytestmark = [
     # Skip before the session's mirror files are fetched for nothing.
     pytest.mark.skipif(
         not os.environ.get(ANONYMIZER_ENV),
-        reason=f"set {ANONYMIZER_ENV} to a checkout of https://github.com/loriinboulder/anonymize_cvr",
+        reason=f"set {ANONYMIZER_ENV} to a checkout of https://github.com/nealmcb/anonymize_cvr",
     ),
 ]
 MAYOR, COUNCIL, MEASURE, FIRE = CONTESTS
@@ -175,7 +174,9 @@ def test_agrees_on_latin1_once_transcoded(anonymizer: Any, tmp_path: Path) -> No
     rows = ballots(10, "Mayor", precinct="Cañon") + ballots(2, "Mayor", precinct="Peñasco")
     latin1 = tmp_path / "latin1.csv"
     latin1.write_bytes(make_cvr(rows, encoding="latin-1"))
-    with pytest.raises(UnicodeDecodeError):
+    # Refused: with a CvrError that names the file in later versions, a bare UnicodeDecodeError before.
+    refusals = (UnicodeDecodeError, *((anonymizer.CvrError,) if hasattr(anonymizer, "CvrError") else ()))
+    with pytest.raises(refusals):
         theirs(anonymizer, latin1, True)
     utf8 = tmp_path / "utf8.csv"
     utf8.write_bytes(latin1.read_bytes().decode("latin-1").encode("utf-8"))
