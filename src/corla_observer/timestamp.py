@@ -217,10 +217,14 @@ def software_version() -> str:
     return software()
 
 
-#: Kinds of Audit Center file that change routinely as the audit goes on: they are mirrored, and their
-#: history is in the event log, but they are not committed to, so a published check fails only when a
-#: file that should not change did.
-VOLATILE_KINDS = frozenset({"html_page", "upload_status", "audit_activity_report", "vote_totals", "unknown"})
+#: Audit Center pages: mirrored whenever their content changes, with their history in the event log,
+#: but never listed in a SUMS file, so that a published check fails only when a file that should not
+#: change did.
+NEVER_LISTED_KINDS = frozenset({"html_page"})
+#: Audit Center files that are updated as the audit goes on, listed only when the coordinator asks
+#: (``listed_kinds``): the upload status, for one, after the first statewide selection is reproduced,
+#: which shows the selection used the same manifests as CORLA did.
+ON_REQUEST_KINDS = frozenset({"upload_status", "audit_activity_report"})
 
 
 def mirror_path(url: str) -> str | None:
@@ -233,13 +237,20 @@ def mirror_path(url: str) -> str | None:
     return _safe_path(rest.split("/")) if rest and not rest.endswith("/") else None
 
 
-def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | None = None, election: str | None = None) -> EvidenceSet:
+def collect_evidence(
+    workspace: Workspace,
+    log: EventLog,
+    datamap: DataMap | None = None,
+    election: str | None = None,
+    listed_kinds: Iterable[str] = (),
+) -> EvidenceSet:
     """The evidence set: see the module documentation.
 
     Paths are relative to the election's folder in the mirror (``election``, else the data map's
     election): an Audit Center file at the path the Audit Center publishes it under that folder
     (`mirror_path`), as the mirror keeps it, everything else under ``observerfiles/``. Audit Center
-    files of `VOLATILE_KINDS`, or outside the election's folder, are not listed.
+    files outside the election's folder, pages (`NEVER_LISTED_KINDS`), and files of `ON_REQUEST_KINDS` not
+    named in ``listed_kinds``, are not listed.
 
     Raises:
         TimestampError: if a stored object is missing or corrupt.
@@ -247,6 +258,7 @@ def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | Non
     log_head = log.head()
     datamap = datamap or build_map(log, workspace)
     folder = (election or datamap.election or "").strip("/")
+    unlisted = NEVER_LISTED_KINDS | (ON_REQUEST_KINDS - set(listed_kinds))
     adapter_sources: dict[str, tuple[str, str]] = {}  # output sha -> (module, source sha)
     redaction_passed: set[str] = set()
     prediction: tuple[int, str] | None = None
@@ -305,7 +317,7 @@ def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | Non
         if entry.source == "fetch":
             kind = entry.classified_kind or entry.kind
             mirrored = mirror_path(entry.ref)
-            if kind in VOLATILE_KINDS or mirrored is None or not (mirrored + "/").startswith(folder + "/") or not folder:
+            if kind in unlisted or mirrored is None or not (mirrored + "/").startswith(folder + "/") or not folder:
                 volatile += 1
                 continue
             path = mirrored[len(folder) + 1 :]
@@ -330,7 +342,10 @@ def collect_evidence(workspace: Workspace, log: EventLog, datamap: DataMap | Non
     if ignored:
         notes.append(f"{ignored} file(s) the data map ignores are not listed")
     if volatile:
-        notes.append(f"{volatile} Audit Center file(s) that change routinely (pages, status files) or lie outside the election's folder are not listed; the event log records them")
+        notes.append(
+            f"{volatile} Audit Center file(s) not listed: pages, status files not asked for, or files outside the "
+            "election's folder; the event log records them"
+        )
     if datamap.overrides_sha256 and not datamap.preview:
         add("overrides/overrides.toml", datamap.overrides_sha256, "overrides", f"event {datamap.overrides_seq}")
     if prediction is not None:
@@ -744,6 +759,7 @@ def commit_evidence(
     subdir: str | None = None,
     actor: str = "system",
     include: str = "none",
+    listed_kinds: Iterable[str] = (),
     ots: bool = True,
     cosign: CosignOptions | None = None,
     timeout: float = DEFAULT_TOOL_TIMEOUT,
@@ -766,7 +782,10 @@ def commit_evidence(
     datamap = build_map(log, workspace)
     if datamap.election is not None and datamap.election != election:
         raise TimestampError(f"the data map's election is {datamap.election}, not {election}")
-    evidence = collect_evidence(workspace, log, datamap, election=election)
+    unknown = sorted(set(listed_kinds) - ON_REQUEST_KINDS)
+    if unknown:
+        raise TimestampError(f"only these kinds are listed on request: {', '.join(sorted(ON_REQUEST_KINDS))}; not {', '.join(unknown)}")
+    evidence = collect_evidence(workspace, log, datamap, election=election, listed_kinds=listed_kinds)
     target = out_repo / subdir if subdir else out_repo
     target.mkdir(parents=True, exist_ok=True)
 
@@ -1031,7 +1050,7 @@ def _first_fetched(log: EventLog, sha: str | None) -> str | None:
 def legacy_mirror_place(rel: str, fetched_at: str | None) -> str | None:
     """Where the mirror keeps a file a pre-layout SUMS file lists as ``auditcenter/...``: its path under the RLA
     directory; for the Audit Center's main page, a snapshot in ``auditCenters/`` named for its fetch time in
-    Colorado time (``auditCenter-2026-11-06T17:24:08-07:00.html``); None for anything else."""
+    Colorado time (``auditCenter_2026-11-06T17:24:08-07:00.html``); None for anything else."""
     if not rel.startswith("auditcenter/"):
         return None
     rest = rel.removeprefix("auditcenter/")
@@ -1039,7 +1058,7 @@ def legacy_mirror_place(rel: str, fetched_at: str | None) -> str | None:
         if fetched_at is None:
             return None
         local = to_colorado(datetime.fromisoformat(fetched_at.replace("Z", "+00:00")))
-        return f"auditCenters/auditCenter-{local.isoformat(timespec='seconds')}.html"
+        return f"auditCenters/auditCenter_{local.isoformat(timespec='seconds')}.html"
     first = rest.split("/", 1)[0]
     return None if "." in first and "/" in rest else rest
 

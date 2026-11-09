@@ -658,3 +658,45 @@ def test_target_list_details(ws: Workspace, log: EventLog) -> None:
     fetch(ws, log, election_files(files_targetContests_csv=targets) | {"round1/contest.csv": ROUND1})
     specs = {c.name: c for c in build_map(log, ws).contests}
     assert specs["Adams County Clerk - REP"].target_cards_per_ballot == 2
+
+
+def _evidence_paths(ws: Workspace, log: EventLog) -> tuple[dict[str, str], list[str]]:
+    from corla_observer.timestamp import collect_evidence
+
+    evidence = collect_evidence(ws, log)
+    return {f.path: f.sha256 for f in evidence.files}, evidence.notes
+
+
+def test_supplied_files_and_the_overrides_are_evidence(ws: Workspace, log: EventLog, tmp_path: Path) -> None:
+    """A file supplied by an override is listed under observerfiles/supplied/, with the overrides file that supplied it."""
+    fetch(ws, log, election_files(files_Weld_csv=None))
+    local = tmp_path / "Weld_from_county.csv"
+    weld = b"County,Tabulator,Batch,# of Ballots\r\nWeld,7,1,65\r\n"
+    local.write_bytes(weld)
+    overrides = write_overrides(
+        ws, f'[[supply]]\nname = "Weld.csv"\npath = "{local}"\nsha256 = "{hashlib.sha256(weld).hexdigest()}"\nreason = "r"\n'
+    )
+    assert apply_overrides(ws, log, ACTOR).applied
+    paths, _ = _evidence_paths(ws, log)
+    assert paths["observerfiles/supplied/Weld.csv"] == hashlib.sha256(weld).hexdigest()
+    assert paths["observerfiles/overrides/overrides.toml"] == hashlib.sha256(overrides.read_bytes()).hexdigest()
+
+
+def test_an_adapters_output_and_source_are_evidence_and_its_ignored_input_is_not(ws: Workspace, log: EventLog) -> None:
+    """An adapter's output is listed with the adapter's source code; the input it replaces is ignored by the map, and not listed."""
+    weird = b"Scanner;Batch;Count\r\n7;1;25\r\n7;2;40\r\n"
+    fetch(ws, log, election_files(files_Weld_csv=weird))
+    (ws.root / "adapters").mkdir()
+    (ws.root / "adapters" / "weld_layout.py").write_text(ADAPTER)
+    write_overrides(
+        ws,
+        '[[adapter]]\nmatch = "files/Weld.csv"\nmodule = "weld_layout"\nname = "Weld-converted.csv"\n'
+        'county = "Weld"\nignore_input = true\nreason = "r"\n',
+    )
+    assert apply_overrides(ws, log, ACTOR).applied
+    ran = next(e for e in log.iter_events() if e.kind == "map.adapter_ran")
+    paths, notes = _evidence_paths(ws, log)
+    assert paths["observerfiles/adapter-output/Weld-converted.csv"] == ran.data["output_sha256"]
+    assert paths["observerfiles/adapters/weld_layout.py"] == ran.data["source_sha256"]
+    assert not any(p.endswith("files/Weld.csv") for p in paths)
+    assert any("the data map ignores are not listed" in note for note in notes)

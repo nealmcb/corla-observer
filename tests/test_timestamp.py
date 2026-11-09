@@ -597,23 +597,26 @@ def _fetched(ws: Workspace, log: EventLog, url: str, body: bytes, kind: str, nor
 RLA_URL = "https://www.coloradosos.gov/pubs/elections/RLA/"
 
 
-def test_the_audit_centers_files_at_their_mirror_paths_and_no_volatile_ones(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
+def test_the_audit_centers_files_at_their_mirror_paths_and_no_pages(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
     """A commitment lists the Audit Center's files at the paths the mirror keeps them (relative to the election's folder),
-    copies them there by default, and leaves out files that change routinely, such as pages and the upload status."""
+    and copies them there by default; reports and vote totals are listed, pages never, and the upload status only on request."""
     with EventLog.open(ws.root) as log:
         targets = _fetched(ws, log, RLA_URL + "2026/general/files/2026GeneralRLAContestList.xlsx", b"PK targets", "target_contests")
         _fetched(ws, log, RLA_URL + "2026/general/riskLimit.html", b"<html>3%</html>", "html_page", normalized="c" * 64)
-        _fetched(ws, log, RLA_URL + "2026/general/files/uploadStatus.csv", b"county,status", "upload_status")
+        status = _fetched(ws, log, RLA_URL + "2026/general/files/uploadStatus.csv", b"county,status", "upload_status")
+        report = _fetched(ws, log, RLA_URL + "2026/general/files/Weld_AuditReport.pdf", b"%PDF-1.7 report", "unknown")
+        totals = _fetched(ws, log, RLA_URL + "2026/general/files/VoteTotals.csv", b"contest,choice,votes", "vote_totals")
     runner = CliRunner()
     args = ["commit-evidence", "--workspace", str(ws.root), "--election", ELECTION, "--out-repo", str(out_repo)]
     result = runner.invoke(app, args)
     assert result.exit_code == 0, result.output
-    assert "1 copied (the files fetched from the Audit Center)" in result.output
+    assert "3 copied (the files fetched from the Audit Center)" in result.output
     assert (out_repo / ELECTION / "files" / "2026GeneralRLAContestList.xlsx").read_bytes() == b"PK targets"
     assert not (out_repo / ELECTION / "riskLimit.html").exists() and not (out_repo / ELECTION / "files" / "uploadStatus.csv").exists()
     sums = next((out_repo / SUBDIR).glob("SHA256SUMS-v1-*.txt"))
     lines = parse_sums(sums.read_text()).entries
     assert (targets, "files/2026GeneralRLAContestList.xlsx") in lines
+    assert (report, "files/Weld_AuditReport.pdf") in lines and (totals, "files/VoteTotals.csv") in lines
     assert not any(p.endswith(("riskLimit.html", "uploadStatus.csv")) for _, p in lines)
     # The check line works as written, from the election's folder; and verify-evidence finds the files by the base.
     check = subprocess.run(["sha256sum", "--check", "--ignore-missing", f"observerfiles/{sums.name}"], cwd=out_repo / ELECTION,
@@ -621,9 +624,19 @@ def test_the_audit_centers_files_at_their_mirror_paths_and_no_volatile_ones(ws: 
     assert check.returncode == 0 and "2026GeneralRLAContestList.xlsx: OK" in check.stdout, check.stdout + check.stderr
     assert {c.subject: c.status for c in verify_evidence(sums).checks}["files/2026GeneralRLAContestList.xlsx"] == "ok"
     with EventLog.open(ws.root, read_only=True) as log:
-        assert events(log, "evidence.committed")[-1]["included"] == ["files/2026GeneralRLAContestList.xlsx"]
+        assert events(log, "evidence.committed")[-1]["included"] == [
+            "files/2026GeneralRLAContestList.xlsx", "files/VoteTotals.csv", "files/Weld_AuditReport.pdf",
+        ]
     bad = runner.invoke(app, [*args, "--include", "everything"])
     assert bad.exit_code == 2 and "include must be one of none, fetched, all" in bad.output
+    # The upload status, when asked for; pages can't be.
+    asked = runner.invoke(app, [*args, "--list-kind", "upload_status"])
+    assert asked.exit_code == 0, asked.output
+    sums = next((out_repo / SUBDIR).glob("SHA256SUMS-v2-*.txt"))
+    listed = parse_sums(sums.read_text()).entries
+    assert (status, "files/uploadStatus.csv") in listed and not any(p.endswith("riskLimit.html") for _, p in listed)
+    refused = runner.invoke(app, [*args, "--list-kind", "html_page"])
+    assert refused.exit_code == 2 and "only these kinds are listed on request" in refused.output
 
 
 def test_a_replaced_file_is_called_out_with_where_its_previous_version_is(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
@@ -676,8 +689,8 @@ def test_a_pre_layout_sums_files_audit_center_files_go_where_the_mirror_keeps_th
     assert place("auditcenter/2026/general/files/2026GeneralRLAContestList.xlsx", None) == "2026/general/files/2026GeneralRLAContestList.xlsx"
     assert place("auditcenter/faqs.html", None) == "faqs.html"
     page = "auditcenter/www.coloradosos.gov/pubs/elections/auditCenter.html"
-    assert place(page, "2026-11-07T00:24:08.123Z") == "auditCenters/auditCenter-2026-11-06T17:24:08-07:00.html"
-    assert place(page, "2026-07-07T18:30:05.000Z") == "auditCenters/auditCenter-2026-07-07T12:30:05-06:00.html"
+    assert place(page, "2026-11-07T00:24:08.123Z") == "auditCenters/auditCenter_2026-11-06T17:24:08-07:00.html"
+    assert place(page, "2026-07-07T18:30:05.000Z") == "auditCenters/auditCenter_2026-07-07T12:30:05-06:00.html"
     assert place("auditcenter/example.org/x.html", None) is None and place("observerfiles/x", None) is None
 
 

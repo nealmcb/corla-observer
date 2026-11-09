@@ -1540,6 +1540,17 @@ def commit_evidence_command(
             ),
         ),
     ] = "fetched",
+    list_kind: Annotated[
+        list[str] | None,
+        typer.Option(
+            "--list-kind",
+            help=(
+                "Also list the Audit Center's files of this kind, which are updated as the audit goes on and are listed "
+                "only when asked: 'upload_status' or 'audit_activity_report'. Repeat for both."
+            ),
+            show_default=False,
+        ),
+    ] = None,
     no_ots: Annotated[bool, typer.Option("--no-ots", help="Do not stamp with OpenTimestamps.")] = False,
     no_cosign: Annotated[bool, typer.Option("--no-cosign", help="Do not sign with cosign.")] = False,
     cosign_key: Annotated[
@@ -1565,6 +1576,7 @@ def commit_evidence_command(
                 subdir=subdir,
                 actor=actor,
                 include=include,
+                listed_kinds=list_kind or (),
                 ots=not no_ots,
                 cosign=CosignOptions(enabled=not no_cosign, key=cosign_key),
                 timeout=timeout,
