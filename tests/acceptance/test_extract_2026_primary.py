@@ -25,7 +25,7 @@ import pytest
 from corla_observer.events import EventLog
 from corla_observer.datamap import build_map
 from corla_observer.pdfextract import Qr, Text, pdf_sheets
-from corla_observer.extract import _locations, board_pages, build_extract, corla_order, extract_sha256, qr_payload, render_text, to_csv
+from corla_observer.extract import TEXT_LAYOUT, _locations, board_pages, build_extract, corla_order, extract_sha256, qr_payload, render_text, to_csv
 from corla_observer.predict import latest_prediction
 from corla_observer.rehearse import PRIMARY_2026_COMMIT_IDS, PRIMARY_2026_SEED, run_all
 from corla_observer.workspace import Workspace
@@ -77,12 +77,11 @@ def test_la_plata_extract(tmp_path: Path, mirror: Path) -> None:
     assert extract["board_split"] == "uncertain"
 
     for board in (1, 2):
-        pages = board_pages(extract, built.sha256, board)
         for layout in ("portrait-1", "landscape-3"):
             sheets = pdf_sheets(extract, built.sha256, board, layout)
             assert [s.page for s in sheets] == [None] + [p.number for p in board_pages(extract, built.sha256, board, layout)]
             codes = [i.payload for s in sheets[1:] for i in s.items if isinstance(i, Qr)]
             assert codes == [qr_payload(p) for p in board_pages(extract, built.sha256, board, layout)]
             assert all(t.room is None or t.width <= t.room + 1e-6 for s in sheets for t in s.items if isinstance(t, Text))
-        assert render_text(extract, built.sha256, board).count("\f") == len(pages)  # the provenance page first
+        assert render_text(extract, built.sha256, board).count("\f") == len(board_pages(extract, built.sha256, board, TEXT_LAYOUT))  # the provenance page first
     assert to_csv(extract, built.sha256).count("\r\n") > len(extract["ballots"])
