@@ -47,10 +47,11 @@ where the files and `relayed.tsv` are kept (default
 ## What relayed results change
 
 They count exactly like fetched ones: per scope, the newest file by the time Clarity generated it.
-The estimates rank the Audit Center's data above them: a targeted contest's margin and ballot cards
-still come from the target contest list until CORLA's own contest list and the manifests arrive,
-and the results supply only what those lack. A relayed file always feeds the totals check, which
-compares the results with the target list, the CVRs and CORLA's tallies.
+In the estimates (`corla_observer.estimate`), a targeted contest's margin comes from the latest
+results, ahead of the target contest list's, until CORLA's own contest list is posted; its ballot
+cards come from each county's ballots cast in the results times its cards per ballot, until the
+manifests arrive. A relayed file also feeds the totals check, which compares the results with the
+target list, the CVRs and CORLA's tallies.
 
 The server keeps trying Clarity itself on its schedule. Once Clarity serves it again, the notice on
 `/coord/estimates` clears, and the relay can stop.
