@@ -637,7 +637,7 @@ def test_drafts_on_the_coordinator_page(tmp_path: Path) -> None:
         assert made.status_code == 303 and "msg=drafted" in made.headers["location"] and made.headers["location"].endswith(f"#{key}")
         page = client.get(made.headers["location"]).text
         assert "Draft made" in page and '<section id="drafts">' in page and "Observers see them" in page  # a test county
-        assert "Empty: check a source above" in page and f"list={key}\" download>PDF, portrait" in page
+        assert "Empty: check a source above" in page and f"list={key}\">PDF, portrait" in page
         assert client.get(f"/coord/extract/pdf?county={COUNTY}&board=1&layout=portrait-2&list={key}").content.startswith(b"%PDF")
         assert len(client.get(f"/coord/targets/sent/csv?county={COUNTY}&list={key}").content.decode("utf-8-sig").splitlines()) == 4
         assert "Draft 1" not in client.get("/coord/extract").text  # drafts are on this page only
@@ -720,7 +720,7 @@ def test_the_coordinator_pages(tmp_path: Path) -> None:
         assert "Targeted list 1 sent to the county" in page and "(9 ballots, marked TARGETED (NOT RLA)" in page
         assert f"Targeted list 1 for {COUNTY}" in page and "their links open on it" in page  # no RLA sample yet
         assert "Empty: check a source above" in page and "Send to county: make Targeted list 2" not in page
-        assert f"list={key}\" download>PDF, portrait" in page
+        assert f"list={key}\">PDF, portrait" in page
         extracts = client.get("/coord/extract").text
         assert "TARGETED (NOT RLA)" in extracts and "Targeted list 1" in extracts and f"No RLA-sample extract for {COUNTY} yet" in extracts
         listed = client.get(f"/coord/targets/sent/csv?county={COUNTY}&list={key}").content.decode("utf-8-sig")

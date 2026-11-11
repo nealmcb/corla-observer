@@ -178,7 +178,7 @@
     {% if ident and not lookup %}
     <div class="obs-more-group">
       <p class="obs-more-label">Printout, if you prefer paper{% if ident.order == "predicted" %} (predicted order: not yet the county's pull list){% elif ident.order == "audit_center" %} (CORLA's posted selections: not yet the county's pull list){% elif ident.order == "targeted" %} (targeted ballots, not part of the RLA sample){% endif %}:</p>
-      {% for layout in ident.layouts %}<a class="button secondary small" href="{{ url('/observe/' ~ token ~ '/pdf?layout=' ~ layout) }}{{ list_amp }}" download>PDF, {{ layout_label(layout) }}</a> {% endfor %}
+      {% for layout in ident.layouts %}<a class="button secondary small" href="{{ url('/observe/' ~ token ~ '/pdf?layout=' ~ layout) }}{{ list_amp }}">PDF, {{ layout_label(layout) }}</a> {% endfor %}
       <p class="meta"><code class="hash">{{ ident.line }}</code></p>
     </div>
     {% endif %}

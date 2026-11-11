@@ -83,7 +83,7 @@ Screenshots: `02-login.png`; `03-coordinator-home.png`: the buttons **Upload fil
 
 Don't click **Fetch now** in the demo: it crawls the real Secretary of State's site.
 
-You stay logged in if you close the browser, for up to 12 hours (2 hours without use); **Log out** ends it, and so does restarting the server.
+You stay logged in, even if you close the browser or the server restarts, until you **Log out**, for up to 30 days.
 
 Narration: "Coordinators log in here. The menu along the top has every coordinator page."
 

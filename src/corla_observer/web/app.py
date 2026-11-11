@@ -75,7 +75,7 @@ from corla_observer.signed import DeviceRegistry
 from corla_observer.intake import MAX_TOTAL_BYTES
 from corla_observer.web.accounts import AccountStore
 from corla_observer.web.ratelimit import Limit, RateLimiter
-from corla_observer.web.sessions import SessionStore
+from corla_observer.web.sessions import SESSIONS_PATH, SessionStore
 from corla_observer.web.views import Snapshot, SnapshotCache, build_snapshot, missing_label, short_ref
 from corla_observer.workspace import Workspace
 
@@ -197,7 +197,7 @@ class WebState:
         self.workspace = Workspace.open(config.workspace)
         self.log = EventLog.open(self.workspace.root)
         self.accounts = AccountStore(self.workspace.root)
-        self.sessions = SessionStore(config.secret)
+        self.sessions = SessionStore(config.secret, self.workspace.root / SESSIONS_PATH)
         self.login_limiter = RateLimiter(config.login_limit)
         self.upload_limiter = RateLimiter(config.upload_limit)
         self.photo_limiter = RateLimiter(config.photo_limit)

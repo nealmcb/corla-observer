@@ -272,8 +272,8 @@ async def login(request: Request) -> Response:
     cookie, session = state.sessions.create(account.name, account.actor)
     state.log.append("coordinator.login", account.actor, session_id=session.label, data={"name": account.name})
     response = RedirectResponse(state.url(wanted or "/coord?msg=logged_in"), status_code=303)
-    # Kept when the browser is closed, for the session's lifetime (it still ends on logging out, after
-    # SESSION_IDLE without use, or when the server restarts, since sessions are held in its memory).
+    # Kept when the browser is closed, for the session's lifetime (it ends on logging out, or after
+    # SESSION_LIFETIME; the server keeps sessions across restarts).
     _set_cookie(state, response, SESSION_COOKIE, cookie, max_age=SESSION_LIFETIME)
     _clear_cookie(state, response, PRESESSION_COOKIE)
     return response

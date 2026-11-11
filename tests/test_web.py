@@ -235,6 +235,15 @@ def test_login_never_returns_to_another_site(make_client: Factory) -> None:
     assert client.post("/coord/extract", data={"csrf": "x"}, follow_redirects=False).headers.get("location") in (None, "/login")
 
 
+def test_a_restart_keeps_you_logged_in(make_client: Factory) -> None:
+    first = make_client()
+    login(first)
+    second = make_client()
+    second.cookies.update(first.cookies)
+    page = second.get("/coord", follow_redirects=False)
+    assert page.status_code == 200 and "Log out alice" in page.text
+
+
 def test_csrf_is_required(workspace: Path, client: TestClient) -> None:
     # A login form posted without the pre-session token.
     assert client.post("/login", data={"name": "alice", "password": PASSWORD}).status_code == 403

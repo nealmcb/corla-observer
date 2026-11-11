@@ -41,7 +41,7 @@
         {% for board, pages, ballots in row.boards %}
           {% set q = '?county=' ~ row.county|urlencode ~ '&board=' ~ board %}
           <tr><td>{{ board }}</td><td>{{ ballots }}</td>
-            <td>{% for layout in row.layouts %}{% if not loop.first %} &middot; {% endif %}<a href="{{ url('/coord/extract/pdf' ~ q ~ '&layout=' ~ layout) }}" download>Download PDF ({{ layout_label(layout) }})</a>: {{ pages[loop.index0] }}{% endfor %}</td>
+            <td>{% for layout in row.layouts %}{% if not loop.first %} &middot; {% endif %}<a href="{{ url('/coord/extract/pdf' ~ q ~ '&layout=' ~ layout) }}">Download PDF ({{ layout_label(layout) }})</a>: {{ pages[loop.index0] }}{% endfor %}</td>
             <td><a href="{{ url('/coord/extract/text' ~ q) }}">text</a>
               &middot; <a href="{{ url('/coord/extract/provenance' ~ q) }}">provenance</a>
               &middot; <a href="{{ url('/coord/extract/csv' ~ q) }}">CSV</a></td></tr>
@@ -66,7 +66,7 @@
         {% for board, pages, ballots in t.boards %}
           {% set q = '?county=' ~ row.county|urlencode ~ '&board=' ~ board ~ '&list=' ~ x.key %}
           <tr><td>{{ board }}</td><td>{{ ballots }}</td>
-            <td>{% for layout in t.layouts %}{% if not loop.first %} &middot; {% endif %}<a href="{{ url('/coord/extract/pdf' ~ q ~ '&layout=' ~ layout) }}" download>Download PDF ({{ layout_label(layout) }})</a>: {{ pages[loop.index0] }}{% endfor %}</td>
+            <td>{% for layout in t.layouts %}{% if not loop.first %} &middot; {% endif %}<a href="{{ url('/coord/extract/pdf' ~ q ~ '&layout=' ~ layout) }}">Download PDF ({{ layout_label(layout) }})</a>: {{ pages[loop.index0] }}{% endfor %}</td>
             <td><a href="{{ url('/coord/extract/text' ~ q) }}">text</a> &middot; <a href="{{ url('/coord/extract/provenance' ~ q) }}">provenance</a> &middot; <a href="{{ url('/coord/extract/csv' ~ q) }}">CSV</a></td></tr>
         {% endfor %}
         </tbody>

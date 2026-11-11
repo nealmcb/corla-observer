@@ -66,7 +66,7 @@
 </form>
 {% if ident %}
 <p class="meta"><code class="hash">{{ ident }}</code> &middot; <a href="{{ url('/read/' ~ token ~ '/provenance') }}{% if list_key != 'rla' %}?list={{ list_key }}{% endif %}">provenance</a> (the seed and every hash in full) &middot; <a href="{{ url('/read/' ~ token ~ '/check') }}">check a printed page</a></p>
-{% if print_layouts %}<p class="meta">Printout: {% for layout in print_layouts %}{% if not loop.first %} &middot; {% endif %}<a href="{{ url('/read/' ~ token ~ '/pdf?layout=' ~ layout) }}{{ list_amp }}" download>Download PDF ({{ layout_label(layout) }})</a>{% endfor %}</p>{% endif %}
+{% if print_layouts %}<p class="meta">Printout: {% for layout in print_layouts %}{% if not loop.first %} &middot; {% endif %}<a href="{{ url('/read/' ~ token ~ '/pdf?layout=' ~ layout) }}{{ list_amp }}">Download PDF ({{ layout_label(layout) }})</a>{% endfor %}</p>{% endif %}
 {% endif %}
 {% endif %}
 {% endblock %}

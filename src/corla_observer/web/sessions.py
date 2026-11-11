@@ -1,10 +1,13 @@
 """Server-side coordinator sessions behind signed cookies, CSRF tokens, and the server secret.
 
-A session is held in the server's memory (`SessionStore`), so logging out,
-or restarting the server, ends it; so do `SESSION_LIFETIME` (12 hours)
-from logging in and `SESSION_IDLE` (2 hours) without use. Its cookie lasts
-the session's lifetime, so closing the browser does not log a coordinator
-out. The cookie carries only a random session
+A session lasts until logging out, or `SESSION_LIFETIME` (30 days) from
+logging in; there is no limit on time without use. Its cookie lasts the
+session's lifetime, so closing the browser does not log a coordinator out.
+Sessions are kept in a file beside the coordinator accounts
+(``accounts/sessions.json``, mode 0600), so restarting the server keeps
+everyone logged in. The file holds only the SHA-256 of each session's token,
+never the token itself, so a copy of it can't be turned into a cookie.
+The cookie carries only a random session
 token and an HMAC-SHA256 signature of it made with the server secret, so a
 cookie not issued by this server is rejected before any lookup. Each session
 has its own CSRF token, which every form carries and every POST checks.
@@ -28,8 +31,10 @@ from __future__ import annotations
 
 import hashlib
 import hmac
+import json
 import os
 import secrets
+import tempfile
 import threading
 import time
 from dataclasses import dataclass, field
@@ -39,9 +44,10 @@ from pathlib import Path
 SECRET_ENV = "CORLA_OBSERVER_SECRET_FILE"
 SECRET_BYTES = 32
 
-#: How long a session lasts after login, and after its last use.
-SESSION_LIFETIME = 12 * 3600
-SESSION_IDLE = 2 * 3600
+#: How long a session lasts after login (there is no limit on time without use).
+SESSION_LIFETIME = 30 * 24 * 3600
+#: The sessions file, relative to the workspace root (beside the accounts).
+SESSIONS_PATH = Path("accounts") / "sessions.json"
 #: Most sessions held at once; the oldest are dropped beyond this.
 MAX_SESSIONS = 1000
 
@@ -96,16 +102,78 @@ class Session:
     last_used: float = field(default=0.0)
 
 
-class SessionStore:
-    """Sessions in memory, keyed by a random token that a signed cookie carries."""
+def _key(token: str) -> str:
+    """What a session is filed under: the SHA-256 of its token, so the file never holds a usable token."""
+    return hashlib.sha256(token.encode()).hexdigest()
 
-    def __init__(self, secret: bytes) -> None:
+
+class SessionStore:
+    """Sessions keyed by (the hash of) a random token that a signed cookie carries; kept in ``path`` if given."""
+
+    def __init__(self, secret: bytes, path: Path | str | None = None) -> None:
         self._secret = secret
+        self._path = Path(path) if path is not None else None
         self._sessions: dict[str, Session] = {}
         self._lock = threading.Lock()
+        self._load()
+
+    def _load(self) -> None:
+        if self._path is None:
+            return
+        try:
+            raw = json.loads(self._path.read_text(encoding="utf-8"))
+            entries = raw["sessions"] if raw.get("format") == 1 else {}
+            for key, e in entries.items():
+                self._sessions[str(key)] = Session(
+                    account=str(e["account"]),
+                    actor=str(e["actor"]),
+                    csrf=str(e["csrf"]),
+                    label=str(e["label"]),
+                    created=float(e["created"]),
+                    last_used=float(e["last_used"]),
+                )
+        except FileNotFoundError:
+            return
+        except (OSError, ValueError, KeyError, TypeError, AttributeError):
+            # An unreadable file only means logging in again.
+            self._sessions = {}
+        self._expire(time.time())
+
+    def _save(self) -> None:
+        """Write the sessions file atomically (mode 0600); called with the lock held."""
+        if self._path is None:
+            return
+        directory = self._path.parent
+        directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        body = {
+            "format": 1,
+            "sessions": {
+                k: {
+                    "account": s.account,
+                    "actor": s.actor,
+                    "csrf": s.csrf,
+                    "label": s.label,
+                    "created": s.created,
+                    "last_used": s.last_used,
+                }
+                for k, s in self._sessions.items()
+            },
+        }
+        fd, tmp = tempfile.mkstemp(dir=directory, prefix=".sessions-")
+        try:
+            os.chmod(tmp, 0o600)
+            with os.fdopen(fd, "w", encoding="utf-8") as f:
+                json.dump(body, f, sort_keys=True)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(tmp, self._path)
+        finally:
+            Path(tmp).unlink(missing_ok=True)
 
     def _sign(self, purpose: str, value: str) -> str:
-        return hmac.new(self._secret, f"{purpose}\x00{value}".encode(), hashlib.sha256).hexdigest()
+        return hmac.new(
+            self._secret, f"{purpose}\x00{value}".encode(), hashlib.sha256
+        ).hexdigest()
 
     # -- sessions ------------------------------------------------------------
 
@@ -126,7 +194,8 @@ class SessionStore:
             if len(self._sessions) >= MAX_SESSIONS:
                 oldest = min(self._sessions, key=lambda k: self._sessions[k].last_used)
                 del self._sessions[oldest]
-            self._sessions[token] = session
+            self._sessions[_key(token)] = session
+            self._save()
         return f"{token}.{self._sign('session', token)}", session
 
     def get(self, cookie: str | None) -> Session | None:
@@ -136,11 +205,12 @@ class SessionStore:
             return None
         now = time.time()
         with self._lock:
-            session = self._sessions.get(token)
+            session = self._sessions.get(_key(token))
             if session is None:
                 return None
-            if now - session.created > SESSION_LIFETIME or now - session.last_used > SESSION_IDLE:
-                del self._sessions[token]
+            if now - session.created > SESSION_LIFETIME:
+                del self._sessions[_key(token)]
+                self._save()
                 return None
             session.last_used = now
             return session
@@ -150,7 +220,10 @@ class SessionStore:
         if token is None:
             return None
         with self._lock:
-            return self._sessions.pop(token, None)
+            session = self._sessions.pop(_key(token), None)
+            if session is not None:
+                self._save()
+            return session
 
     def _token(self, cookie: str | None) -> str | None:
         if not cookie or len(cookie) > 256 or "." not in cookie:
@@ -162,9 +235,7 @@ class SessionStore:
 
     def _expire(self, now: float) -> None:
         for token in [
-            t
-            for t, s in self._sessions.items()
-            if now - s.created > SESSION_LIFETIME or now - s.last_used > SESSION_IDLE
+            t for t, s in self._sessions.items() if now - s.created > SESSION_LIFETIME
         ]:
             del self._sessions[token]
 
