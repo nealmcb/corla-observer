@@ -239,7 +239,9 @@ def fetch_command(
     path_prefix: Annotated[
         str, typer.Option("--path-prefix", help="Follow links only to paths under this prefix.")
     ] = DEFAULT_PATH_PREFIX,
-    max_depth: Annotated[int, typer.Option("--max-depth", help="Links to follow from the start page.")] = 2,
+    max_depth: Annotated[
+        int | None, typer.Option("--max-depth", help="Links to follow from the start page (default: however many).", show_default=False)
+    ] = None,
     max_urls: Annotated[int, typer.Option("--max-urls", help="Most URLs to fetch.")] = 2000,
     rate: Annotated[
         float,
@@ -280,6 +282,10 @@ def fetch_command(
         f"{report.count(o)} {o}" for o in ("new", "changed", "unchanged", "not_modified", "missing")
     )
     typer.echo(f"{len(report.entries)} URLs: {counts}; {len(report.skipped_links)} links not followed")
+    if report.truncated:
+        typer.echo(f"incomplete: the crawl reached its cap of {max_urls} addresses", err=True)
+    for link, text in report.outside_links.items():
+        typer.echo(f"outside link, first seen: {link}" + (f"  [{text}]" if text else ""))
     for alert in report.alerts:
         typer.echo(f"ALERT: {json.dumps(alert, sort_keys=True)}", err=True)
     for slowdown in fetcher.slowdowns:

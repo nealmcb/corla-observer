@@ -59,7 +59,9 @@ Events written by `crawl` (actor ``system``; ``data`` always has ``url``):
     list or county-ID file new, changed or removed after the roll time the
     log knows of, with ``change``, ``time``, ``roll_time`` and both hashes),
     ``changed_after_round_start`` (any file changed or removed after the
-    first round started), ``manifest_under_other_name`` (a manifest whose
+    first round started), ``crawl_incomplete`` (the crawl reached its cap of
+    ``max_urls`` addresses, so it may have missed files; nothing it did not
+    reach is reported missing), ``manifest_under_other_name`` (a manifest whose
     content names another county than its file name), or
     ``duplicate_content`` (two or more URLs serve identical content, as
     when one county's manifest was served under other counties' names;
@@ -75,6 +77,13 @@ Events written by `crawl` (actor ``system``; ``data`` always has ``url``):
     The fetcher halved its request rate after a 429, a 503 or a Cloudflare
     challenge page: ``url``, ``status``, ``cause``, ``previous_min_interval_ms``
     and ``min_interval_ms``.
+``fetch.outside_link``
+    A link on the start page that leads outside the crawl's scope (another
+    host, or a page outside the RLA directory), recorded once, when first
+    seen, for a person to decide whether it belongs in the record: ``url``,
+    ``linked_from`` and ``text`` (the link's text). Links that also appear
+    on most of the other pages fetched (the site's navigation and footer)
+    are left out (`outside_links`). Such a link is never fetched.
 
 `fetch_urls` fetches a fixed list of URLs instead, recording the same
 events; a rehearsal uses it to replay the audit center as a mirror held it
@@ -534,7 +543,10 @@ class _LinkParser(HTMLParser):
     def __init__(self) -> None:
         super().__init__(convert_charrefs=True)
         self.links: list[str] = []
+        #: The text of each link that is an ``a`` element, by its index in ``links``.
+        self.texts: dict[int, str] = {}
         self.base: str | None = None
+        self._anchor: int | None = None
 
     def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
         values = dict(attrs)
@@ -544,6 +556,17 @@ class _LinkParser(HTMLParser):
         name = self._LINK_ATTRS.get(tag)
         if name and values.get(name):
             self.links.append(str(values[name]).strip())
+            if tag == "a":
+                self._anchor = len(self.links) - 1
+                self.texts[self._anchor] = ""
+
+    def handle_endtag(self, tag: str) -> None:
+        if tag == "a":
+            self._anchor = None
+
+    def handle_data(self, data: str) -> None:
+        if self._anchor is not None and len(self.texts[self._anchor]) < 500:
+            self.texts[self._anchor] += data
 
 
 def _decode_html(body: bytes, content_type: str | None) -> str:
@@ -566,22 +589,54 @@ def extract_links(body: bytes, page_url: str, content_type: str | None = None) -
     Links are taken from ``a``/``area`` ``href``, ``iframe``/``frame``/
     ``embed``/``img`` ``src`` and ``object`` ``data``, resolved against the
     page's ``<base href>`` or its URL. ``mailto:``, ``javascript:`` and
-    other non-HTTP links are dropped.
+    other non-HTTP links are dropped. A link to a part of a page (``#...``)
+    becomes the page's own URL, so a link to a part of the same page is the
+    page itself, which a crawl has already seen.
     """
+    return list(extract_link_texts(body, page_url, content_type))
+
+
+def extract_link_texts(body: bytes, page_url: str, content_type: str | None = None) -> dict[str, str]:
+    """The links of an HTML page as `extract_links` finds them, in order, each with the text of its
+    first ``a`` element (whitespace collapsed; empty for a link that is not an ``a`` element)."""
     parser = _LinkParser()
     parser.feed(_decode_html(body, content_type))
     parser.close()
     base = urllib.parse.urljoin(page_url, parser.base) if parser.base else page_url
-    seen: set[str] = set()
-    links: list[str] = []
-    for link in parser.links:
+    links: dict[str, str] = {}
+    for n, link in enumerate(parser.links):
         absolute = urllib.parse.urldefrag(urllib.parse.urljoin(base, link)).url
         if urllib.parse.urlsplit(absolute).scheme.lower() not in ("http", "https"):
             continue
-        if absolute not in seen:
-            seen.add(absolute)
-            links.append(absolute)
+        text = " ".join(parser.texts.get(n, "").split())[:200]
+        if absolute not in links or (not links[absolute] and text):
+            links[absolute] = text
     return links
+
+
+def outside_links(
+    start_url: str, pages: Mapping[str, Mapping[str, str]], follows: Callable[[str], bool]
+) -> dict[str, str]:
+    """The start page's links that lead outside a crawl's scope, with their text, less the site's navigation.
+
+    ``pages`` holds each HTML page fetched, by URL, with its links (`extract_link_texts`); ``follows``
+    says whether the crawl follows a link. A link outside the scope is kept unless it is the start page
+    itself, Cloudflare's own (``/cdn-cgi/``, such as an obfuscated email address), or it also appears on
+    more than half of the other pages fetched: the site's navigation and footer, which every page of the
+    site carries.
+    """
+    start = pages.get(start_url)
+    if start is None:
+        return {}
+    others = [set(links) for url, links in pages.items() if url != start_url]
+    found: dict[str, str] = {}
+    for link, text in start.items():
+        if link == start_url or follows(link) or urllib.parse.urlsplit(link).path.startswith("/cdn-cgi/"):
+            continue
+        if others and sum(1 for o in others if link in o) * 2 > len(others):
+            continue
+        found[link] = text
+    return found
 
 
 def is_followed(url: str, policy: FetchPolicy, path_prefix: str = DEFAULT_PATH_PREFIX) -> bool:
@@ -619,6 +674,8 @@ class _UrlState:
 class _PreviousState:
     urls: dict[str, _UrlState] = field(default_factory=dict)
     duplicates: set[tuple[str, tuple[str, ...]]] = field(default_factory=set)
+    #: Links outside the crawl's scope already recorded (``fetch.outside_link``).
+    outside: set[str] = field(default_factory=set)
 
     def get(self, url: str) -> _UrlState:
         return self.urls.setdefault(url, _UrlState())
@@ -647,6 +704,9 @@ def _previous_state(log: EventLog) -> _PreviousState:
             continue
         url = _str_or_none(data.get("url"))
         if url is None:
+            continue
+        if event.kind == "fetch.outside_link":
+            state.outside.add(url)
             continue
         entry = state.get(url)
         if event.kind == "fetch.file":
@@ -714,7 +774,10 @@ class CrawlReport:
     alerts: list[dict[str, JSONValue]] = field(default_factory=list)
     #: Links seen but not followed: off the allow-list or outside the path prefix.
     skipped_links: list[str] = field(default_factory=list)
-    #: True if ``max_urls`` cut the crawl short (no "no longer linked" checks then).
+    #: Links on the start page leading outside the scope, first seen in this crawl, with their text
+    #: (``fetch.outside_link``; `outside_links`).
+    outside_links: dict[str, str] = field(default_factory=dict)
+    #: True if ``max_urls`` cut the crawl short (no "no longer linked" checks then): the crawl is incomplete.
     truncated: bool = False
     start_failed: bool = False
 
@@ -993,7 +1056,7 @@ def crawl(
     fetcher: Fetcher | None = None,
     conditional: bool = False,
     path_prefix: str = DEFAULT_PATH_PREFIX,
-    max_depth: int = 2,
+    max_depth: int | None = None,
     max_urls: int = 2000,
     extra_urls: Iterable[str] = (),
 ) -> CrawlReport:
@@ -1011,11 +1074,15 @@ def crawl(
     page lives at ``/pubs/elections/auditCenter.html`` and links to its
     files relatively (``RLA/2026/...``), so the defaults cover it.
 
-    Follows links from HTML pages, breadth first, to in-scope URLs, up
-    to ``max_depth`` links away from ``start_url`` and ``max_urls`` URLs in
-    all. Every response body is stored in ``workspace`` and every outcome
+    Follows links from HTML pages, breadth first, to in-scope URLs,
+    however many links away from ``start_url`` (or up to ``max_depth``
+    links, if given), and fetches at most ``max_urls`` URLs in all: a
+    crawl that reaches the cap is marked ``truncated`` and alerted as
+    ``crawl_incomplete``, and nothing it did not reach is reported missing.
+    Every response body is stored in ``workspace`` and every outcome
     recorded in ``log``, as described in this module's documentation.
-    Returns a `CrawlReport`.
+    The start page's links leading outside the scope are recorded once each
+    (``fetch.outside_link``), never fetched. Returns a `CrawlReport`.
     """
     fetcher = fetcher or Fetcher()
     run = _Crawl(workspace, log, fetcher, path_prefix, conditional)
@@ -1039,15 +1106,20 @@ def crawl(
     for extra in extras:
         seen.add(extra)
         queue.append((extra, None, 1))
+    pages: dict[str, dict[str, str]] = {}
     while queue:
         url, linked_from, depth = queue.popleft()
         available, page = run.visit(report, url, linked_from, depth)
         run.record_slowdowns()
         if url == start_url and not available:
             report.start_failed = True
-        if page is None or depth >= max_depth:
+        if page is None:
             continue
-        for link in extract_links(page.body, page.final_url, page.headers.get("content_type")):
+        links = extract_link_texts(page.body, page.final_url, page.headers.get("content_type"))
+        pages[url] = links
+        if max_depth is not None and depth >= max_depth:
+            continue
+        for link in links:
             if link in seen or link in skipped:
                 continue
             if not run.follows(link):
@@ -1059,6 +1131,22 @@ def crawl(
             seen.add(link)
             queue.append((link, url, depth + 1))
     report.skipped_links = sorted(skipped)
+    for link, text in outside_links(start_url, pages, run.follows).items():
+        if link not in run.previous.outside:
+            report.outside_links[link] = text
+            run.append("fetch.outside_link", {"url": link, "linked_from": start_url, "text": text})
+    if report.truncated:
+        run.alert(
+            report,
+            {
+                "reason": "crawl_incomplete",
+                "severity": "normal",
+                "url": start_url,
+                "max_urls": max_urls,
+                "message": f"the crawl reached its cap of {max_urls} addresses and stopped, so it may have missed "
+                "files; nothing it did not reach is reported missing",
+            },
+        )
 
     if not report.start_failed and not report.truncated:
         for url, before in sorted(run.previous.urls.items()):
@@ -1078,6 +1166,7 @@ def crawl(
             },
             "alerts": len(report.alerts),
             "skipped_links": len(report.skipped_links),
+            "outside_links": len(report.outside_links),
             "duplicates": groups[:_MAX_DUPLICATE_GROUPS],
             "files": len(run.current),
             "state_sha256": state_digest(run.current),

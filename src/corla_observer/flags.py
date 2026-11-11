@@ -153,6 +153,10 @@ INVESTIGATE: dict[str, str] = {
         "the county named in the file name may have no correct manifest posted: check with the Secretary of State "
         "and the county, and use the county's own copy"
     ),
+    "crawl_incomplete": (
+        "the crawl stopped at its cap of addresses: look for a link loop or a page generating links on the "
+        "Audit Center, and check the files it did not reach by hand"
+    ),
     "duplicate_content": (
         "identical files under different counties' names: one county's file is probably posted under another's "
         "name; find each county's real file"

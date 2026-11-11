@@ -878,3 +878,58 @@ def test_normalize_html_handles_a_script_end_tag_with_attributes() -> None:
     assert b"__CF$cv$params" not in normalized
     assert b"<p>Round 1 files</p>" in normalized
     assert b"var keep = 1" not in normalized  # its own marker removes it, independently
+
+
+def test_every_page_under_rla_is_followed_however_deep(election: Site, store: Store) -> None:
+    # A chain of pages, each linking the next, five links from the start page.
+    election.routes[RLA + "2026/general/files/targetContests.csv"] = Route(b"<html><body><a href='deep1.html'>on</a></body></html>")
+    for n in range(1, 5):
+        election.routes[RLA + f"2026/general/files/deep{n}.html"] = Route(f"<html><body><a href='deep{n + 1}.html'>on</a></body></html>".encode())
+    election.routes[RLA + "2026/general/files/deep5.html"] = Route(b"<html><body>the end</body></html>")
+    events, report = run(election, store)
+    assert election.url(RLA + "2026/general/files/deep5.html") in by_url(events, "fetch.file")
+    assert not report.truncated and kinds(events, "fetch.crawl_started")[0].data["max_depth"] is None
+
+
+def test_a_crawl_that_reaches_its_cap_is_incomplete_flagged_and_reports_nothing_missing(election: Site, store: Store) -> None:
+    run(election, store)
+    events, report = run(election, store, max_urls=3)
+    assert report.truncated and kinds(events, "fetch.missing") == []
+    [alert] = [e for e in kinds(events, "fetch.alert") if e.data["reason"] == "crawl_incomplete"]
+    assert alert.data["severity"] == "normal" and alert.data["max_urls"] == 3
+    assert kinds(events, "fetch.crawl_finished")[0].data["truncated"] is True
+    from corla_observer.flags import check_flags
+
+    assert "crawl_incomplete" in [f.reason for f in check_flags(store.log, store.workspace)]
+
+
+def test_links_outside_the_rla_directory_are_listed_once_without_the_sites_navigation(election: Site, store: Store) -> None:
+    nav = '<a href="/pubs/elections/main.html">Elections</a><a href="/index.html">Home</a>'
+    links = [*DEFAULT_LINKS, "#top", "2026/general/riskLimit.html#part", "https://www.youtube.com/watch?v=seed"]
+    body = audit_center("54362e442f4f84375efe9194", links).replace(b"<ul>", nav.encode() + b"<ul>")
+    election.routes[START] = Route(body, headers={"Content-Type": "text/html; charset=utf-8"})
+    election.routes[RLA + "2026/general/riskLimit.html"] = Route(
+        f"<!DOCTYPE html><html><body>{nav}<a href='files/targetContests.csv'>targets</a></body></html>".encode()
+    )
+    events, report = run(election, store)
+    outside = by_url(events, "fetch.outside_link")
+    assert set(outside) == {"https://other.example/elsewhere.csv", election.url("/pubs/elections/other.html"), "https://www.youtube.com/watch?v=seed"}
+    assert report.outside_links == {url: e.data["text"] for url, e in outside.items()}
+    assert outside["https://www.youtube.com/watch?v=seed"].data["linked_from"] == election.url(START)
+    assert outside["https://www.youtube.com/watch?v=seed"].data["text"] == "https://www.youtube.com/watch?v=seed"
+    # A link to a part of a page is the page itself: fetched once, not reported.
+    assert [p for p in election.paths_requested() if p.endswith("riskLimit.html")] == [RLA + "2026/general/riskLimit.html"]
+    assert kinds(events, "fetch.crawl_finished")[0].data["outside_links"] == 3
+    # Each once, when first seen; a new one later is reported then.
+    election.routes[START] = Route(body.replace(b"<ul>", b'<ul><li><a href="/pubs/elections/seedNotice.html">Seed meeting</a></li>'),
+                                   headers={"Content-Type": "text/html"})  # fmt: skip
+    events, report = run(election, store)
+    assert report.outside_links == {election.url("/pubs/elections/seedNotice.html"): "Seed meeting"}
+    assert election.url("/pubs/elections/seedNotice.html") not in election.paths_requested()
+
+
+def test_extract_link_texts() -> None:
+    from corla_observer.fetch import extract_link_texts
+
+    body = b'<a href="a.csv">The  <b>A</b>\nfile</a><img src="b.png"><a href="a.csv#x">again</a><a href="#top">top</a>'
+    assert extract_link_texts(body, "https://h/p/page.html") == {"https://h/p/a.csv": "The A file", "https://h/p/b.png": "", "https://h/p/page.html": "top"}
