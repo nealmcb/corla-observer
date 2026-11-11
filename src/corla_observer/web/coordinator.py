@@ -52,6 +52,12 @@ Routes (under the app's path prefix):
     Start a crawl of the audit center in the background, recording
     ``coordinator.fetch_requested`` first; one at a time, and at most one
     per ``fetch_interval``.
+``POST /coord/mirror/publish``
+    Publish the mirror commits waiting in the server's clone of the public
+    mirror (`corla_observer.mirror.publish_now`), unless a cycle is running.
+    The home page shows them, the last publication, any failure, the links
+    outside the RLA directory the crawls have found, and whether the last
+    crawl was incomplete.
 
 Every page here needs a session: a GET without one is redirected to the
 login page, and a POST without one, or without the session's CSRF token, is
@@ -123,6 +129,13 @@ MESSAGES = {
     "logged_in": "Logged in.",
     "addressed": "Flag marked addressed.",
     "reopened": "Flag reopened.",
+    "mirror_published": "The mirror's waiting commits are published.",
+    "mirror_nothing": "No mirror commits were waiting: nothing published.",
+    "mirror_busy": "A cycle is running: press Publish again once it has finished.",
+}
+#: Errors shown after a redirect, chosen by a fixed code.
+ERRORS = {
+    "mirror_failed": "The mirror's commits could not be published; they stay waiting. The Public mirror section says why.",
 }
 
 
@@ -289,11 +302,50 @@ async def coord_home(request: Request) -> Response:
             message = f"Recorded {count} audit board{'' if count == '1' else 's'} for {county}."
     steps_county = known_county(request.query_params.get("county", "")) or remembered_county(request)
     steps = await run_in_threadpool(_next_steps, state, steps_county) if steps_county else None
+    mirror = await run_in_threadpool(_mirror_view, state)
     return state.render(
         request, "coord_home.html", snap=snapshot, message=message, fetch=state.fetch, crawl_off=_crawl_off(state),
         reset_enabled=state.config.reset_command is not None, populate_choices=_populate_choices(state),
-        steps=steps, steps_county=steps_county, **_common(state, session)
+        steps=steps, steps_county=steps_county, mirror=mirror, error=ERRORS.get(request.query_params.get("err", "")),
+        **_common(state, session)
     )  # fmt: skip
+
+
+def _mirror_view(state: WebState) -> dict[str, Any]:
+    """The home page's view of the mirror (`corla_observer.mirror.mirror_status`), the links outside the RLA
+    directory found so far, and whether the last crawl reached its cap."""
+    from corla_observer.mirror import mirror_status, outside_links_seen
+
+    last = None
+    for event in state.log.iter_events():
+        if event.kind == "fetch.crawl_finished" and "simulated" not in event.data:
+            last = event
+    incomplete = last is not None and last.data.get("truncated") is True
+    return mirror_status(state.workspace, state.log) | {
+        "outside_links": outside_links_seen(state.log, 30),
+        "incomplete": {"time": last.server_time} if incomplete and last is not None else None,
+    }
+
+
+@router.post("/coord/mirror/publish")
+async def publish_mirror_now(request: Request) -> Response:
+    from corla_observer.mirror import publish_now
+    from corla_observer.schedule import cycle_lock
+
+    state = get_state(request)
+    session, _ = await checked_form(request)
+
+    def publish() -> str:
+        with cycle_lock(state.workspace) as taken:
+            if not taken:
+                return "msg=mirror_busy"
+            result, error = publish_now(state.workspace, state.log, session.actor)
+        if error is not None or result is None:
+            return "err=mirror_failed"
+        return "msg=mirror_published" if result.commits else "msg=mirror_nothing"
+
+    outcome = await run_in_threadpool(publish)
+    return RedirectResponse(state.url(f"/coord?{outcome}#mirror"), status_code=303)
 
 
 def _next_steps(state: WebState, county: str) -> list[Any]:

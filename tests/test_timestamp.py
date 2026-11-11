@@ -712,3 +712,25 @@ def test_a_post_is_proposed_before_signing_until_the_seed_is_recorded(
     shown.clear()
     second = commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, clock=lambda: NOW, echo=shown.append)
     assert second.post is None and not any("proposed post" in line for line in shown)
+
+
+def test_publish_evidence_publishes_the_waiting_mirror_commits_first(ws: Workspace, out_repo: Path, no_tools: Path) -> None:
+    from corla_observer.mirror import HEADING, update_mirror
+
+    remote = _remote(out_repo)
+    with EventLog.open(ws.root) as log:
+        log.append("fetch.crawl_started", "system", data={"url": RLA_URL})
+        _fetched(ws, log, RLA_URL + "2026/general/files/2026GeneralRLAContestList.xlsx", b"PK targets", "target_contests")
+        log.append("fetch.crawl_finished", "system", data={"url": RLA_URL, "state_sha256": "a" * 64})
+        made = update_mirror(ws, log, out_repo)
+    assert made.commit is not None
+    runner = CliRunner()
+    committed = runner.invoke(app, ["commit-evidence", "--workspace", str(ws.root), "--election", ELECTION, "--out-repo", str(out_repo)])
+    assert committed.exit_code == 0, committed.output
+    published = runner.invoke(app, ["publish-evidence", "--out-repo", str(out_repo), "--workspace", str(ws.root), "--allow-pending"])
+    assert published.exit_code == 0, published.output
+    subjects = git(remote, "log", "--format=%s", "main").splitlines()
+    assert subjects[1].startswith(HEADING) and subjects[2] == "start" and subjects[0].startswith("Observer evidence")
+    with EventLog.open(ws.root, read_only=True) as log:
+        kinds = [e.kind for e in log.iter_events() if e.kind in ("mirror.updated", "evidence.published")]
+    assert kinds == ["mirror.updated", "evidence.published"]

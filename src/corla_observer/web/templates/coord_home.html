@@ -100,6 +100,35 @@
   {% endif %}
 </section>
 
+{% if mirror is defined and mirror and (mirror.configured or mirror.problem or mirror.outside_links or mirror.incomplete) %}
+<section id="mirror">
+  {% if mirror.incomplete %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> The last crawl ({{ mirror.incomplete.time|local }}) reached its cap of addresses and stopped: it is incomplete, and may have missed files. Nothing it did not reach is reported missing. See the <a href="{{ url('/coord/flags') }}">flags</a>.</p>{% endif %}
+  {% if mirror.configured or mirror.problem %}
+  <h2>Public mirror</h2>
+  <p class="meta">After each crawl, the Audit Center files whose content changed are committed to the server's clone of the public mirror{% if mirror.clone %} (<code>{{ mirror.clone }}</code>){% endif %}, one commit per crawl, and wait there until published to GitHub (docs/MIRROR.md).{% if mirror.auto_windows %} Published at once after each crawl in: {{ mirror.auto_windows|join(', ') }}.{% endif %}</p>
+  {% if mirror.problem %}<p>{{ badge('error', 'problem') }} {{ mirror.problem }}</p>{% endif %}
+  {% for e in mirror.errors %}<p>{{ badge('error', e.step ~ ' failed') }} {{ e.time|local }}: {{ e.error }}{% if e.step == 'publish' %}. The commits stay waiting; if the token is missing or refused, publish them from another machine as docs/MIRROR.md describes.{% endif %}</p>{% endfor %}
+  {% if mirror.waiting %}
+  <p>{{ badge('warning', 'waiting') }} {{ mirror.waiting|length }} commit{{ 's' if mirror.waiting|length != 1 else '' }} waiting to be published:</p>
+  <ul>{% for c in mirror.waiting %}<li><code class="hash">{{ c.commit|h12 }}</code> {{ c.heading }} ({{ c.files|length }} file{{ 's' if c.files|length != 1 else '' }})</li>{% endfor %}</ul>
+  {% elif mirror.configured and not mirror.problem %}<p>{{ badge('ok', 'up to date') }} No commits waiting (as GitHub's main was last fetched).</p>{% endif %}
+  {% if mirror.others_waiting %}<p class="meta">{{ mirror.others_waiting }} other commit{{ 's' if mirror.others_waiting != 1 else '' }} in the clone, not the mirror update's, also wait{{ 's' if mirror.others_waiting == 1 else '' }}; publishing leaves {{ 'it' if mirror.others_waiting == 1 else 'them' }} waiting.</p>{% endif %}
+  {% if mirror.last_published %}<p class="meta">Last published {{ mirror.last_published.time|local }}: {{ mirror.last_published.commits }} commit{{ 's' if mirror.last_published.commits != 1 else '' }}, from {{ mirror.last_published.from }}{% if mirror.last_published.actor != 'system' %}, by {{ mirror.last_published.actor }}{% endif %}.</p>{% endif %}
+  <form method="post" action="{{ url('/coord/mirror/publish') }}" class="actions">
+    <input type="hidden" name="csrf" value="{{ csrf }}">
+    <button type="submit"{% if not mirror.waiting %} disabled{% endif %}>Publish</button>
+  </form>
+  {% endif %}
+  {% if mirror.outside_links %}
+  <h2>Links outside the RLA directory</h2>
+  <p class="meta">Links on the Audit Center page that lead elsewhere, each listed once, when first seen, for a person to decide whether it belongs in the record. They are not fetched or mirrored. The site's navigation and footer are left out.</p>
+  <table class="data"><thead><tr><th>First seen</th><th>Link</th><th>Text</th></tr></thead><tbody>
+  {% for l in mirror.outside_links %}<tr><td>{{ l.server_time|local }}</td><td><a href="{{ l.url }}" rel="noopener noreferrer">{{ l.url }}</a></td><td>{{ l.text }}</td></tr>{% endfor %}
+  </tbody></table>
+  {% endif %}
+</section>
+{% endif %}
+
 {% if snap.waiting %}
 <section>
   <h2>Not yet expected</h2>

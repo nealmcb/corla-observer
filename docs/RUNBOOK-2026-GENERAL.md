@@ -20,7 +20,7 @@ Pilot counties: La Plata, Weld and Morgan.
 The general election has its own workspace (on the server, `~/workspaces/2026-general`), separate from the practice workspace. Its coordinator-editable files:
 
 - `election.toml` (`corla-observer election init`, `election show`): the election (`2026/general`), the Audit Center page, the **probe URLs** (likely addresses of files not yet linked, from the 2026 primary's names under `RLA/2026/general/`), the pilot counties, the calendar, the results source (Clarity's ENR, the state election's ID once known), the low-estimate settings, and each county's **cards per ballot** (defaults from the 2024 general; Denver about 3, Adams, Alamosa, Boulder, Larimer, Pueblo and Routt about 2, the pilots 1). Each version is recorded in the event log on the next cycle.
-- `schedule.toml` (`corla-observer schedule init`, `schedule show`): the crawl windows below. Read again before every decision, so edits take effect within 20 seconds.
+- `schedule.toml` (`corla-observer schedule init`, `schedule show`): the crawl windows below. Read again before every decision, so edits take effect within 20 seconds. `mirror_clone = "~/auditcenter"` turns on the mirror update after each crawl (docs/MIRROR.md), with `publish_mirror = true` on the windows that publish at once (roll day in the default); otherwise a coordinator presses **Publish** on `/coord`.
 - `overrides.toml`: the data map overrides, as before (`map override`, `map apply`).
 
 ## What runs automatically

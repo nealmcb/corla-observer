@@ -6,6 +6,7 @@ Registered on the main command line (`corla_observer.cli`) by `register`:
 - ``results gather|show|add|check``: election night results (`corla_observer.enr`), a file downloaded by hand, and the totals check (`corla_observer.totals`);
 - ``estimate show|margin|record``: the sample-count estimates (`corla_observer.estimate`);
 - ``schedule init|show|run|cycle|sprint|stop``: scheduled crawls (`corla_observer.schedule`);
+- ``mirror status|update|publish``: the server's clone of the public mirror (`corla_observer.mirror`);
 - ``walkthrough init|next|status``: a past audit replayed step by step (`corla_observer.walkthrough`);
 - ``user copy``: copy coordinator accounts from another workspace.
 """
@@ -450,10 +451,104 @@ def user_copy(
     typer.echo(f"copied the coordinator accounts of {source}")
 
 
+mirror_app = typer.Typer(help="The server's clone of the public Audit Center mirror (docs/MIRROR.md).", no_args_is_help=True)
+CloneOption = Annotated[
+    Path | None, typer.Option("--clone", help="The mirror's clone (default: mirror_clone in schedule.toml).", show_default=False)
+]
+
+
+def _clone_or_exit(workspace: Path, clone: Path | None) -> Path:
+    from corla_observer.mirror import configured_clone
+
+    found = clone or configured_clone(Workspace.open(workspace))
+    if found is None:
+        typer.echo("error: no mirror clone: name it as mirror_clone in schedule.toml, or give --clone", err=True)
+        raise typer.Exit(2)
+    return found
+
+
+@mirror_app.command("status")
+def mirror_status_command(workspace: WorkspaceOption, clone: CloneOption = None) -> None:
+    """The mirror commits waiting to be published (as GitHub's main was last fetched), and the last publication."""
+    from corla_observer.events import EventLog
+    from corla_observer.mirror import MirrorError, check_clone, waiting_commits
+
+    repo = _clone_or_exit(workspace, clone)
+    try:
+        check_clone(repo)
+        waiting = waiting_commits(repo)
+    except MirrorError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    mirror = [c for c in waiting if c.is_mirror]
+    typer.echo(f"{len(mirror)} mirror commit{'s' if len(mirror) != 1 else ''} waiting" + (f", and {len(waiting) - len(mirror)} other" if len(waiting) > len(mirror) else ""))
+    for c in mirror:
+        typer.echo(f"  {c.commit[:12]} {c.heading} ({len(c.files)} files)")
+    with EventLog.open(workspace, read_only=True) as log:
+        last = [e for e in log.iter_events() if e.kind in ("mirror.updated", "mirror.error")][-3:]
+    for e in last:
+        typer.echo(f"  {colorado_time(e.server_time)} {e.kind}: " + (f"{len(e.data.get('commits') or [])} commits, {e.data.get('published_from')}" if e.kind == "mirror.updated"  # type: ignore[arg-type]
+                                                                    else f"{e.data.get('step')}: {e.data.get('error') or 'working again'}"))  # fmt: skip
+
+
+@mirror_app.command("update")
+def mirror_update_command(workspace: WorkspaceOption, clone: CloneOption = None, actor: ActorOption = "system") -> None:
+    """Commit the Audit Center files whose content changed since the clone's version, as the latest crawl found them."""
+    from corla_observer.events import EventLog
+    from corla_observer.mirror import MirrorError, update_mirror
+
+    repo = _clone_or_exit(workspace, clone)
+    try:
+        with EventLog.open(workspace) as log:
+            result = update_mirror(Workspace.open(workspace), log, repo, actor=actor)
+    except MirrorError as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    if result.fetch_error:
+        typer.echo(f"warning: {result.fetch_error}", err=True)
+    for c in result.published_elsewhere:
+        typer.echo(f"recorded as published elsewhere: {c.commit[:12]} {c.heading}")
+    if result.commit is None:
+        typer.echo("nothing changed")
+        return
+    typer.echo(f"committed {result.commit[:12]} {result.heading} (waiting to be published)")
+    for f in result.files:
+        typer.echo(f"  {f.change:8} {f.path}")
+
+
+@mirror_app.command("publish")
+def mirror_publish_command(workspace: WorkspaceOption, clone: CloneOption = None, actor: ActorOption = "system") -> None:
+    """Push the waiting mirror commits to GitHub's main, replayed on top of it, and record mirror.updated."""
+    from corla_observer.events import EventLog
+    from corla_observer.mirror import MirrorError, publish_mirror, record_error
+
+    repo = _clone_or_exit(workspace, clone)
+    with EventLog.open(workspace) as log:
+        try:
+            result = publish_mirror(log, repo, actor=actor)
+        except MirrorError as exc:
+            record_error(log, "publish", str(exc), actor)
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(2) from None
+        record_error(log, "publish", None, actor)
+    for c in result.published_elsewhere:
+        typer.echo(f"recorded as published elsewhere: {c.commit[:12]} {c.heading}")
+    if not result.commits:
+        typer.echo("nothing to publish" + (f" (dropped, already on GitHub: {'; '.join(result.dropped)})" if result.dropped else ""))
+        return
+    typer.echo(f"published {len(result.commits)} commit{'s' if len(result.commits) != 1 else ''}" + (" (replayed on a newer main)" if result.replayed else "")
+               + f"; recorded as event {result.event_seq}")  # fmt: skip
+    for c in result.commits:
+        typer.echo(f"  {c.commit[:12]} {c.heading}")
+    for note in result.notes:
+        typer.echo(f"warning: {note}", err=True)
+
+
 def register(app: typer.Typer) -> None:
     """Add this module's command groups to ``app``."""
     app.add_typer(election_app, name="election")
     app.add_typer(results_app, name="results")
     app.add_typer(estimate_app, name="estimate")
     app.add_typer(schedule_app, name="schedule")
+    app.add_typer(mirror_app, name="mirror")
     app.add_typer(walkthrough_app, name="walkthrough")

@@ -3,6 +3,7 @@
 
 from __future__ import annotations
 
+import subprocess
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -91,3 +92,41 @@ def test_activity_page_lists_the_latest_events(workspace: Path, make_client: Fac
     assert page.text.index("coordinator.login") < page.text.index("schedule.sprint_requested")
     only = client.get("/coord/activity?group=schedule").text
     assert "schedule.sprint_requested" in only and "<code>coordinator.login</code>" not in only and "show everything" in only
+
+
+def test_the_home_page_shows_the_mirror_and_publishes_it(workspace: Path, make_client: Factory, tmp_path: Path) -> None:
+    from test_mirror_update import AUDIT_CENTER, clone, first_crawl, git
+
+    from corla_observer.mirror import update_mirror
+
+    origin = tmp_path / "origin.git"
+    subprocess.run(["git", "init", "--quiet", "--bare", "-b", "main", str(origin)], check=True)
+    seed = clone(origin, tmp_path / "seed", name="Seed")
+    (seed / "README.md").write_text("mirror\n")
+    git(seed, "add", ".")
+    git(seed, "commit", "--quiet", "-m", "start")
+    git(seed, "push", "--quiet", "origin", "HEAD:main")
+    server = clone(origin, tmp_path / "server")
+    ws = Workspace.open(workspace)
+    (workspace / "schedule.toml").write_text(f'format = 1\nmirror_clone = "{server}"\n', encoding="utf-8")
+    with EventLog.open(workspace) as log:
+        first_crawl(ws, log)
+        log.append("fetch.outside_link", "system", data={"url": "https://www.youtube.com/watch?v=seed", "linked_from": AUDIT_CENTER, "text": "Seed meeting video"})
+        update_mirror(ws, log, server)
+    client: TestClient = make_client()
+    login(client)
+    page = client.get("/coord")
+    assert "Public mirror" in page.text and "1 commit waiting to be published" in page.text and "Audit Center files as fetched" in page.text
+    assert "Seed meeting video" in page.text and "https://www.youtube.com/watch?v=seed" in page.text
+    published = client.post("/coord/mirror/publish", data={"csrf": csrf_of(page)}, follow_redirects=False)
+    assert published.status_code == 303 and "msg=mirror_published" in published.headers["location"]
+    assert git(origin, "rev-parse", "main") == git(server, "rev-parse", "HEAD")
+    page = client.get("/coord?msg=mirror_published")
+    assert "published" in page.text and "No commits waiting" in page.text and "by coordinator:alice" in page.text
+    # Nothing waiting now: nothing pushed or recorded.
+    again = client.post("/coord/mirror/publish", data={"csrf": csrf_of(page)}, follow_redirects=False)
+    assert "msg=mirror_nothing" in again.headers["location"]
+    with EventLog.open(workspace, read_only=True) as log:
+        updated = [e for e in log.iter_events() if e.kind == "mirror.updated"]
+    assert len(updated) == 1 and updated[0].actor == "coordinator:alice"
+    assert client.post("/coord/mirror/publish", data={"csrf": "wrong"}, follow_redirects=False).status_code == 403

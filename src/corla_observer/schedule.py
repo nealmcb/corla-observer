@@ -8,7 +8,11 @@ whether the schedule, a coordinator's "fetch now" or a sprint starts it:
 2. the Audit Center is crawled from the setup's page, with its probe URLs
    (`corla_observer.fetch.crawl`, at most 10 requests a second, slowing
    down when the server pushes back), which classifies every new or
-   changed file;
+   changed file; then, if ``schedule.toml`` names the server's clone of
+   the public mirror (``mirror_clone``), the files whose content changed
+   are committed there (`corla_observer.mirror`, docs/MIRROR.md), and
+   published at once in a window with ``publish_mirror = true``. A
+   failure there is recorded and shown, and never fails the cycle;
 3. if the window asks for it, the election night results are gathered
    (`corla_observer.enr.gather`: one small request, more only when they
    changed);
@@ -35,7 +39,10 @@ that finds it held is skipped.
 **The schedule.** The workspace's ``schedule.toml`` (`SCHEDULE_FILENAME`),
 which a coordinator may edit at any time (it is read again before every
 decision), lists windows, each with a start, an end (Colorado time), an
-interval and whether to gather results. Inside a window a cycle is due
+interval, whether to gather results and whether to publish the mirror's
+waiting commits after each crawl (``publish_mirror``, false by default);
+at its top, ``mirror_clone`` names the server's clone of the public mirror
+(none by default: no mirror update). Inside a window a cycle is due
 when the last cycle started at least the interval ago; a cycle missed while
 the machine slept is made once, on waking. `GENERAL_2026_SCHEDULE` is the
 2026 general election's schedule (`init_schedule` writes it):
@@ -85,6 +92,8 @@ says to: ``always`` (the default: from the loop's start), ``windows``
 wakes only on an incoming request), or ``never``.
 
 Events: ``schedule.cycle`` (``trigger``, ``started``, ``window``, ``crawl`` counts,
+``crawl_incomplete``, ``outside_links`` (first seen in this crawl), ``mirror`` (the
+mirror update's summary, `corla_observer.mirror.after_crawl`, if it ran),
 ``results`` (changed, version), ``flags_recorded``, ``estimate_seq``,
 ``prediction_seq``, ``extracts`` (county to seq), ``errors``,
 ``seconds``), ``schedule.cycle_skipped`` (``reason``),
@@ -143,6 +152,11 @@ format = 1
 # a window or during a sprint (a paused sprite then wakes only on a request);
 # never.
 keep_awake = "always"
+# The server's clone of the public mirror (github.com/nealmcb/auditcenter):
+# after every crawl the files whose content changed are committed there, to
+# be published from /coord, or at once in a window with publish_mirror = true
+# (docs/MIRROR.md). Leave it out to keep no mirror.
+# mirror_clone = "~/auditcenter"
 
 [[window]]
 name = "target list"        # deadline to select the targeted contests: Fri 6 Nov 5 PM; one crawl at 7 PM
@@ -178,6 +192,7 @@ start = "2026-11-16 06:00"
 end = "2026-11-16 09:00"
 every = "20m"
 results = false
+publish_mirror = true
 
 [[window]]
 name = "roll day, seed meeting"  # the seed meeting at 10, and round 1's files posted after it
@@ -185,6 +200,7 @@ start = "2026-11-16 09:00"
 end = "2026-11-16 12:00"
 every = "10m"
 results = false
+publish_mirror = true
 
 [[window]]
 name = "roll day, afternoon"
@@ -192,6 +208,7 @@ start = "2026-11-16 12:00"
 end = "2026-11-16 20:00"
 every = "20m"
 results = false
+publish_mirror = true
 
 [[window]]
 name = "audit"
@@ -219,6 +236,8 @@ class Window:
     end: str
     every_seconds: int
     results: bool
+    #: Whether the mirror's waiting commits are published after each crawl in this window.
+    publish_mirror: bool = False
 
 
 @dataclass(frozen=True)
@@ -226,6 +245,8 @@ class Schedule:
     windows: tuple[Window, ...]
     keep_awake: str = "always"
     sha256: str | None = None
+    #: The server's clone of the public mirror, as written (``~`` allowed; relative to the workspace), or None.
+    mirror_clone: str | None = None
 
     def window_at(self, moment: str) -> Window | None:
         """The window ``moment`` (UTC, the event log's format) falls in; the latest-starting one if several."""
@@ -271,6 +292,10 @@ def parse_schedule(text: str) -> Schedule:
     keep = data.get("keep_awake", "always")
     if keep not in KEEP_AWAKE:
         errors.append(f"keep_awake must be one of {', '.join(KEEP_AWAKE)}")
+    clone = data.get("mirror_clone")
+    if clone is not None and (not isinstance(clone, str) or not clone.strip()):
+        errors.append("mirror_clone must be the path of the server's clone of the mirror")
+        clone = None
     windows = []
     for n, raw in enumerate(data.get("window", []), start=1):
         if not isinstance(raw, dict):
@@ -288,10 +313,14 @@ def parse_schedule(text: str) -> Schedule:
         if every < MIN_SPRINT_SECONDS:
             errors.append(f"window {n}: every must be at least {MIN_SPRINT_SECONDS}s")
             continue
-        windows.append(Window(str(raw.get("name") or f"window {n}"), start, end, every, bool(raw.get("results", True))))
+        publish = raw.get("publish_mirror", False)
+        if not isinstance(publish, bool):
+            errors.append(f"window {n}: publish_mirror must be true or false")
+            continue
+        windows.append(Window(str(raw.get("name") or f"window {n}"), start, end, every, bool(raw.get("results", True)), publish))
     if errors:
         raise ScheduleError(errors)
-    return Schedule(tuple(windows), str(keep), hashlib.sha256(text.encode("utf-8")).hexdigest())
+    return Schedule(tuple(windows), str(keep), hashlib.sha256(text.encode("utf-8")).hexdigest(), clone)
 
 
 def load_schedule(workspace: Workspace) -> Schedule | None:
@@ -339,6 +368,12 @@ class CycleReport:
 
     ran: bool = True
     crawl: dict[str, int] = field(default_factory=dict)
+    #: Whether the crawl reached its cap of addresses (`corla_observer.fetch.CrawlReport.truncated`).
+    crawl_incomplete: bool = False
+    #: Links outside the RLA directory first seen in this crawl.
+    outside_links: list[str] = field(default_factory=list)
+    #: The mirror update's summary (`corla_observer.mirror.after_crawl`), if one ran.
+    mirror: dict[str, Any] | None = None
     results_changed: bool | None = None
     flags_recorded: int = 0
     totals_seq: int | None = None
@@ -525,13 +560,23 @@ def run_cycle(
                 record_setup(workspace, log, setup, actor)
         except SetupError as exc:
             report.errors.append(f"election setup: {exc}")
+        crawled = None
         try:
             crawled = crawl_fn(workspace, log, setup)
             count = getattr(crawled, "count", None)
             if callable(count):
                 report.crawl = {o: count(o) for o in ("new", "changed", "unchanged", "missing", "blocked")}
+            report.crawl_incomplete = bool(getattr(crawled, "truncated", False))
+            outside = getattr(crawled, "outside_links", None)
+            report.outside_links = list(outside)[:50] if isinstance(outside, dict) else []
         except Exception as exc:  # noqa: BLE001
             report.errors.append(f"crawl: {exc}")
+        # A past election replayed from the public mirror, or one never crawled, writes nothing to the mirror.
+        if crawled is not None and (setup is None or (setup.mirror is None and setup.crawl)):
+            from corla_observer.mirror import after_crawl
+
+            # Never raises: a failure is recorded (``mirror.error``) and shown, and the cycle goes on.
+            report.mirror = after_crawl(workspace, log, window=window, moment=started, actor=actor)
         if results and setup is not None:
             try:
                 from corla_observer.enr import results_counties
@@ -550,6 +595,8 @@ def run_cycle(
             "started": started,
             "window": window.name if window else None,
             "crawl": dict(report.crawl),
+            "crawl_incomplete": report.crawl_incomplete,
+            "outside_links": list(report.outside_links[:20]),
             "results_changed": report.results_changed,
             "flags_recorded": report.flags_recorded,
             "totals_seq": report.totals_seq,
@@ -559,6 +606,8 @@ def run_cycle(
             "errors": [e[:500] for e in report.errors[:20]],
             "seconds": int(report.seconds),
         }
+        if report.mirror is not None:
+            data["mirror"] = report.mirror
         log.append("schedule.cycle", actor, data=data)
     return report
 

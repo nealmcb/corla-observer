@@ -227,6 +227,10 @@ NEVER_LISTED_KINDS = frozenset({"html_page"})
 ON_REQUEST_KINDS = frozenset({"upload_status", "audit_activity_report"})
 
 
+#: Characters a mirror path never holds: control characters and the backslash.
+_UNSAFE_MIRROR_CHARS = re.compile(r"[\x00-\x1f\x7f\\]")
+
+
 def mirror_path(url: str) -> str | None:
     """Where the audit center mirror keeps a file fetched from ``url``: its path under the RLA directory, as
     the Audit Center publishes it (``2026/general/files/X.xlsx``); None for a file outside that directory."""
@@ -234,7 +238,14 @@ def mirror_path(url: str) -> str | None:
     if _RLA_PATH not in path:
         return None
     rest = path.split(_RLA_PATH, 1)[1]
-    return _safe_path(rest.split("/")) if rest and not rest.endswith("/") else None
+    if not rest or rest.endswith("/"):
+        return None
+    parts = rest.split("/")
+    # The name as published, spaces and all (``finalReports/Adams Audit Report.pdf``), as the mirror
+    # has always kept it; only a name that can't be a plain relative path is refused.
+    if any(p in ("", ".", "..") or _UNSAFE_MIRROR_CHARS.search(p) for p in parts):
+        return None
+    return "/".join(parts)
 
 
 def collect_evidence(
@@ -1113,7 +1124,8 @@ def publish_evidence(
     not, but commits, pushes and records nothing. The commit is made on the repository's current branch; the event
     is recorded only once the push has succeeded, so the log names only a commit that is public.
     If the last commit already holds exactly these files and has not been pushed (a push that
-    failed), it is pushed as it is.
+    failed), it is pushed as it is. Mirror commits waiting in ``out_repo`` (`corla_observer.mirror`)
+    are published first, so that the mirror's history stays in fetch order.
 
     With ``include_log`` (the default), the commit also holds the event log as it stands, written
     as ``events.jsonl`` beside the SUMS file (`LOG_NAME`), so that the log head in every SUMS
@@ -1143,6 +1155,14 @@ def publish_evidence(
         raise TimestampError(f"{subdir}/{name} is not in the repository's working tree")
     if hashlib.sha256(sums_path.read_bytes()).hexdigest() != data["sums_sha256"]:
         raise TimestampError(f"{subdir}/{name} differs from the SUMS file the log records (event {event.seq})")
+    if not dry_run:
+        from corla_observer.mirror import MirrorError, mirror_commits_waiting, publish_mirror
+
+        if mirror_commits_waiting(out_repo):
+            try:
+                publish_mirror(log, out_repo, actor=actor)
+            except MirrorError as exc:
+                raise TimestampError(f"the mirror's waiting commits are published first, and could not be: {exc}") from None
 
     names = [name] + [p for p in data.get("proofs") or [] if (target / p).is_file()]
     files = [f"{subdir}/{n}" if subdir else n for n in names]

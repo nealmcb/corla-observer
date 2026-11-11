@@ -8,7 +8,25 @@ it was updated by hand, with a scraper. This document describes how corla-observ
 it up to date during an election instead: what it writes, where, when it is published, and what is
 left to people.
 
-Status: a design, not yet built.
+Status: built (`corla_observer.mirror`), and off until `schedule.toml` names the server's clone
+(below). `corla-observer mirror status|update|publish` does the same by hand.
+
+## Setting it up
+
+In the workspace's `schedule.toml`:
+
+```toml
+mirror_clone = "~/auditcenter"   # the server's clone; leave it out to keep no mirror
+
+[[window]]
+name = "roll day"
+# ...
+publish_mirror = true            # publish after each crawl in this window
+```
+
+The path stays out of the event log, as every local path does. The default 2026 general schedule
+(`corla-observer schedule init`) has `mirror_clone` commented out and `publish_mirror = true` in
+the three roll-day windows. The clone must be on `main`, with GitHub as its remote `origin`.
 
 ## Terms
 
@@ -33,7 +51,10 @@ The mirror's layout does not change:
 - **Every file under `/pubs/elections/RLA/`** goes at its path relative to that directory: the
   2026 general's target contest list, published at
   `https://www.coloradosos.gov/pubs/elections/RLA/2026/general/files/2026GeneralRLAContestList.xlsx`,
-  is `2026/general/files/2026GeneralRLAContestList.xlsx`.
+  is `2026/general/files/2026GeneralRLAContestList.xlsx`. Names are kept as published, spaces
+  included (`2026/primary/finalReports/Adams Audit Report.pdf`); a name that can't be a plain
+  relative path (`.` or `..`, control characters, a backslash) is not mirrored. A timestamp lists
+  the same paths.
 - **The Audit Center page itself**, `https://www.coloradosos.gov/pubs/elections/auditCenter.html`,
   which lies outside that directory, is kept as dated snapshots in `auditCenters/`, named for the
   time it was fetched in Colorado time: `auditCenters/auditCenter_2026-11-06T17:24:08-07:00.html`.
@@ -53,43 +74,55 @@ and the event log records the file as missing.
    is written there, at its path, from the copy the crawl stored in the workspace. The Audit Center
    page gets a new snapshot when its content differs from the latest snapshot.
 2. **Commit.** If anything was written, the server's clone gets one commit for the crawl, headed
-   `Audit Center files as fetched 2026-11-16 10:42 MST`. Its body lists each file as new or
-   changed, and for a changed file the commit holding its previous version, so that the earlier
-   version can be found.
+   `Audit Center files as fetched 2026-11-16 10:42 MST`, the time the crawl started. Its body
+   lists each file as new or changed, and for a changed file the commit holding its previous
+   version, so that the earlier version can be found: by its ID once that commit is on GitHub, by
+   its heading while it is still waiting (a waiting commit's ID changes when it is replayed). The
+   body ends by naming the crawl in the event log, by event number and state digest.
 3. **Wait.** The commit is not pushed yet. Commits from several crawls can wait together.
 4. **Publish.** A coordinator sees the waiting commits on `/coord` and presses **Publish**; or, in
    windows where `schedule.toml` says so (on roll day, for instance), they are published
    automatically after each crawl. Publishing fetches GitHub's `main`, replays the waiting commits
    on top of it, each still its own commit and in the order of the crawls, and pushes. Only then
    does the event log record `mirror.updated`, naming the pushed commits and the files in them.
+   A push refused because GitHub's `main` moved meanwhile is tried again, twice.
 
 A crawl is never refused or held up by the state of the server's clone: if a commit or a push
 fails, the crawl's own record is complete, the failure is shown on `/coord` and in the crawl's
-summary, and the next mirror update tries again.
+summary (the `mirror` part of its `schedule.cycle` event), and the next mirror update tries again.
+The event log records a failure as `mirror.error`, once while it keeps failing the same way, and
+again, with no error, once it works.
+
+A replayed past election (`[audit_center_mirror]` or `crawl = false` in `election.toml`) never
+writes to the mirror, and nor does any fetch the event log marks as simulated.
 
 `publish-evidence` commits and pushes in the same clone. It publishes any waiting mirror commits
-first, so the mirror's history stays in fetch order.
+first, so the mirror's history stays in fetch order. Other commits waiting in the clone, such as
+an evidence commit whose push failed, are replayed after the mirror's and stay waiting.
 
 ## Links outside the RLA directory
 
 The mirror holds only what is under `/pubs/elections/RLA/` and the Audit Center page. A crawl also
 lists the page's links that lead elsewhere and might matter to the audit, such as a notice of the
 seed meeting on another page of the Secretary of State's site, or a video of it. Links that appear
-on every page of the site (its navigation and footer) are left out. Each such link is shown on
-`/coord` and in the crawl's summary once, when it first appears, for a person to decide whether it
+on every page of the site (its navigation and footer) are left out: in practice, links that also
+appear on more than half of the other pages the crawl fetched, and Cloudflare's own `/cdn-cgi/`
+links. Each such link is recorded once, when it first appears (`fetch.outside_link`, with the
+link's text), and shown on `/coord` and in the crawl's summary, for a person to decide whether it
 belongs in the record; it is not fetched or mirrored automatically.
 
 ## The crawler's scope
 
 - It follows every page under `/pubs/elections/RLA/` that the Audit Center links to, however many
-  links away, as the scraper does; it currently stops two links from the Audit Center page.
-- It ignores links to a part of the same page (`#...`).
+  links away, as the scraper does.
+- It ignores links to a part of the same page (`#...`): such a link is the page itself.
 - It still fetches, on every crawl, the addresses the setup expects (`probe_urls` in
   `election.toml`) before the Audit Center links them, recording each that is not there yet once.
 - It fetches at most 2,000 addresses in one crawl. The cap keeps a link loop or a broken page from
   making a crawl run without end, or from sending the site thousands of requests; an election's
   Audit Center has a few hundred files at most. A crawl that reaches the cap is marked incomplete
-  and flagged on `/coord`, and nothing it did not reach is treated as removed.
+  (`truncated` in `fetch.crawl_finished`), raises a `crawl_incomplete` flag and is shown on
+  `/coord`, and nothing it did not reach is treated as removed.
 
 ## Two clones
 
@@ -98,7 +131,10 @@ The server's clone and a person's own clone (such as one used with the scraper) 
 - **Before pushing,** the server fetches GitHub's `main` and replays its waiting commits on top.
   They are not public yet, so this is safe. Where someone has meanwhile pushed the same file, the
   server keeps GitHub's version if its content is the same (for a page, apart from Cloudflare's
-  token), and otherwise commits its own newer version on top, naming both.
+  token), and otherwise commits its own newer version on top, naming both: the commit's message
+  names the commit holding GitHub's version. A waiting commit left with nothing to add is dropped.
+  `mirror.updated` lists the files whose version on GitHub was kept, those with both versions,
+  and the commits dropped.
 - **In a person's own clone,** run `git pull` before running the scraper or editing: otherwise it
   falls behind the server's pushes.
 - **To avoid two writers for one election,** the scraper is used only for past elections, and the
@@ -118,7 +154,11 @@ publishing works unattended, including on roll day.
 - The server's clone reads it through a git credential helper set for that one repository's
   address, and pushes over HTTPS. Its remote gets an explicit HTTPS push URL, since the sprite's
   global setting rewrites every HTTPS push to GitHub as an SSH one, which would bypass the token.
-- Publishing records which way it pushed in `mirror.updated`.
+  corla-observer itself never reads or stores the token: it runs git, which uses whatever the
+  clone is set up with, and git never prompts for a password (`GIT_TERMINAL_PROMPT=0`), so a
+  missing token fails instead of waiting.
+- Publishing records which way it pushed in `mirror.updated` (`pushed`: the remote, `https` or
+  `ssh`, and its push URL without credentials).
 
 **If the token is missing, expired or refused,** the waiting commits stay waiting and `/coord`
 says so. They are then published from Neal's machine (`yl`): fetch the server's clone over SSH,
@@ -131,7 +171,7 @@ git -C /srv/voting/audit/corla/scrapy/mirror push origin main
 ```
 
 The next mirror update on the server sees its commits on GitHub's `main` and records them as
-published.
+published (`mirror.updated` with `published_from` `elsewhere`).
 
 ## Timestamps are separate
 
