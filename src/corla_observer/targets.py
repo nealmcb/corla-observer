@@ -67,8 +67,23 @@ the pattern says how the ballots are marked, which the audit board should
 not learn before it examines them. A draw is a source of the working list
 at once, included.
 
+**Domain draws** (`domain_draw`). From the targeting menu
+(`corla_observer.targetmenu`): N cards drawn uniformly **with replacement**
+from a sampling domain, the cards of the CVR carrying a set of contests
+(`ContestVotes.carry`, `domain_rows`). The derived seed is the SHA-256 of the
+canonical serialization of ``county``, ``cvr_sha256``, ``domain`` (the
+contests' names, sorted), ``draw`` (the county's domain draws so far, plus
+one), ``method`` (`DOMAIN_METHOD`) and ``seed``; draw i takes the domain's
+card ``1 + int(sha256(derived seed + "," + i), 16) mod size``, in CVR row
+order (`domain_picks`). Nothing is skipped, so the draw stays uniform; a card
+already held elsewhere is noted (``held``). The record (`DomainDrawRecord`)
+keeps every draw in order and each card once with how many times it was
+drawn; it is recorded as ``targets.domain_drawn`` (`record_domain_draw`) and
+is a source of the working list (``domain N``), where a card drawn twice is
+listed once.
+
 **Sources and the working list** (`Source`, `sources`, `working_list`). A
-source is a draw or a manual entry (imprinted IDs entered by hand with an
+source is a draw, a domain draw or a manual entry (imprinted IDs entered by hand with an
 optional note, `enter_ids`; each is looked up in the CVR and the manifest,
 `lookup`). Each source is included or excluded (`set_included`); the working
 list is each ballot of every included source not yet sent, once, with the
@@ -110,11 +125,16 @@ the events the first design recorded and this module still reads):
     (its number in the county), ``ballots`` (how many were drawn), ``size``
     (N), ``collisions`` (how many were skipped), ``sha256`` (the record's),
     ``pattern_sha256``.
+``targets.domain_drawn``
+    ``file_sha256`` the domain draw's record (`DomainDrawRecord`); ``data``:
+    ``draw`` (its number among the county's domain draws), ``size`` (N),
+    ``ballots`` (distinct cards), ``domain_cards``, ``held``, ``sha256``,
+    ``domain_sha256`` (the sorted contest names, hashed).
 ``targets.listed``
     A manual entry: ``data``: ``ids`` (the imprinted IDs added), ``source``
     ``entered``, ``note``.
 ``targets.included``
-    ``data``: ``source`` (``draw N`` or ``entry SEQ``), ``included``.
+    ``data``: ``source`` (``draw N``, ``domain N`` or ``entry SEQ``), ``included``.
 ``targets.sent``
     ``data``: ``list`` (the list's key), ``list_name``, ``number``,
     ``sources``, ``ballots``, ``in_rla``, ``extract_sha256``,
@@ -258,6 +278,9 @@ class ContestVotes:
     cards: int = 0
     #: Rows with an overvote in it.
     overvotes: int = 0
+    #: The rows that carry the contest (bit i is row i): single cards, with or without visible votes, whose cells for it
+    #: are not all blank; aggregate rows never do. The contest's sampling domain (`corla_observer.targetmenu`).
+    carry: int = 0
 
     @property
     def total(self) -> int:
@@ -352,6 +375,7 @@ def load_votes(path: Path | str, wanted: Iterable[str] | None = None) -> CvrVote
                 columns.setdefault(contest, []).append(h.vote_start + offset)
         contests: dict[int, ContestVotes] = {}
         hits: dict[int, list[list[int]]] = {}
+        carried: dict[int, list[int]] = {contest: [] for contest in columns}
         for contest, cols in columns.items():
             name, vote_for = contest_label(h.contests[contest])
             choices = [unwrap(choice_row[i]) if i < len(choice_row) else "" for i in cols]
@@ -395,6 +419,8 @@ def load_votes(path: Path | str, wanted: Iterable[str] | None = None) -> CvrVote
                 cells = [unwrap(row[i]).strip() if i < len(row) else "" for i in cols]
                 if not any(cells):
                     continue
+                if meta.status != "aggregate":
+                    carried[contest].append(index)
                 cv = contests[contest]
                 if all(not c or is_redaction_marker(c) for c in cells):
                     cv.redacted += 1
@@ -415,6 +441,7 @@ def load_votes(path: Path | str, wanted: Iterable[str] | None = None) -> CvrVote
             index += 1
     for contest, per_choice in hits.items():
         contests[contest].masks = [_mask(rows_, index) for rows_ in per_choice]
+        contests[contest].carry = _mask(carried[contest], index)
     return CvrVotes(
         rows=index,
         ids=ids,
@@ -946,6 +973,226 @@ def draws(workspace: Workspace, log: EventLog, county: str) -> list[tuple[DrawRe
 
 
 # ---------------------------------------------------------------------------
+# Domain draws: uniform, with replacement, from the cards carrying a set of contests
+
+#: The domain draw's method (docs/TARGETING.md, "Domain draws").
+DOMAIN_METHOD = "corla-observer domain draw 1: card = 1 + int(sha256(derived seed + ',' + i), 16) mod domain size, i = 1..N, cards in CVR row order, with replacement"
+#: Cards in a domain draw, unless another number is asked for (1 to `MAX_DRAW`).
+DOMAIN_DRAW_SIZE = 5
+
+
+def domain_rows(votes: CvrVotes, contests: Sequence[str]) -> list[int]:
+    """The CVR rows of a sampling domain: the cards carrying every one of ``contests`` (CVR names), which must be carried by exactly the same cards.
+
+    Raises:
+        DrawError: for no contest, a contest not in the CVR or on no card, or contests whose cards differ.
+    """
+    if not contests:
+        raise DrawError("name the domain's contests")
+    masks = []
+    for name in contests:
+        cv = votes.contest_by_name(name)
+        if cv is None or not cv.carry:
+            raise DrawError(f"no card of the county's current CVR carries {name!r}")
+        masks.append(cv.carry)
+    if any(m != masks[0] for m in masks):
+        raise DrawError("those contests are not carried by exactly the same cards, so they are not one sampling domain")
+    return bits_of(masks[0])
+
+
+def domain_derived_seed(*, county: str, cvr_sha256: str, contests: Sequence[str], seed: str, draw: int, method: str = DOMAIN_METHOD) -> str:
+    """A domain draw's derived seed: SHA-256 of the canonical serialization of its inputs (the contests sorted)."""
+    inputs = {"county": county, "cvr_sha256": cvr_sha256, "domain": sorted(contests), "draw": draw, "method": method, "seed": seed}
+    return hashlib.sha256(canonical_json(inputs)).hexdigest()
+
+
+def domain_picks(derived: str, size: int, domain_size: int) -> list[int]:
+    """The draw's cards as 1-based positions in the domain (CVR row order), in draw order, with replacement."""
+    return [1 + int(hashlib.sha256(f"{derived},{i}".encode()).hexdigest(), 16) % domain_size for i in range(1, size + 1)]
+
+
+@dataclass
+class DomainDrawRecord:
+    """A domain draw's full record, stored in the workspace and committed to by the ``targets.domain_drawn`` event.
+
+    ``draws`` lists every draw in draw order (a card drawn twice is there twice); ``ballots`` lists each card once, in
+    CORLA's pull order, with ``times``, how many draws picked it. The county pulls each card once; the pooled risk
+    (`corla_observer.targetmenu`) counts every draw.
+    """
+
+    county: str
+    contests: list[str]
+    domain_cards: int
+    cvr_sha256: str
+    manifest_sha256: str | None
+    seed: str
+    seed_source: str
+    draw: int
+    derived_seed: str
+    size: int
+    #: ``{"i": n, "position": p, "imprinted_id": ...}`` in draw order.
+    draws: list[dict[str, Any]]
+    #: In CORLA's pull order: ``imprinted_id``, ``tabulator``, ``batch``, ``record``, ``location``, ``ballot_type``, ``times``.
+    ballots: list[dict[str, Any]]
+    actor: str
+    #: Cards drawn that a list, a draft, the working list or the RLA sample already held (for information: never skipped).
+    held: list[dict[str, str]] = field(default_factory=list)
+    time: str = ""
+    method: str = DOMAIN_METHOD
+    format: int = 1
+
+    @property
+    def source_id(self) -> str:
+        return f"domain {self.draw}"
+
+    @property
+    def ids(self) -> list[str]:
+        """Each card drawn once, in pull order."""
+        return [str(b["imprinted_id"]) for b in self.ballots]
+
+    @property
+    def drawn_ids(self) -> list[str]:
+        """Every draw's card, in draw order, repeats kept."""
+        return [str(d["imprinted_id"]) for d in self.draws]
+
+    def describe(self) -> str:
+        """The domain in words: its first contest, and how many others share its cards."""
+        first = self.contests[0] if self.contests else "?"
+        others = len(self.contests) - 1
+        return f"{first}" + (f" and {others} other contest{'s' if others != 1 else ''} on the same cards" if others else "")
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "kind": "targeted_domain_draw", "format": self.format, "note": "Targeted ballots: not part of the RLA sample.",
+            "county": self.county, "contests": list(self.contests), "domain_cards": self.domain_cards, "cvr_sha256": self.cvr_sha256,
+            "manifest_sha256": self.manifest_sha256, "seed": self.seed, "seed_source": self.seed_source, "draw": self.draw,
+            "method": self.method, "derived_seed": self.derived_seed, "size": self.size, "draws": self.draws, "ballots": self.ballots,
+            "held": self.held, "actor": self.actor, "time": self.time,
+        }  # fmt: skip
+
+    @classmethod
+    def from_json(cls, data: Mapping[str, Any]) -> DomainDrawRecord:
+        return cls(
+            county=str(data["county"]), contests=[str(c) for c in data.get("contests") or []], domain_cards=int(data["domain_cards"]),
+            cvr_sha256=str(data["cvr_sha256"]), manifest_sha256=data.get("manifest_sha256"), seed=str(data["seed"]),
+            seed_source=str(data.get("seed_source")), draw=int(data["draw"]), derived_seed=str(data["derived_seed"]), size=int(data["size"]),
+            draws=list(data.get("draws") or []), ballots=list(data.get("ballots") or []), actor=str(data.get("actor")),
+            held=[dict(h) for h in data.get("held") or []], time=str(data.get("time") or ""), method=str(data.get("method") or DOMAIN_METHOD),
+            format=int(data.get("format") or 1),
+        )  # fmt: skip
+
+
+def domain_draw_count(log: EventLog, county: str) -> int:
+    """The county's domain draws recorded so far."""
+    return sum(1 for e in log.iter_events() if e.kind == "targets.domain_drawn" and e.county == county)
+
+
+def domain_draw(
+    votes: CvrVotes,
+    *,
+    county: str,
+    cvr_sha256: str,
+    contests: Sequence[str],
+    seed: str,
+    seed_source: str,
+    number: int,
+    locations: Mapping[tuple[str, str], str],
+    manifest_sha256: str | None,
+    actor: str,
+    size: int = DOMAIN_DRAW_SIZE,
+    held: Mapping[str, str] | None = None,
+) -> DomainDrawRecord:
+    """A domain draw (docs/TARGETING.md, "Domain draws"), not yet recorded: ``size`` cards drawn uniformly with replacement from the cards carrying ``contests``.
+
+    Nothing is skipped, so the draw stays uniform over the domain; a card already held elsewhere (``held``, by
+    `id_key`, as from `holders`) is noted in the record, and the working list lists it once.
+
+    Raises:
+        DrawError: for a seed that is empty or too long, a size out of range, or contests that are not one domain.
+    """
+    seed = clean_seed(seed)
+    if not 1 <= size <= MAX_DRAW:
+        raise DrawError(f"a draw takes 1 to {MAX_DRAW} cards")
+    found = [votes.contest_by_name(c) for c in contests]
+    if not contests or any(cv is None for cv in found):
+        raise DrawError("name the domain's contests as the county's current CVR names them")
+    names = sorted({cv.name for cv in found if cv is not None})
+    rows = domain_rows(votes, names)
+    derived = domain_derived_seed(county=county, cvr_sha256=cvr_sha256, contests=names, seed=seed, draw=number)
+    draws = []
+    times: dict[str, int] = {}
+    row_of: dict[str, int] = {}
+    for i, position in enumerate(domain_picks(derived, size, len(rows)), start=1):
+        row = rows[position - 1]
+        imprinted = votes.imprinted(row)
+        draws.append({"i": i, "position": position, "imprinted_id": imprinted})
+        times[imprinted] = times.get(imprinted, 0) + 1
+        row_of[imprinted] = row
+    ballots = []
+    for imprinted in corla_order(list(times), locations):
+        parts = imprinted.split("-")
+        ballots.append(
+            {
+                "imprinted_id": imprinted,
+                "tabulator": parts[0] if len(parts) == 3 else "",
+                "batch": parts[1] if len(parts) == 3 else "",
+                "record": parts[2] if len(parts) == 3 else "",
+                "location": locations.get((id_key(parts[0]), id_key(parts[1]))) if len(parts) == 3 else None,
+                "ballot_type": votes.ballot_types[row_of[imprinted]] or None,
+                "times": times[imprinted],
+            }
+        )
+    noted = [{"imprinted_id": i, "held_by": where} for i in times if (where := (held or {}).get(id_key(i))) is not None]
+    return DomainDrawRecord(
+        county=county, contests=names, domain_cards=len(rows), cvr_sha256=cvr_sha256, manifest_sha256=manifest_sha256, seed=seed,
+        seed_source=seed_source, draw=number, derived_seed=derived, size=size, draws=draws, ballots=ballots, actor=actor, held=noted,
+    )  # fmt: skip
+
+
+def record_domain_draw(workspace: Workspace, log: EventLog, record: DomainDrawRecord, *, session_id: str | None = None) -> tuple[DomainDrawRecord, str]:
+    """Store a domain draw's record and record ``targets.domain_drawn``; returns the record (with its time) and its SHA-256.
+
+    Raises:
+        DrawError: if another domain draw was recorded for the county since this one was numbered.
+    """
+    check_actor(record.actor)
+    with _record_lock:
+        if domain_draw_count(log, record.county) + 1 != record.draw:
+            raise DrawError("another domain draw was recorded meanwhile; draw again")
+        from datetime import UTC, datetime
+
+        from corla_observer.events import format_server_time
+
+        record.time = format_server_time(datetime.now(UTC))
+        sha = workspace.put_bytes(canonical_json(record.to_json())).sha256
+        domain_sha = hashlib.sha256(canonical_json({"domain": sorted(record.contests)})).hexdigest()
+        log.append(
+            "targets.domain_drawn",
+            record.actor,
+            county=record.county,
+            file_sha256=sha,
+            session_id=session_id,
+            data={
+                "draw": record.draw, "size": record.size, "ballots": len(record.ballots), "domain_cards": record.domain_cards,
+                "held": len(record.held), "sha256": sha, "domain_sha256": domain_sha,
+            },  # fmt: skip
+        )
+    return record, sha
+
+
+def domain_draws(workspace: Workspace, log: EventLog, county: str) -> list[tuple[DomainDrawRecord, str]]:
+    """The county's recorded domain draws, with their records' SHA-256, in order."""
+    found = []
+    for event in log.iter_events():
+        if event.kind == "targets.domain_drawn" and event.county == county and event.file_sha256:
+            try:
+                found.append((DomainDrawRecord.from_json(json.loads(workspace.get_bytes(event.file_sha256))), event.file_sha256))
+            except Exception:
+                continue
+    return found
+
+
+# ---------------------------------------------------------------------------
 # Ballots looked up, and manual entries
 
 
@@ -1065,9 +1312,9 @@ def enter_ids(workspace: Workspace, log: EventLog, county: str, ids: Sequence[st
 class Source:
     """A source of the working list: a draw, or a manual entry; sent in a list or still in the working list."""
 
-    #: ``draw N`` or ``entry SEQ``.
+    #: ``draw N``, ``domain N`` or ``entry SEQ``.
     id: str
-    #: ``draw`` or ``entered``.
+    #: ``draw``, ``domain`` or ``entered``.
     kind: str
     seq: int
     actor: str
@@ -1084,6 +1331,8 @@ class Source:
     #: The draft holding it ("Draft N" and its key), while not sent; None in the working list.
     drafted_in: str | None = None
     drafted_key: str | None = None
+    #: A domain draw's record (kind ``domain``).
+    domain: DomainDrawRecord | None = None
 
     @property
     def working(self) -> bool:
@@ -1098,12 +1347,20 @@ class Source:
             if self.draw.collisions:
                 text += f" ({len(self.draw.collisions)} already listed, skipped)"
             return text
+        if self.domain is not None:
+            d = self.domain
+            text = f"{d.size} draw{'s' if d.size != 1 else ''} with replacement from the {d.domain_cards:,} cards carrying {d.describe()} · seed “{d.seed}”"
+            if len(d.ballots) != d.size:
+                text += f" · {len(d.ballots)} distinct cards"
+            return text
         ids = ", ".join(self.ids[:8]) + (f", … ({len(self.ids)})" if len(self.ids) > 8 else "")
         return f"{ids}" + (f" — {self.note}" if self.note else "")
 
     @property
     def title(self) -> str:
-        """"Draw 3" or "Entered by ID"."""
+        """"Draw 3", "Domain draw 2" or "Entered by ID"."""
+        if self.domain is not None:
+            return f"Domain draw {self.domain.draw}"
         return f"Draw {self.draw.draw}" if self.draw is not None else "Entered by ID"
 
     def record_item(self) -> dict[str, Any]:
@@ -1113,6 +1370,12 @@ class Source:
             item |= {
                 "draw": self.draw.draw, "name": self.draw.pattern_name, "pattern": describe(self.draw.definition), "definition": self.draw.definition, "seed": self.draw.seed,
                 "size": self.draw.size, "record_sha256": self.draw_sha256, "collisions": len(self.draw.collisions),
+            }  # fmt: skip
+        elif self.domain is not None:
+            d = self.domain
+            item |= {
+                "draw": d.draw, "name": self.title, "contests": list(d.contests), "domain_cards": d.domain_cards, "seed": d.seed,
+                "size": d.size, "record_sha256": self.draw_sha256, "draws": d.drawn_ids,
             }  # fmt: skip
         else:
             item |= {"note": self.note, "ids": list(self.ids)}
@@ -1166,6 +1429,19 @@ def sources(workspace: Workspace | None, log: EventLog, county: str) -> list[Sou
             )  # fmt: skip
             legacy_formats[source.id] = record.format if record else 1
             found[source.id] = source
+        elif event.kind == "targets.domain_drawn" and event.file_sha256:
+            domain = None
+            if workspace is not None:
+                try:
+                    domain = DomainDrawRecord.from_json(json.loads(workspace.get_bytes(event.file_sha256)))
+                except Exception:
+                    domain = None
+            drawn = data.get("draw")
+            number = (drawn if isinstance(drawn, int) else 0) if domain is None else domain.draw
+            found[f"domain {number}"] = Source(
+                f"domain {number}", "domain", event.seq, event.actor, event.server_time, domain.ids if domain else [],
+                included=True, draw_sha256=event.file_sha256, domain=domain,
+            )  # fmt: skip
         elif event.kind == "targets.listed":
             listed = data.get("ids")
             ids = [str(i) for i in listed] if isinstance(listed, list) else []
@@ -1385,7 +1661,7 @@ def record_patterns(record: Mapping[str, Any]) -> list[dict[str, Any]]:
         return [
             {"draw": s.get("draw"), "name": s.get("name"), "description": s.get("pattern") or s.get("description")}
             for s in record.get("sources") or []
-            if s.get("kind") == "draw"
+            if s.get("kind") in ("draw", "domain")
         ]
     return [{"draw": p.get("draw"), "name": p.get("name"), "description": p.get("description")} for p in record.get("patterns") or []]
 
