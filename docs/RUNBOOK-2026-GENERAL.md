@@ -114,7 +114,7 @@ Run `commit-evidence` again when a late file arrives; each run is a new version,
 
 ## Monday 16 November: roll morning
 
-From 7 AM the scheduler crawls every 3 minutes. To crawl more often (every minute, say, while waiting for a corrected file), start a **sprint** on `/coord/schedule` or:
+From 6 AM to 8 PM the scheduler crawls every 20 minutes, and every 10 minutes from 9 AM to noon. To crawl more often (every minute, say, while waiting for a corrected file), start a **sprint** on `/coord/schedule` or:
 
 ```
 corla-observer schedule sprint --workspace WS --actor coordinator:ID --minutes 180 --every 60
@@ -122,7 +122,7 @@ corla-observer schedule sprint --workspace WS --actor coordinator:ID --minutes 1
 
 (`schedule stop` ends it; `--here` runs it in the terminal if the scheduler is not running.)
 
-1. **The seed.** As soon as it is announced, a coordinator enters it on `/coord/seed` (a second coordinator may confirm it). The next cycle, within 3 minutes (or "fetch now"), predicts the selections with the current estimates.
+1. **The seed.** As soon as it is announced, a coordinator enters it on `/coord/seed` (a second coordinator may confirm it). The next cycle, within 10 minutes during the seed meeting (or "fetch now"), predicts the selections with the current estimates.
 2. **The extracts.** On `/coord/extract`, build each pilot county's extract (with its audit board count). Until the county's pull list or CORLA's posting arrives it is in **predicted order**: CORLA's pull order (storage location, scanner, batch, record), with
    - ballots beyond the low estimate marked **POSSIBLE** (drawn only if CORLA's count is above the low one);
    - ballots at each board's ends that CORLA's random split may give to the next or previous board listed on both boards, marked **BOUNDARY: may be Board N's ballot. If this board doesn't pull it, skip it.** On the observer's screen, "Skipped: other board" settles one with a tap.
