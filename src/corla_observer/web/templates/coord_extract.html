@@ -48,7 +48,7 @@
         {% endfor %}
         </tbody>
       </table></div>
-      <p><a href="{{ url('/coord/extract/csv?county=' ~ row.county|urlencode) }}">CSV of the whole county</a></p>
+      <p><a href="{{ url('/coord/extract/csv?county=' ~ row.county|urlencode) }}">CSV of the whole county</a>: the printout as a spreadsheet, every board's ballots in one file, for sorting, checking off, or checking a page's hash. At the top, rows naming the county, the seed and the hash of every input and printout; after a blank row, one row per ballot with its board, imprinted id, location, expected votes, and the page it is printed on. Not needed to run the audit.</p>
     {% else %}
       <p class="notice" role="note"><span aria-hidden="true">&#9675;</span> <strong>No RLA-sample extract for {{ row.county }} yet.</strong>
         {% if not has_seed %}The RLA sample needs the seed: once it is rolled, enter it under <a href="{{ url('/coord/seed') }}">Seed</a>, then build the extract above.{% else %}The seed is in effect: build the extract above.{% endif %}

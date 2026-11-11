@@ -10,10 +10,12 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlencode
 
 import pytest
 from fastapi.testclient import TestClient
 from httpx import Response
+from synthetic import ballots, make_cvr
 from typer.testing import CliRunner
 
 from corla_observer.cli import app as cli_app
@@ -26,7 +28,6 @@ from corla_observer.web.app import AppConfig, create_app
 from corla_observer.web.ratelimit import Limit, RateLimiter
 from corla_observer.web.sessions import SecretError, load_secret
 from corla_observer.workspace import Workspace
-from synthetic import ballots, make_cvr
 
 GOOD_CVR = make_cvr(ballots(10, "Mayor", "Council") + ballots(11, "Mayor", precinct="102"))
 BAD_CVR = make_cvr(ballots(10, "Mayor", "Council") + ballots(3, "Mayor", "Fire", precinct="7"))
@@ -206,6 +207,32 @@ def test_login_and_logout(workspace: Path, client: TestClient) -> None:
     assert ("coordinator.logout", "coordinator:alice") in kinds
     assert ("coordinator.login_failed", "system") in kinds  # the wrong password; unknown names are not logged
     assert sum(1 for k, _ in kinds if k == "coordinator.login_failed") == 1
+
+
+def test_login_returns_to_the_page_asked_for(make_client: Factory) -> None:
+    client = make_client(path_prefix="/x7Gq2")
+    asked = "/coord/extract/provenance?county=Gilpin&board=1"
+    sent = client.get("/x7Gq2" + asked, follow_redirects=False)
+    assert sent.status_code == 303 and sent.headers["location"] == "/x7Gq2/login?" + urlencode({"next": asked})
+    page = client.get(sent.headers["location"])
+    assert f'name="next" value="{asked.replace("&", "&amp;")}"' in page.text
+    response = client.post("/x7Gq2/login", data={"csrf": csrf_of(page), "name": "alice", "password": PASSWORD, "next": asked}, follow_redirects=False)
+    assert response.status_code == 303 and response.headers["location"] == "/x7Gq2" + asked
+    # Already logged in, the login page sends you straight there.
+    again = client.get("/x7Gq2/login?" + urlencode({"next": "/coord/targets"}), follow_redirects=False)
+    assert again.status_code == 303 and again.headers["location"] == "/x7Gq2/coord/targets"
+
+
+def test_login_never_returns_to_another_site(make_client: Factory) -> None:
+    for bad in ("//evil.example/x", "https://evil.example/", "/\\evil.example", "evil", "/login", "/coord\nSet-Cookie: x=1", ""):
+        client = make_client()
+        page = client.get("/login?" + urlencode({"next": bad}))
+        assert 'name="next"' not in page.text
+        response = client.post("/login", data={"csrf": csrf_of(page), "name": "alice", "password": PASSWORD, "next": bad}, follow_redirects=False)
+        assert response.status_code == 303 and response.headers["location"] == "/coord?msg=logged_in", bad
+    # A POST to a coordinator page while logged out goes to the login page with no return address.
+    client = make_client()
+    assert client.post("/coord/extract", data={"csrf": "x"}, follow_redirects=False).headers.get("location") in (None, "/login")
 
 
 def test_csrf_is_required(workspace: Path, client: TestClient) -> None:
@@ -393,7 +420,7 @@ def test_rate_limits(make_client: Factory) -> None:
 def test_unauthenticated_access_is_refused(client: TestClient) -> None:
     for path in ("/coord", "/coord/upload", "/coord/map"):
         response = client.get(path, follow_redirects=False)
-        assert response.status_code == 303 and response.headers["location"] == "/login"
+        assert response.status_code == 303 and response.headers["location"] == "/login?" + urlencode({"next": path})
         assert response.headers["cache-control"] == "no-store"
     assert client.post("/coord/audit-boards", data={"csrf": "x", "county": "Boulder", "count": "2"}).status_code == 403
     assert client.post("/coord/fetch", data={"csrf": "x"}).status_code == 403
@@ -639,9 +666,10 @@ def test_link_addresses_follow_the_request() -> None:
 
 
 def test_dashboard_lists_counties_in_observation_and_counties_page_lists_all(workspace: Path, make_client: Factory, tmp_path: Path) -> None:
+    from synthetic import ELECTION_URL, election_files
+
     from corla_observer.classify import COLORADO_COUNTIES
     from corla_observer.fetch import FetchPolicy, FetchResult, fetch_urls
-    from synthetic import ELECTION_URL, election_files
 
     class Fetcher:
         policy = FetchPolicy()

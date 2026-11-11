@@ -360,7 +360,7 @@ async def targets_page(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     county = _county(request)
     drawn = request.query_params.get("drawn")
 
@@ -503,7 +503,7 @@ async def show_draw(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
 
     def view() -> Response:
         county, record, sha = _draw(state, request)
@@ -541,7 +541,7 @@ def _safe_name(county: str) -> str:
 async def draw_csv(request: Request) -> Response:
     state = get_state(request)
     if current_session(request) is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
 
     def body() -> Response:
         county, record, _ = _draw(state, request)
@@ -555,7 +555,7 @@ async def draw_csv(request: Request) -> Response:
 async def draw_record(request: Request) -> Response:
     state = get_state(request)
     if current_session(request) is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     county, record, sha = await run_in_threadpool(_draw, state, request)
     return Response(
         state.workspace.get_bytes(sha),
@@ -629,7 +629,7 @@ async def include_source(request: Request) -> Response:
 async def list_csv(request: Request) -> Response:
     state = get_state(request)
     if current_session(request) is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     county = _county(request)
     if county is None:
         raise HTTPException(status_code=404, detail="No such county.")
@@ -740,7 +740,7 @@ def _sent_list(state: WebState, request: Request) -> tuple[str, pulllists.PullLi
 async def sent_csv(request: Request) -> Response:
     state = get_state(request)
     if current_session(request) is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
 
     def body() -> Response:
         county, item = _sent_list(state, request)
@@ -754,7 +754,7 @@ async def sent_csv(request: Request) -> Response:
 async def sent_record(request: Request) -> Response:
     state = get_state(request)
     if current_session(request) is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     county, item = await run_in_threadpool(_sent_list, state, request)
     if item.record_sha256 is None:
         raise HTTPException(status_code=404, detail="This list has no stored record.")

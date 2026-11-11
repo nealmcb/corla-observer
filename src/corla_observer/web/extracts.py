@@ -48,6 +48,7 @@ and every POST its CSRF token, as in `corla_observer.web.coordinator`):
 from __future__ import annotations
 
 from typing import Any
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
@@ -125,7 +126,7 @@ async def seed_page(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     return await run_in_threadpool(_seed_page, state, request, session)
 
 
@@ -224,7 +225,7 @@ async def extract_page(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     return await run_in_threadpool(_extract_page, state, request, session)
 
 
@@ -312,8 +313,14 @@ def _pdf(state: WebState, request: Request) -> Response:
 async def extract_pdf(request: Request) -> Response:
     state = get_state(request)
     if current_session(request) is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     return await run_in_threadpool(_pdf, state, request)
+
+
+def _printout_url(state: WebState, request: Request) -> str:
+    """The PDF, in the default layout, of the extract or list and board this request names."""
+    params = {k: v for k, v in request.query_params.items() if k in ("county", "board", "list")}
+    return state.url("/coord/extract/pdf?" + urlencode({**params, "layout": DEFAULT_LAYOUT}))
 
 
 def _provenance_view(state: WebState, request: Request) -> str:
@@ -325,7 +332,7 @@ def _provenance_view(state: WebState, request: Request) -> str:
         board,
         stylesheet=state.static_url("extract.css"),
         integrity=state.integrity["extract.css"],
-        links=[("Back", state.url("/coord/extract"))],
+        links=[("Back", state.url("/coord/extract")), ("Download this board's printout (PDF); this page is its first sheet", _printout_url(state, request))],
         software=extract_software(state.log, sha),
     )
 
@@ -334,7 +341,7 @@ def _provenance_view(state: WebState, request: Request) -> str:
 async def extract_provenance(request: Request) -> Response:
     state = get_state(request)
     if current_session(request) is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     return HTMLResponse(await run_in_threadpool(_provenance_view, state, request))
 
 
@@ -342,7 +349,7 @@ async def extract_provenance(request: Request) -> Response:
 async def extract_text(request: Request) -> Response:
     state = get_state(request)
     if current_session(request) is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     extract, sha, board = await run_in_threadpool(_chosen, state, request)
     assert board is not None
     text = await run_in_threadpool(lambda: render_text(extract, sha, board, software=extract_software(state.log, sha)))
@@ -353,7 +360,7 @@ async def extract_text(request: Request) -> Response:
 async def extract_csv(request: Request) -> Response:
     state = get_state(request)
     if current_session(request) is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     extract, sha, board = await run_in_threadpool(_chosen, state, request, False)
     body = await run_in_threadpool(lambda: to_csv(extract, sha, board, extract_pdfs(state.log, sha)))
     return Response(

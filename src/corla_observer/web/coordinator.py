@@ -74,7 +74,7 @@ from datetime import UTC, datetime
 from functools import partial
 from pathlib import Path
 from typing import Any
-from urllib.parse import quote
+from urllib.parse import quote, urlencode, urlsplit
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.concurrency import run_in_threadpool
@@ -155,8 +155,34 @@ def current_session(request: Request) -> Session | None:
     return get_state(request).sessions.get(request.cookies.get(SESSION_COOKIE))
 
 
-def _login_redirect(state: WebState) -> RedirectResponse:
-    return RedirectResponse(state.url("/login"), status_code=303)
+def _login_redirect(state: WebState, request: Request | None = None) -> RedirectResponse:
+    """To the login page; for a GET, carrying the page asked for (``next``), so logging in returns to it."""
+    target = "/login"
+    if request is not None and request.method == "GET":
+        path = request.url.path
+        if state.prefix and path.startswith(state.prefix):
+            path = path[len(state.prefix):]
+        wanted = path + (f"?{request.url.query}" if request.url.query else "")
+        if _safe_next(wanted):
+            target += "?" + urlencode({"next": wanted})
+    return RedirectResponse(state.url(target), status_code=303)
+
+
+def _safe_next(wanted: object) -> str | None:
+    """``wanted`` if it is a path on this site (under the prefix, which ``state.url`` adds), else None.
+
+    Only a single leading slash, no scheme or host, no backslash or control
+    character, and not the login page itself: a ``next`` can't send anyone
+    to another site.
+    """
+    if not isinstance(wanted, str) or not wanted.startswith("/") or wanted.startswith("//") or len(wanted) > 2000:
+        return None
+    if "\\" in wanted or any(ord(c) < 32 or ord(c) == 127 for c in wanted):
+        return None
+    parts = urlsplit(wanted)
+    if parts.scheme or parts.netloc or parts.path in ("/login", "/logout"):
+        return None
+    return wanted
 
 
 def _forbidden() -> HTTPException:
@@ -205,13 +231,14 @@ def _clear_cookie(state: WebState, response: Response, name: str) -> None:
 # Login and logout
 
 
-def _login_page(request: Request, error: str | None = None, status_code: int = 200) -> Response:
+def _login_page(request: Request, error: str | None = None, status_code: int = 200, wanted: str | None = None) -> Response:
     state = get_state(request)
     nonce = request.cookies.get(PRESESSION_COOKIE)
     if not nonce or len(nonce) > 128:
         nonce = state.sessions.new_presession()
     response = state.render(
-        request, "login.html", status_code, csrf=state.sessions.presession_csrf(nonce), error=error, session=None
+        request, "login.html", status_code, csrf=state.sessions.presession_csrf(nonce), error=error, session=None,
+        next=wanted,
     )
     _set_cookie(state, response, PRESESSION_COOKIE, nonce)
     return response
@@ -219,9 +246,10 @@ def _login_page(request: Request, error: str | None = None, status_code: int = 2
 
 @router.get("/login")
 async def login_form(request: Request) -> Response:
+    wanted = _safe_next(request.query_params.get("next"))
     if current_session(request) is not None:
-        return RedirectResponse(get_state(request).url("/coord"), status_code=303)
-    return _login_page(request)
+        return RedirectResponse(get_state(request).url(wanted or "/coord"), status_code=303)
+    return _login_page(request, wanted=wanted)
 
 
 @router.post("/login")
@@ -229,20 +257,21 @@ async def login(request: Request) -> Response:
     state = get_state(request)
     form = await small_form(request)
     token, name, password = form.get("csrf"), form.get("name"), form.get("password")
+    wanted = _safe_next(form.get("next"))
     if not state.sessions.check_presession(request.cookies.get(PRESESSION_COOKIE), token if isinstance(token, str) else None):
         raise _forbidden()
     name = name.strip() if isinstance(name, str) else ""
     password = password if isinstance(password, str) else ""
     if not (state.login_limiter.allow("address:" + _address(request)) and state.login_limiter.allow("name:" + name[:64])):
-        return _login_page(request, "Too many attempts. Wait a few minutes and try again.", 429)
+        return _login_page(request, "Too many attempts. Wait a few minutes and try again.", 429, wanted)
     account = await run_in_threadpool(state.accounts.authenticate, name, password)
     if account is None:
         if _valid_name(name) and state.accounts.get(name) is not None:
             state.log.append("coordinator.login_failed", "system", data={"name": name, "reason": "wrong_password"})
-        return _login_page(request, "That name and password were not accepted.", 401)
+        return _login_page(request, "That name and password were not accepted.", 401, wanted)
     cookie, session = state.sessions.create(account.name, account.actor)
     state.log.append("coordinator.login", account.actor, session_id=session.label, data={"name": account.name})
-    response = RedirectResponse(state.url("/coord?msg=logged_in"), status_code=303)
+    response = RedirectResponse(state.url(wanted or "/coord?msg=logged_in"), status_code=303)
     # Kept when the browser is closed, for the session's lifetime (it still ends on logging out, after
     # SESSION_IDLE without use, or when the server restarts, since sessions are held in its memory).
     _set_cookie(state, response, SESSION_COOKIE, cookie, max_age=SESSION_LIFETIME)
@@ -293,7 +322,7 @@ async def coord_home(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     snapshot = await run_in_threadpool(state.cache.get)
     message = MESSAGES.get(request.query_params.get("msg", ""))
     if request.query_params.get("msg") == "boards":
@@ -384,7 +413,7 @@ async def upload_form(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     return state.render(request, "coord_upload.html", error=None, **_common(state, session))
 
 
@@ -571,7 +600,7 @@ async def coord_map(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     snapshot = await run_in_threadpool(state.cache.get)
     text = await run_in_threadpool(map_text, snapshot, for_ai=False)
     ai_text = await run_in_threadpool(map_text, snapshot, for_ai=True)
@@ -696,7 +725,7 @@ async def coord_stats(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     snapshot = await run_in_threadpool(state.cache.get)
 
     def comparisons() -> list[tuple[str, str, list[BallotComparison], int, str | None]]:
@@ -724,7 +753,7 @@ async def coord_flags(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     snapshot = await run_in_threadpool(state.cache.get)
     message = MESSAGES.get(request.query_params.get("msg", ""))
     return state.render(request, "coord_flags.html", snap=snapshot, message=message, error=None, **_common(state, session))
@@ -811,7 +840,7 @@ async def links_page(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     message = "Link revoked." if request.query_params.get("msg") == "revoked" else None
     return _links_page(request, state, session, message=message)
 

@@ -88,7 +88,7 @@ async def coord_estimates(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     view = await run_in_threadpool(_estimates_view, state)
     return state.render(request, "coord_estimates.html", message=request.query_params.get("msg"), error=None, **view, **_common(state, session))
 
@@ -131,7 +131,7 @@ async def coord_schedule(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     view = await run_in_threadpool(_schedule_view, state)
     return state.render(request, "coord_schedule.html", message=request.query_params.get("msg"), **view, **_common(state, session))
 
@@ -186,7 +186,7 @@ async def coord_activity(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     chosen = [g for g in request.query_params.getlist("group") if g.isidentifier()][:20]
 
     def view() -> dict[str, Any]:
@@ -209,7 +209,7 @@ async def coord_walkthrough(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     if not state.walkthrough:
         return state.render(request, "coord_walkthrough.html", walk=None, rows=[], notes=[], **_common(state, session))
     walk = await run_in_threadpool(walk_state, state.workspace, state.log)

@@ -237,7 +237,7 @@ async def coord_check(request: Request) -> Response:
     state = get_state(request)
     session = current_session(request)
     if session is None:
-        return _login_redirect(state)
+        return _login_redirect(state, request)
     return await _get(request, _coordinator(state, session))
 
 
