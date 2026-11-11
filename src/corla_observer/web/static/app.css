@@ -99,6 +99,7 @@ pre.text {
 .badge-high, .badge-fail, .badge-error { background: var(--vermilion); color: var(--on-vermilion); }
 .badge-missing, .badge-warning { background: var(--orange); color: var(--on-orange); }
 .badge-info { background: var(--sky); color: var(--on-sky); }
+.badge-tag { background: transparent; color: inherit; border: 1px solid currentColor; }
 
 ol.flags { list-style: none; padding: 0; margin: 0; }
 li.flag { background: var(--card); border: 1px solid var(--border); border-left-width: 6px; border-radius: 6px; padding: 8px 12px; margin-bottom: 8px; }
@@ -456,6 +457,13 @@ table.targets-table tbody tr { border-top: 1px solid var(--border); }
 table.targets-table .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .nowrap { white-space: nowrap; }
 table.targets-table td form.inline button { white-space: nowrap; }
+ol.target-menu > li { margin-bottom: 1.2em; }
+ol.target-menu > li > p { margin: 0.15em 0; }
+ol.target-menu p.target-menu-row { padding-left: 1.5em; }
+ol.target-menu form.actions { display: flex; flex-wrap: wrap; gap: 0.5em; align-items: flex-end; }
+ol.target-menu form.actions label { display: inline-flex; flex-direction: column; }
+ol.target-menu form.actions input[type=text] { width: 14em; max-width: 100%; }
+@media (max-width: 600px) { ol.target-menu p.target-menu-row { padding-left: 0.6em; } }
 .target-pattern { min-width: 12em; max-width: 36em; overflow-wrap: anywhere; }
 
 input.target-size:not([type=checkbox]) { width: 5.5em; padding: 4px 6px; }

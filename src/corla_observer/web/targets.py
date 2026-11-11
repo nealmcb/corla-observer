@@ -57,6 +57,18 @@ counts are never on a public page):
 ``POST /coord/targets/allowed``
     The most targeted ballots the county allows in all, shown beside the
     running total of its sent lists, with a warning above it.
+``GET /coord/targets/menu?county=C[&budget=N][&strategy=minimax|ladder][&seed=TEXT]``
+    The targeting menu (`corla_observer.targetmenu`, docs/TARGETING.md, "The
+    targeting menu"): the county's sampling domains worth drawing from,
+    riskiest first, with each contest's pooled risk now and after more
+    draws; the suggestion for a budget (the allowed total less the ballots
+    sent, or ``budget``); the seed for draws, shown once (the RLA seed in
+    effect, or ``seed``); a "Draw" form per domain using it; the other local
+    contests and the regional ones collapsed below.
+``POST /coord/targets/domain/draw``
+    A domain draw (``domain``, the contests' indexes; ``size``; ``seed``):
+    cards drawn uniformly with replacement from the domain's cards, recorded
+    and added to the working list as a source.
 """
 
 from __future__ import annotations
@@ -73,6 +85,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from corla_observer import pulllists
+from corla_observer import targetmenu as tm
 from corla_observer import targets as tg
 from corla_observer.classify import DEMO_COUNTIES, is_test_county, known_county
 from corla_observer.cvr import CvrReader
@@ -363,6 +376,7 @@ async def targets_page(request: Request) -> Response:
         return _login_redirect(state)
     county = _county(request)
     drawn = request.query_params.get("drawn")
+    domain_drawn = request.query_params.get("domain_drawn")
 
     def page() -> Response:
         text = None
@@ -371,6 +385,10 @@ async def targets_page(request: Request) -> Response:
             if record is not None:
                 skipped = f"; {len(record.collisions)} already listed or sampled, skipped" if record.collisions else ""
                 text = f"Draw {record.draw}: {len(record.ballots)} ballots added to the working list{skipped}."
+        if county and domain_drawn and domain_drawn.isdigit():
+            found = next((r for r, _ in tg.domain_draws(state.workspace, state.log, county) if r.draw == int(domain_drawn)), None)
+            if found is not None:
+                text = _domain_message(found)
         return _page(state, request, session, county, 200, None, added_message=text)
 
     return await run_in_threadpool(page)
@@ -807,3 +825,107 @@ async def targeted_allowed(request: Request) -> Response:
         return await run_in_threadpool(lambda: _page(state, request, session, county, 400, problem))
     return RedirectResponse(_url(state, "/coord/targets", county=county, msg="allowed") + "#sent", status_code=303)
 
+
+
+# ---------------------------------------------------------------------------
+# The targeting menu, and domain draws
+
+
+def _domain_message(record: tg.DomainDrawRecord) -> str:
+    text = f"Domain draw {record.draw}: {record.size} draw{'s' if record.size != 1 else ''} from the {record.domain_cards:,} cards carrying {record.describe()}"
+    text += f", {len(record.ballots)} distinct card{'s' if len(record.ballots) != 1 else ''} added to the working list"
+    if record.held:
+        text += f"; {len(record.held)} already on a list or in the RLA sample (pulled once, counted as drawn)"
+    return text + "."
+
+
+@router.get("/coord/targets/menu")
+async def targets_menu(request: Request) -> Response:
+    state = get_state(request)
+    session = current_session(request)
+    if session is None:
+        return _login_redirect(state)
+    county = _county(request)
+    if county is None:
+        return RedirectResponse(state.url("/coord/targets"), status_code=303)
+
+    def page() -> Response:
+        try:
+            inputs = tm.gather(state.workspace, state.log, county, datamap=state.cache.get().datamap)
+        except LookupError as exc:
+            raise HTTPException(status_code=404, detail=f"No redacted CVR from {county}.") from exc
+        menu = tm.build_menu(inputs)
+        typed = request.query_params.get("budget", "").strip()
+        budget = int(typed) if typed.isdigit() and 0 < int(typed) <= tm.MAX_BUDGET else inputs.budget
+        strategy = request.query_params.get("strategy", tm.MINIMAX)
+        strategy = strategy if strategy in (tm.MINIMAX, tm.LADDER) else tm.MINIMAX
+        allocations = {s: menu.allocate(budget, s) for s in (tm.MINIMAX, tm.LADDER)} if budget else {}
+        given = " ".join(request.query_params.get("seed", "").split())[: tg.MAX_SEED]
+        seed = given or _seed_in_effect(state)
+        return state.render(
+            request,
+            "coord_targets_menu.html",
+            200,
+            county=county,
+            menu=menu,
+            budget=budget,
+            typed=typed if typed.isdigit() else "",
+            strategy=strategy,
+            allocations=allocations,
+            chosen=allocations.get(strategy),
+            line_rows=tm.line_rows,
+            pct=tm.pct,
+            tie_note=tm.TIE_NOTE,
+            limit=tm.limit_text(menu.limit),
+            style_note=tm.STYLE_NOTE,
+            seed=seed,
+            seed_given=bool(given),
+            max_draw=tg.MAX_DRAW,
+            max_seed=tg.MAX_SEED,
+            max_budget=tm.MAX_BUDGET,
+            draw_size=tg.DOMAIN_DRAW_SIZE,
+            categories=tm,
+            error=None,
+            message=None,
+            **_common(state, session),
+        )
+
+    return await run_in_threadpool(page)
+
+
+@router.post("/coord/targets/domain/draw")
+async def domain_draw(request: Request) -> Response:
+    state = get_state(request)
+    session, form = await checked_form(request)
+    county = _form_county(form)
+
+    def run() -> tg.DomainDrawRecord | str:
+        data = _load(state, county)
+        indexes = [int(i) for i in str(form.get("domain") or "").split(",") if i.strip().isdigit()]
+        names = [data.votes.contests[i].name for i in indexes if i in data.votes.contests]
+        if not names or len(names) != len(indexes):
+            return "no such domain in the county's current CVR"
+        size_text = str(form.get("size") or "").strip() or str(tg.DOMAIN_DRAW_SIZE)
+        if not size_text.isdigit() or not 1 <= int(size_text) <= tg.MAX_DRAW:
+            return f"the number of cards to draw is 1 to {tg.MAX_DRAW}"
+        in_effect = _seed_in_effect(state)
+        chosen = str(form.get("seed") or "").strip() or in_effect
+        if not chosen:
+            return "enter a seed for the draw (any text; no RLA seed has been entered yet)"
+        try:
+            found = tg.sources(state.workspace, state.log, county)
+            record = tg.domain_draw(
+                data.votes, county=county, cvr_sha256=data.cvr_sha256, contests=names, seed=chosen,
+                seed_source="the RLA seed in effect" if chosen == in_effect else "entered for this draw",
+                number=tg.domain_draw_count(state.log, county) + 1, locations=data.locations, manifest_sha256=data.manifest_sha256,
+                actor=session.actor, size=int(size_text), held=tg.holders(state.workspace, state.log, county, found),
+            )  # fmt: skip
+            record, _ = tg.record_domain_draw(state.workspace, state.log, record, session_id=session.label)
+        except tg.DrawError as exc:
+            return str(exc)
+        return record
+
+    result = await run_in_threadpool(run)
+    if isinstance(result, str):
+        return await run_in_threadpool(_problem, state, request, session, county, result)
+    return RedirectResponse(_url(state, "/coord/targets", county=county, domain_drawn=str(result.draw)) + "#list", status_code=303)
