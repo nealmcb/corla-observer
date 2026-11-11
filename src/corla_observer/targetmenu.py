@@ -1585,17 +1585,50 @@ def posted_draws(
     one sequence, so the longest list of each domain is counted, once. The comparison file maps each
     CVR ID to its county and imprinted ID; a drawn ID it does not list is not placed, and counted.
     """
-    import json
-
-    from corla_observer.classify import Classification, canonical_county
-    from corla_observer.datamap import role_column, table_rows
-
     selections, comparisons = (
         datamap.used("selection_list"),
         datamap.used("cvr_comparison"),
     )
     if not selections or not comparisons:
         return None
+    domains = tuple(
+        sorted((k, c.county_names) for k, c in corla.items() if c.county_names)
+    )
+    cache_key = (
+        tuple(e.sha256 for e in selections),
+        tuple(e.sha256 for e in comparisons),
+        county,
+        hash(domains),
+    )
+    with _DRAWS_LOCK:
+        cached = _POSTED.get(cache_key)
+    if cached is not None:
+        return list(cached[0]), cached[1]
+    found = _read_posted(selections, comparisons, workspace, county, corla)
+    if found is not None:
+        with _DRAWS_LOCK:
+            _POSTED[cache_key] = found
+            while len(_POSTED) > 8:
+                _POSTED.pop(next(iter(_POSTED)))
+    return found
+
+
+_POSTED: dict[tuple[Any, ...], tuple[list[str], str]] = {}
+
+
+def _read_posted(
+    selections: Sequence[Any],
+    comparisons: Sequence[Any],
+    workspace: Workspace,
+    county: str,
+    corla: Mapping[str, CorlaContest],
+) -> tuple[list[str], str] | None:
+    """`posted_draws`, read from the files (``MapEntry``s)."""
+    import json
+
+    from corla_observer.classify import Classification, canonical_county
+    from corla_observer.datamap import role_column, table_rows
+
     lists: dict[str, list[str]] = {}
     for entry in selections:
         try:

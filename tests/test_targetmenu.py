@@ -784,7 +784,9 @@ def test_observers_entries_give_the_discrepancies_without_corla_comparisons(
     )
 
 
-def test_the_menu_page_and_a_domain_draw_from_it(tmp_path: Path) -> None:
+def test_the_targets_page_opens_with_the_menu_and_a_domain_draw_from_it(
+    tmp_path: Path,
+) -> None:
     _, root = _workspace(tmp_path)
     app = create_app(
         AppConfig(workspace=root, secret=b"s" * 32, crawl=lambda ws, log: None)
@@ -797,52 +799,79 @@ def test_the_menu_page_and_a_domain_draw_from_it(tmp_path: Path) -> None:
             == 303
         )
         assert login(client).status_code == 303
+        page = client.get(f"/coord/targets?county={COUNTY}")
+        text = page.text
+        # The menu first; then the working list, drafts and sent lists; the other ways last, collapsed.
+        order = [
+            text.index(x) for x in ('id="menu"', 'id="list"', 'id="sent"', 'id="other"')
+        ]
+        assert order == sorted(order)
         assert (
-            "The targeting menu" in client.get(f"/coord/targets?county={COUNTY}").text
+            "Other ways to choose ballots" in text
+            and '<details id="other-ways">' in text
         )
-        page = client.get(f"/coord/targets/menu?county={COUNTY}")
+        assert text.index('id="targets-grid"') > text.index(
+            'id="other"'
+        ) and text.index('action="/coord/targets/list/add"') > text.index('id="other"')
         assert (
-            page.status_code == 200
-            and "Targeting menu: Delta (2020 demo)" in page.text
-            and tm.STYLE_NOTE.replace("'", "&#39;") in page.text
+            "Where random draws would help most" in text
+            and tm.STYLE_NOTE.replace("'", "&#39;") in text
         )
+        assert text.index("Where the numbers come from") < text.index('id="list"')
+        assert "Riskiest: Synthetic County Commissioner   100.0%  thin " in text
         assert (
-            "Riskiest: Synthetic County Commissioner   100.0%  thin " in page.text
-            and 'class="badge badge-info"><span aria-hidden="true">&#9679;</span> unseen</span>'
-            in page.text
-            and "[unseen]" not in page.text
-            and "% of its 82 cards" in page.text
-            and "Margin (votes, % of its cards)" in page.text
-            and "Draw from this domain" in page.text
-        )
-        assert (
-            "No allowed total is recorded" in page.text and "Regional (3)" in page.text
-        )
-        suggested = client.get(
-            f"/coord/targets/menu?county={COUNTY}&budget=12&strategy=ladder"
+            'class="badge badge-info"><span aria-hidden="true">&#9679;</span> unseen</span>'
+            in text
+            and "[unseen]" not in text
         )
         assert (
-            "Ladder, 12 draws, one first to each of 1 domain with an unseen contest or a tie: the highest local pooled risk (ties left out) goes from 100.0% to "
+            "% of its 82 cards" in text
+            and "Margin (votes, % of its cards)" in text
+            and "Draw from this domain" in text
+        )
+        assert "No allowed total is recorded" in text and "Regional (3)" in text
+        # The other ways open when one is in use (a pattern checked), and behave as before.
+        votes = tg.load_votes(tmp_path / "files" / "cvr.csv")
+        local = votes.contest_by_name(LOCAL)
+        assert local is not None
+        assert (
+            '<details id="other-ways" open>'
+            in client.get(
+                f"/coord/targets?county={COUNTY}&add=Synthetic+County+Commissioner&v={local.index}:0"
+            ).text
+        )
+        # The menu's old page redirects here, its query kept.
+        moved = client.get(
+            f"/coord/targets/menu?county={COUNTY}&budget=12&strategy=ladder",
+            follow_redirects=False,
+        )
+        assert moved.status_code == 303 and moved.headers["location"].endswith(
+            "/coord/targets?county=Delta+%282020+demo%29&budget=12&strategy=ladder#menu"
+        )
+        suggested = client.get(moved.headers["location"])
+        assert (
+            "Ladder, 12 draws, one first to each of 1 domain with an unseen contest or a tie: the highest local pooled risk "
+            "(ties left out) goes from 100.0% to "
             in suggested.text
             and "suggested: " in suggested.text
         )
-        # The seed is shown once, read only, and each draw form carries it; the Cards box holds the suggestion.
+        # The seed is shown once, read only, and each domain's draw form carries it; the Cards box holds the suggestion.
+        assert "No RLA seed has been entered yet" in text  # this workspace has none
+        menu_html = text[text.index('id="menu"') : text.index('id="list"')]
         assert (
-            "No RLA seed has been entered yet" in page.text
-        )  # this workspace has none
-        assert (
-            page.text.count('name="seed"') == 2
+            menu_html.count('name="seed"') == 2
         )  # the "Use another seed" box and the one draw form, hidden
-        filled = re.search(r'name="size" value="(\d*)"', suggested.text)
+        filled = re.search(
+            r'name="size" value="(\d*)" min="1" max="500" inputmode="numeric" class="target-size" required',
+            suggested.text,
+        )
         assert (
             filled is not None and int(filled.group(1)) > 0
         )  # the ladder's suggestion for the one domain
-        own = client.get(
-            f"/coord/targets/menu?county={COUNTY}&seed=our+words&budget=12"
-        )
+        own = client.get(f"/coord/targets?county={COUNTY}&seed=our+words&budget=12")
         assert "<code>our words</code>" in own.text and "entered here" in own.text
         assert '<input type="hidden" name="seed" value="our words">' in own.text
-        key = re.search(r'name="domain" value="([0-9,]+)"', page.text).group(1)  # type: ignore[union-attr]
+        key = re.search(r'name="domain" value="([0-9,]+)"', text).group(1)  # type: ignore[union-attr]
         drawn = client.post("/coord/targets/domain/draw", data={"csrf": csrf_of(page), "county": COUNTY, "domain": key, "size": "7", "seed": "words"},
                             follow_redirects=False)  # fmt: skip
         assert (
@@ -854,10 +883,7 @@ def test_the_menu_page_and_a_domain_draw_from_it(tmp_path: Path) -> None:
             in listed
             and "Domain draw 1</strong>" in listed
         )
-        assert (
-            "Includes 7 domain draws already made."
-            in client.get(f"/coord/targets/menu?county={COUNTY}").text
-        )
+        assert "Includes 7 domain draws already made." in listed
         bad = client.post(
             "/coord/targets/domain/draw",
             data={"csrf": csrf_of(page), "county": COUNTY, "domain": "99", "size": "7"},

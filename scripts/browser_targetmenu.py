@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Show the targeting menu (/coord/targets/menu) in a real browser at desktop and phone widths, checking it and taking screenshots.
+"""Show the targeting menu at the top of /coord/targets in a real browser at desktop and phone widths, checking it and taking screenshots.
 
 Written 2026-11-11 for the targeting menu (src/corla_observer/targetmenu.py,
-web/templates/coord_targets_menu.html, docs/TARGETING.md, "The targeting
+web/templates/_targets_menu.html, docs/TARGETING.md, "The targeting
 menu"): does the page open for COUNTY with its totals by property, its
 domain lines with their tags in words, a suggestion for BUDGET draws and a
 draw form per domain, and does a domain's table of contests open; how does
@@ -59,11 +59,26 @@ def main(argv: list[str]) -> int:
         page.click("button[type=submit]")
         for size, (width, height) in SIZES.items():
             page.set_viewport_size({"width": width, "height": height})
-            page.goto(
-                f"{base}/coord/targets/menu?county={quote(county)}&budget={budget}"
-            )
+            page.goto(f"{base}/coord/targets?county={quote(county)}&budget={budget}")
             text = page.inner_text("main")
-            check(f"{size}: the page opens", "Targeting menu" in text, text[:200])
+            check(
+                f"{size}: the page opens on the menu",
+                "Where random draws would help most" in text,
+                text[:200],
+            )
+            order = [
+                page.locator(f"#{x}").bounding_box()["y"]
+                for x in ("menu", "list", "other")
+            ]
+            check(
+                f"{size}: the menu, then the working list, then the other ways",
+                order == sorted(order),
+                order,
+            )
+            check(
+                f"{size}: the other ways collapsed",
+                page.locator("#other-ways[open]").count() == 0,
+            )
             check(
                 f"{size}: totals by property",
                 page.locator("#totals").count() == 1,

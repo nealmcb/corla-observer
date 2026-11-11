@@ -4,8 +4,15 @@ Routes (under the app's path prefix; every one needs a coordinator session,
 and every POST its CSRF token, as in `corla_observer.web.coordinator`; the
 counts are never on a public page):
 
-``GET /coord/targets?county=C[&v=I:K...][&add=NAME...][&q=TEXT]``
-    The pattern grid: the county's statewide and US House contests, and any
+``GET /coord/targets?county=C[&budget=N][&strategy=minimax|ladder][&seed=TEXT][&v=I:K...][&add=NAME...][&q=TEXT]``
+    At the top, the targeting menu (`corla_observer.targetmenu`,
+    docs/TARGETING.md, "The targeting menu"): the county's totals by tag,
+    the suggestion for a budget (the allowed total less the ballots sent,
+    or ``budget``), the seed for draws shown once (the RLA seed in effect,
+    or ``seed``), and the sampling domains worth drawing from, riskiest
+    first, each with a "Draw" form. Then the working list, drafts and sent
+    lists. At the bottom, under "Other ways to choose ballots", collapsed
+    unless one is in use: the pattern grid: the county's statewide and US House contests, and any
     contest added by name (``add``), each tightest first by the results in
     hand, with a check box per candidate (``v`` = contest index : choice
     index), the number of ballots matching the boxes checked (and, beside
@@ -57,14 +64,9 @@ counts are never on a public page):
 ``POST /coord/targets/allowed``
     The most targeted ballots the county allows in all, shown beside the
     running total of its sent lists, with a warning above it.
-``GET /coord/targets/menu?county=C[&budget=N][&strategy=minimax|ladder][&seed=TEXT]``
-    The targeting menu (`corla_observer.targetmenu`, docs/TARGETING.md, "The
-    targeting menu"): the county's sampling domains worth drawing from,
-    riskiest first, with each contest's pooled risk now and after more
-    draws; the suggestion for a budget (the allowed total less the ballots
-    sent, or ``budget``); the seed for draws, shown once (the RLA seed in
-    effect, or ``seed``); a "Draw" form per domain using it; the other local
-    contests and the regional ones collapsed below.
+``GET /coord/targets/menu?...``
+    The menu's former page: redirects (303) to ``/coord/targets`` with the
+    same query, at the menu.
 ``POST /coord/targets/domain/draw``
     A domain draw (``domain``, the contests' indexes; ``size``; ``seed``):
     cards drawn uniformly with replacement from the domain's cards, recorded
@@ -344,6 +346,8 @@ def _page(state: WebState, request: Request, session: Session, county: str | Non
         max_extract_boards=MAX_BOARDS,
         demo_notes=DEMO_COUNTIES,
         draw_size=tg.DRAW_SIZE,
+        m=_menu_view(state, request, county),
+        open_other=error is not None or bool(extra.get("lookup_notes")) or any(k in request.query_params for k in ("v", "s", "add", "q", "drawn")),
         message=MESSAGES.get(request.query_params.get("msg", "")),
         error=error,
         **extra,
@@ -839,58 +843,40 @@ def _domain_message(record: tg.DomainDrawRecord) -> str:
     return text + "."
 
 
+def _menu_view(state: WebState, request: Request, county: str) -> dict[str, Any]:
+    """The targeting menu's values for the top of /coord/targets (template ``_targets_menu.html``, as ``m``).
+
+    ``budget``, ``strategy`` and ``seed`` come from the query. A menu that can't be worked out (its
+    inputs unreadable) is shown as ``error``, and the rest of the page as usual.
+    """
+    view: dict[str, Any] = {"error": None, "pct": tm.pct, "line_rows": tm.line_rows}
+    try:
+        inputs = tm.gather(state.workspace, state.log, county, datamap=state.cache.get().datamap)
+        menu = tm.build_menu(inputs)
+    except Exception as exc:  # noqa: BLE001 - the rest of the page still works without the menu
+        view["error"] = str(exc) or type(exc).__name__
+        return view
+    typed = request.query_params.get("budget", "").strip()
+    budget = int(typed) if typed.isdigit() and 0 < int(typed) <= tm.MAX_BUDGET else inputs.budget
+    strategy = request.query_params.get("strategy", tm.MINIMAX)
+    strategy = strategy if strategy in (tm.MINIMAX, tm.LADDER) else tm.MINIMAX
+    allocations = {s: menu.allocate(budget, s) for s in (tm.MINIMAX, tm.LADDER)} if budget else {}
+    given = " ".join(request.query_params.get("seed", "").split())[: tg.MAX_SEED]
+    return view | {
+        "menu": menu, "budget": budget, "typed": typed if typed.isdigit() else "", "strategy": strategy,
+        "allocations": allocations, "chosen": allocations.get(strategy), "tie_note": tm.TIE_NOTE,
+        "limit": tm.limit_text(menu.limit), "style_note": tm.STYLE_NOTE, "seed": given or _seed_in_effect(state),
+        "seed_given": bool(given), "max_draw": tg.MAX_DRAW, "max_seed": tg.MAX_SEED, "max_budget": tm.MAX_BUDGET,
+        "draw_size": tg.DOMAIN_DRAW_SIZE,
+    }  # fmt: skip
+
+
 @router.get("/coord/targets/menu")
 async def targets_menu(request: Request) -> Response:
+    """The menu's former page: now the top of /coord/targets, its query kept."""
     state = get_state(request)
-    session = current_session(request)
-    if session is None:
-        return _login_redirect(state)
-    county = _county(request)
-    if county is None:
-        return RedirectResponse(state.url("/coord/targets"), status_code=303)
-
-    def page() -> Response:
-        try:
-            inputs = tm.gather(state.workspace, state.log, county, datamap=state.cache.get().datamap)
-        except LookupError as exc:
-            raise HTTPException(status_code=404, detail=f"No redacted CVR from {county}.") from exc
-        menu = tm.build_menu(inputs)
-        typed = request.query_params.get("budget", "").strip()
-        budget = int(typed) if typed.isdigit() and 0 < int(typed) <= tm.MAX_BUDGET else inputs.budget
-        strategy = request.query_params.get("strategy", tm.MINIMAX)
-        strategy = strategy if strategy in (tm.MINIMAX, tm.LADDER) else tm.MINIMAX
-        allocations = {s: menu.allocate(budget, s) for s in (tm.MINIMAX, tm.LADDER)} if budget else {}
-        given = " ".join(request.query_params.get("seed", "").split())[: tg.MAX_SEED]
-        seed = given or _seed_in_effect(state)
-        return state.render(
-            request,
-            "coord_targets_menu.html",
-            200,
-            county=county,
-            menu=menu,
-            budget=budget,
-            typed=typed if typed.isdigit() else "",
-            strategy=strategy,
-            allocations=allocations,
-            chosen=allocations.get(strategy),
-            line_rows=tm.line_rows,
-            pct=tm.pct,
-            tie_note=tm.TIE_NOTE,
-            limit=tm.limit_text(menu.limit),
-            style_note=tm.STYLE_NOTE,
-            seed=seed,
-            seed_given=bool(given),
-            max_draw=tg.MAX_DRAW,
-            max_seed=tg.MAX_SEED,
-            max_budget=tm.MAX_BUDGET,
-            draw_size=tg.DOMAIN_DRAW_SIZE,
-            categories=tm,
-            error=None,
-            message=None,
-            **_common(state, session),
-        )
-
-    return await run_in_threadpool(page)
+    query = urlencode(list(request.query_params.multi_items()))
+    return RedirectResponse(state.url("/coord/targets" + ("?" + query if query else "")) + "#menu", status_code=303)
 
 
 @router.post("/coord/targets/domain/draw")

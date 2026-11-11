@@ -9,6 +9,22 @@ county one tidy pull list in its own pull order. This document is the requiremen
 the coordinator page is `/coord/targets` (`corla_observer.web.targets`), the library is
 `corla_observer.targets`, and the lists observers follow are in `corla_observer.pulllists`.
 
+## The coordinator page
+
+`/coord/targets`, for a county with a redacted CVR, reads from top to bottom:
+
+1. **The targeting menu** (below): the caveat about card styles and where the numbers come from,
+   the county's local contests counted by tag, the suggestion for a budget (minimax or ladder),
+   the seed for draws shown once, and the sampling domains worth drawing from, riskiest first, each
+   with a draw form. This is the first choice offered.
+2. **The working list**, with its sources and ballots, Send to county and Make draft; then the
+   **drafts** and the **sent lists**. A domain draw joins the working list like any other source.
+3. **Other ways to choose ballots**, collapsed unless one is in use: the pattern grid (a pattern of
+   votes, drawn from) and the entry of ballots by imprinted ID, as described below.
+
+`/coord/targets/menu`, the menu's former page, redirects to `/coord/targets` with the same query
+(county, budget, strategy, seed).
+
 ## Purpose
 
 - **Observers' own choice.** The RLA samples at random; observers may want to look at ballots the
@@ -170,8 +186,8 @@ every pull list.
 
 ## The targeting menu
 
-The pattern grid leaves the choosing to the coordinator. The **targeting menu**
-(`/coord/targets/menu`, `corla-observer targets menu`, the library `corla_observer.targetmenu`)
+The pattern grid leaves the choosing to the coordinator. The **targeting menu**, at the top of
+`/coord/targets` (and `corla-observer targets menu`; the library `corla_observer.targetmenu`),
 offers one particular, principled choice: random draws that lower the risk of the county's own
 contests that CORLA's sample left unseen or thin. It can be shown after the official rounds, or at
 any time, and is recomputed on every view.
