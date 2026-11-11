@@ -92,7 +92,8 @@ def test_keyboard_flow_on_a_long_ballot(tmp_path: Path) -> None:
         modes = [e.data["mode"] for e in events if e.kind == "observation.entry_mode" and e.actor == actor]
         assert modes == ["two_tap", "per_contest", "two_tap", "per_contest"], modes  # recorded at the start, then each switch
         ballots = fold(events)[(actor, "Testland", "1")]
-        (rows,) = ballots.values()
+        # The ballot entered contest by contest; the others were only marked done at the end of the list.
+        (rows,) = [b for b in ballots.values() if b.rows]
         assert rows.rows_total == 60
         heard = [r for r in rows.rows.values() if r.readings.get(1) and r.readings[1].outcome == "heard_instead"]
         unclear = [r for r in rows.rows.values() if r.readings.get(1) and r.readings[1].outcome == "unclear"]

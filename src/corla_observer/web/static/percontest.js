@@ -61,6 +61,7 @@
     var pendingUnclear = null;
     var lastQuestion = 0;
     var suppressClick = 0;
+    var changedSinceDone = {};  // ballots with a contest entered since they were last marked done
 
     // Milliseconds since the ballot was shown, within what a payload may carry (a day).
     function elapsed() { return Math.min(86400000, Math.max(0, Math.round(performance.now() - shownAt))); }
@@ -116,6 +117,7 @@
       };
       C.apply(state, fields, 0);
       api.sign(fields, { batch: true });
+      changedSinceDone[b.position] = true;
       updateRow(n);
       if (C.complete(state, b)) settle(b);
       updateHead();
@@ -130,6 +132,13 @@
     function markDone() {
       var b = ballot();
       if (!b) return;
+      if (C.done(state, b) && !changedSinceDone[b.position]) {
+        // Already done, and nothing entered since: move on without recording it again.
+        closePrompt();
+        goTo(nextBallotIndex(index), { announce: "Ballot " + b.n + " is already done." });
+        api.changed();
+        return;
+      }
       var reading = readingOf(b);
       var left = C.ballotRows(b) ? C.unresolvedRows(state, b, 2).length : 0;
       var fields = {
@@ -142,9 +151,11 @@
       };
       C.apply(state, fields, 0);
       api.sign(fields, { batch: true });
+      changedSinceDone[b.position] = false;
       settle(b);
       closePrompt();
       goTo(nextBallotIndex(index), { announce: "Ballot " + b.n + " done." });
+      api.changed();
     }
 
     function nextBallotIndex(from) {

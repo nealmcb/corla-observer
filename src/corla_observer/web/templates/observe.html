@@ -149,11 +149,15 @@
       </form>
     </div>
   </section>
-  <div id="obs-done" class="notice" hidden>
-    <p><span aria-hidden="true">&#10003;</span> All of this board's ballots have an entry. Tap any ballot above to change it.</p>
+  <section id="obs-done" class="notice obs-finished" aria-labelledby="obs-done-title" hidden>
+    <h2 id="obs-done-title" tabindex="-1"><span aria-hidden="true">&#10003;</span> List finished: thank you</h2>
+    <p>Every ballot on this {% if ident and ident.order == "targeted" %}targeted list{% else %}board's list{% endif %} has an entry: <span id="obs-done-summary"></span></p>
+    <p><strong>Next:</strong> tell your coordinator you have finished.
+    {% if ident and ident.order == "targeted" %}These were targeted ballots, not part of the RLA sample: your coordinator follows up with the county.{% else %}If the audit needs another round, the county draws more ballots, and this link stays valid for them.{% endif %}{% if lists|length > 1 %}
+    Other lists for this county are in the list switcher at the top.{% endif %}</p>
     <p>Keep your own copy of what you entered, with the server's receipts:</p>
-    <p class="obs-row"><button id="obs-download-end" type="button">Download my record</button> <button id="obs-download-csv-end" type="button" class="secondary">As a spreadsheet (CSV)</button></p>
-  </div>
+    <p class="obs-row"><button id="obs-download-end" type="button">Download my record</button> <button id="obs-download-csv-end" type="button" class="secondary">As a spreadsheet (CSV)</button> <button id="obs-review" type="button" class="secondary">Review or change entries</button></p>
+  </section>
   <dialog id="obs-more" class="obs-more" aria-labelledby="obs-more-title">
     <h2 id="obs-more-title">More</h2>
     <div class="obs-more-group">

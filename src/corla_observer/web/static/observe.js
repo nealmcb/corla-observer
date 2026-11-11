@@ -199,6 +199,7 @@
   var retryDelay = 2000;
   var retryTimer = null;
   var offeredDownload = false;
+  var reviewing = false;  // the observer chose to review entries after the end of the list
 
   var el = function (id) { return document.getElementById(id); };
 
@@ -856,8 +857,9 @@
     el("obs-history").hidden = contestMode;
     if (contestMode) {
       el("obs-current").hidden = true;
-      el("obs-done").hidden = true;
-      setProgress(ballots.filter(function (b) { return entryFor(b) || perContest.doneFor(b); }).length);
+      var doneCount = ballots.filter(function (b) { return entryFor(b) || perContest.doneFor(b); }).length;
+      showFinished(ballots.length > 0 && doneCount === ballots.length);
+      setProgress(doneCount);
       setStatus();
       return;
     }
@@ -888,14 +890,32 @@
       offListItems(ballot.position).forEach(function (o) { list.appendChild(offListItem(o)); });
     });
     setProgress(done);
-    var finished = ballots.length > 0 && !current;
-    el("obs-done").hidden = !finished;
-    if (finished && !offeredDownload) {
-      offeredDownload = true;
-      el("obs-download").focus();
-    }
+    showFinished(ballots.length > 0 && !current);
     showCurrent(furthest);
     setStatus();
+  }
+
+  // The end of the list: every ballot has an entry. Says so, sums up, and says what comes next; in
+  // contest-by-contest mode it takes the place of the ballot until the observer chooses to review.
+  function showFinished(finished) {
+    var panel = el("obs-done");
+    var showing = finished && !reviewing;
+    panel.hidden = !finished;
+    body.classList.toggle("list-finished", showing);
+    if (!finished) { reviewing = false; return; }
+    var entries = ballots.map(entryFor).filter(Boolean);
+    var matched = entries.filter(function (e) { return e.match === true; }).length;
+    var other = entries.filter(function (e) { return e.other_board; }).length;
+    var notMatched = ballots.length - matched - other;
+    var parts = [ballots.length + (ballots.length === 1 ? " ballot" : " ballots") + " entered", matched + " matching"];
+    if (notMatched) parts.push(notMatched + " not matching (a discrepancy, or a contest left unresolved)");
+    if (other) parts.push(other + " skipped as another board's");
+    el("obs-done-summary").textContent = parts.join(", ") + ".";
+    el("obs-review").hidden = !showing;
+    if (showing && !offeredDownload) {
+      offeredDownload = true;
+      el("obs-done-title").focus();
+    }
   }
 
   function showCurrent(furthest) {
@@ -1014,6 +1034,11 @@
     }
   });
   ["obs-download", "obs-download-end"].forEach(function (id) { el(id).addEventListener("click", downloadJson); });
+  el("obs-review").addEventListener("click", function () {
+    reviewing = true;
+    render();
+    if (perContest && perContest.isActive()) perContest.refocus();
+  });
   ["obs-download-csv", "obs-download-csv-end"].forEach(function (id) { el(id).addEventListener("click", downloadCsv); });
 
   document.addEventListener("keydown", function (event) {
@@ -1171,6 +1196,8 @@
       choices: function () { return choices; },
       entryFor: entryFor,
       setEntry: setEntry,
+      // A ballot was marked done: show the end of the list when every ballot is.
+      changed: function () { render(); },
       otherBoard: otherBoard,
       heardId: heardIdFor,
       barHeight: barHeight,

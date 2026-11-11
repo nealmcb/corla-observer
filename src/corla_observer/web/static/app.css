@@ -502,3 +502,10 @@ table.targets-sources tr.is-excluded td.target-pattern { opacity: .6; }
 .progress-strip li { display: flex; flex-direction: column; gap: 0.2rem; padding: 0.5rem 0.65rem; border: 1px solid var(--border, #ccc); border-radius: 6px; }
 .progress-strip li.progress-current { border-width: 2px; border-color: #E69F00; }
 .progress-strip li.progress-later { opacity: 0.75; }
+
+/* The end of the list (observe.js showFinished): the panel takes the place of the ballot being entered,
+   until the observer chooses to review. */
+body.list-finished #pc,
+body.list-finished #obs-current { display: none; }
+.obs-finished h2 { margin-top: 0; font-size: 1.25rem; }
+.obs-finished h2:focus { outline: none; }

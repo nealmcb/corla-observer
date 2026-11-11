@@ -308,6 +308,24 @@ def session(page: Page, url: str, out: Path, size: str) -> Run:
     record = out / f"{size}-record.json"
     info.value.save_as(str(record))
     run.shots.append(str(record))
+    # The end of the list: every ballot marked done brings the end screen in place of the ballot.
+    for _ in range(200):
+        if page.is_visible("#obs-done"):
+            break
+        page.click("#pc-done-button")  # asks first
+        page.click("#pc-done-button")  # done: the next ballot
+    run.check("after the last ballot, the end screen replaces the ballot", page.is_visible("#obs-done") and page.is_hidden("#pc")
+              and "List finished" in (page.text_content("#obs-done") or ""), page.text_content("#obs-done"))  # fmt: skip
+    run.check("it sums up and says what is next", "entered" in (page.text_content("#obs-done-summary") or "")
+              and "tell your coordinator" in (page.text_content("#obs-done") or ""))  # fmt: skip
+    run.shot("list-finished")
+    run.wait_sent()
+    page.click("#obs-review")
+    run.check("Review brings the ballot back", page.is_visible("#pc") and page.is_hidden("#obs-review"))
+    page.click("#pc-done-button")
+    page.click("#pc-done-button")
+    run.check("done again on a done ballot records nothing new", "already done" in (page.text_content("#pc-live") or "")
+              and page.evaluate("document.querySelectorAll('.obs-pending').length") == 0, page.text_content("#pc-live"))  # fmt: skip
     return run
 
 
