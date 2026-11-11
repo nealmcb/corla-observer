@@ -170,7 +170,7 @@ def test_download_saves_the_current_files_and_skips_versions_already_relayed(tmp
     import json
 
     base = "https://results.enr.clarityelections.com/CO/"
-    settings = {"settings": {"electiondetails": {"participatingcounties": ["La_Plata|200|7|t|16", "Weld|300|8|t|16"]}}}
+    settings = {"settings": {"electiondetails": {"participatingcounties": ["La_Plata|200|7|11/5/2026 8:31:11 AM MST|16", "Weld|300|8|t|16"]}}}
     site = FakeClarity(
         {
             base + "130100/current_ver.txt": b"5\n",
@@ -187,6 +187,8 @@ def test_download_saves_the_current_files_and_skips_versions_already_relayed(tmp
         ("Weld-8-summary.json", "Weld", "8"),
     ]
     assert saved[0].path.read_bytes() == DETAIL and not list((tmp_path / "out").glob("*.part"))
+    # A county's summary carries the time the settings list for it (the state's detail says its own).
+    assert [d.published for d in saved] == [None, "2026-11-05T15:31:11.000Z", None]
     again = download("130100", tmp_path / "out", counties=["La Plata", "Weld"], have={"state": "5", "La Plata": "7"}, fetcher=site)  # type: ignore[arg-type]
     assert [d.scope for d in again] == ["Weld"]
     with pytest.raises(ResultsError, match="bot challenge"):

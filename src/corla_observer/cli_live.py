@@ -121,7 +121,8 @@ def results_download(
 ) -> None:
     """Save Clarity's current results into a directory, outside any workspace, to relay them to a server Clarity refuses (docs/RESULTS_RELAY.md).
 
-    Prints one line per file saved: its path, scope, version and source URL, separated by tabs.
+    Prints one line per file saved: its path, scope, version, source URL, and when Clarity published it
+    (UTC, for a county's summary, which does not say; '-' otherwise), separated by tabs.
     """
     from corla_observer.enr import ResultsError, download
 
@@ -137,8 +138,8 @@ def results_download(
     except (ResultsError, OSError) as exc:
         typer.echo(f"error: {exc}", err=True)
         raise typer.Exit(1) from None
-    for item in saved:
-        typer.echo(f"{item.path}\t{item.scope}\t{item.version}\t{item.url}")
+    for file in saved:
+        typer.echo(f"{file.path}\t{file.scope}\t{file.version}\t{file.url}\t{file.published or '-'}")
 
 
 @results_app.command("show")

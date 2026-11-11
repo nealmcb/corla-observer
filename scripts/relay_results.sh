@@ -52,12 +52,15 @@ saved=$("$cli" results download --to "$state/files" --election-id "$election_id"
 [ -n "$saved" ] || { echo "nothing new"; exit 0; }
 
 ssh -o BatchMode=yes "$host" mkdir -p results-relay
-while IFS=$'\t' read -r path scope version url; do
+while IFS=$'\t' read -r path scope version url published; do
     name=$(basename "$path")
     scp -q -o BatchMode=yes "$path" "$host:results-relay/$name" < /dev/null
     note="relayed from $(hostname) by scripts/relay_results.sh: Clarity refuses the server's address"
     # printf %q quotes each argument for the remote shell; the file's ~ is left for it to expand.
-    remote=$(printf '%q ' --workspace "$workspace" --actor "$actor" --scope "$scope" --source-url "$url" --note "$note")
+    args=(--workspace "$workspace" --actor "$actor" --scope "$scope" --source-url "$url" --note "$note")
+    # A county's summary does not say when it was generated: give the time Clarity's settings list for it.
+    [ "${published:--}" != "-" ] && args+=(--file-time "$published")
+    remote=$(printf '%q ' "${args[@]}")
     ssh -n -o BatchMode=yes "$host" "cd $remote_checkout && ~/.local/bin/uv run corla-observer results add ~/results-relay/$(printf %q "$name") $remote"
     printf '%s\t%s\t%s\t%s\n' "$scope" "$version" "$(sha256sum "$path" | cut -d' ' -f1)" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$state/relayed.tsv"
 done <<< "$saved"

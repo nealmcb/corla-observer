@@ -610,6 +610,30 @@ def parse_settings(data: bytes) -> dict[str, tuple[str, str]]:
     return found
 
 
+def county_times(data: bytes) -> dict[str, str]:
+    """Each county's own ENR results time, as stored UTC, from ``electionsettings.json``'s ``participatingcounties``.
+
+    The fourth field of ``County_Name|ID|VER|time|...`` (``11/5/2026 8:31:11 AM MST``): when that
+    version of the county's results was published. A county's ``summary.json`` does not say when it
+    was generated, so this is the best time for it.
+    """
+    if data[:2] == b"\x1f\x8b":
+        data = gzip.decompress(data)
+    try:
+        settings = json.loads(data)
+    except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+        raise ResultsError(f"unreadable election settings: {exc}") from None
+    details = settings.get("settings", {}).get("electiondetails", {}) if isinstance(settings, dict) else {}
+    found: dict[str, str] = {}
+    for item in details.get("participatingcounties") or []:
+        parts = str(item).split("|")
+        county = canonical_county(parts[0].replace("_", " ")) if parts else None
+        when = parse_clarity_time(parts[3]) if len(parts) >= 4 else None
+        if county and when:
+            found[county] = when
+    return found
+
+
 @dataclass
 class GatherReport:
     """What `gather` did."""
@@ -1097,6 +1121,8 @@ class Downloaded:
     scope: str
     what: str
     version: str
+    #: When Clarity published it, as stored UTC, for a file that does not say (a county's summary): see `county_times`.
+    published: str | None = None
 
 
 def download(
@@ -1114,7 +1140,8 @@ def download(
     refuses. ``have`` maps a scope (``state`` or a county) to the version
     already relayed, which is then not fetched again. Each file is saved
     as ``<scope>-<version>-<name>`` (``state-386717-detailxml.zip``,
-    ``La_Plata-385719-summary.json``), written whole or not at all.
+    ``La_Plata-385719-summary.json``), written whole or not at all; a county's
+    summary carries the time the state's settings give for it (`county_times`).
 
     Raises:
         ResultsError: if Clarity refuses (see `is_refusal`) or answers
@@ -1150,7 +1177,8 @@ def download(
         url = f"{base_url}{election_id}/{version}/reports/detailxml.zip"
         saved.append(Downloaded(save(get(url), "state", version, "detailxml.zip"), url, "state", "detail", version))
     if counties:
-        county_versions = parse_settings(get(f"{base_url}{election_id}/{version}/json/en/electionsettings.json"))
+        settings = get(f"{base_url}{election_id}/{version}/json/en/electionsettings.json")
+        county_versions, published = parse_settings(settings), county_times(settings)
         for county in counties:
             name = canonical_county(county) or county
             if name not in county_versions:
@@ -1159,7 +1187,9 @@ def download(
             if have.get(name) == county_version:
                 continue
             url = f"{base_url}{county_path(name)}/{county_id}/{county_version}/json/en/summary.json"
-            saved.append(Downloaded(save(get(url), name, county_version, "summary.json"), url, name, "summary", county_version))
+            saved.append(
+                Downloaded(save(get(url), name, county_version, "summary.json"), url, name, "summary", county_version, published.get(name))
+            )
     return saved
 
 

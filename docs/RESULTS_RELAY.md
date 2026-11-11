@@ -20,8 +20,10 @@ then have to come from somewhere Clarity does serve.
    relayed.
 2. For each new file, it copies it to the server (`~/results-relay/`) and records it there with
    `corla-observer results add`, under the coordinator running the relay, with its source URL, its
-   scope and a note saying it was relayed and why. That checks the totals and updates the estimates
-   at once, as an upload by hand does.
+   scope and a note saying it was relayed and why. A county's `summary.json` does not say when it
+   was generated, so it is recorded with the time Clarity's state settings list for that version of
+   the county's results (`--file-time`), and ranks by that rather than by when it was relayed. That
+   checks the totals and updates the estimates at once, as an upload by hand does.
 
 A file is marked relayed (in `relayed.tsv`, in the relay's state directory) only after the server
 has recorded it, so a failed run is simply repeated by the next one. It needs the local checkout's
