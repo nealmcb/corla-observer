@@ -6,7 +6,8 @@ static/targets.js) and revised 2026-10-29 for the working list and sent lists
 of docs/TARGETING.md: do the counts update as boxes are checked, without a
 reload; do a preset, a draw with a seed in words, "Draw again", a manual
 entry and the include boxes work; does "Send to county" freeze the list; and
-does an observer look a ballot up from a box at phone size? It uses
+does an observer look a ballot up from a box at phone size? (The grid and the entry by imprinted ID
+are under "Other ways to choose ballots", below the targeting menu, opened first.) It uses
 Playwright's Chromium (not a dependency of corla-observer: run it with a
 Python that has ``playwright``), logs in as a coordinator and, for COUNTY:
 
@@ -54,6 +55,10 @@ def main(argv: list[str]) -> int:
     def check(what: str, ok: bool, detail: Any = None) -> None:
         checks.append({"check": what, "ok": bool(ok), "detail": detail})
 
+    def other_ways(page: Any) -> None:
+        """Open "Other ways to choose ballots" (the pattern grid and the entry by imprinted ID), collapsed below the targeting menu."""
+        page.evaluate("() => { const d = document.getElementById('other-ways'); if (d) d.open = true; }")
+
     def summary(page: Any) -> str:
         return page.inner_text(".target-summary") if page.locator(".target-summary").count() else ""
 
@@ -67,7 +72,8 @@ def main(argv: list[str]) -> int:
         page.fill("input[name=password]", password)
         page.click("button[type=submit]")
         page.goto(f"{base}/coord/targets?county={quote(county)}")
-        check("the page opens", page.locator("#targets-grid").count() == 1)
+        check("the page opens on the targeting menu", page.locator("#menu").count() == 1 and page.locator("#targets-grid").count() == 1)
+        other_ways(page)
         check("with nothing checked, Draw draws from any ballot with votes", page.get_attribute("#draw-button", "disabled") is None
               and "any ballot with votes" in page.inner_text("#draw-row"), page.inner_text("#draw-row"))  # fmt: skip
         before = page.inner_text("#target-matching")
@@ -113,6 +119,7 @@ def main(argv: list[str]) -> int:
         page.wait_for_load_state()
 
         # A pasted column: one ID per line, the same ID twice.
+        other_ways(page)
         page.fill("textarea[name=ids]", f"{extra_id}\n{extra_id}\n")
         page.fill("input[name=note]", "seen in a box")
         page.click("text=Look up and add")

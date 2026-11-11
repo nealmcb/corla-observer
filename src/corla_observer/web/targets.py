@@ -4,8 +4,15 @@ Routes (under the app's path prefix; every one needs a coordinator session,
 and every POST its CSRF token, as in `corla_observer.web.coordinator`; the
 counts are never on a public page):
 
-``GET /coord/targets?county=C[&v=I:K...][&add=NAME...][&q=TEXT]``
-    The pattern grid: the county's statewide and US House contests, and any
+``GET /coord/targets?county=C[&budget=N][&strategy=minimax|ladder][&seed=TEXT][&v=I:K...][&add=NAME...][&q=TEXT]``
+    At the top, the targeting menu (`corla_observer.targetmenu`,
+    docs/TARGETING.md, "The targeting menu"): the county's totals by tag,
+    the suggestion for a budget (the allowed total less the ballots sent,
+    or ``budget``), the seed for draws shown once (the RLA seed in effect,
+    or ``seed``), and the sampling domains worth drawing from, riskiest
+    first, each with a "Draw" form. Then the working list, drafts and sent
+    lists. At the bottom, under "Other ways to choose ballots", collapsed
+    unless one is in use: the pattern grid: the county's statewide and US House contests, and any
     contest added by name (``add``), each tightest first by the results in
     hand, with a check box per candidate (``v`` = contest index : choice
     index), the number of ballots matching the boxes checked (and, beside
@@ -57,11 +64,19 @@ counts are never on a public page):
 ``POST /coord/targets/allowed``
     The most targeted ballots the county allows in all, shown beside the
     running total of its sent lists, with a warning above it.
+``GET /coord/targets/menu?...``
+    The menu's former page: redirects (303) to ``/coord/targets`` with the
+    same query, at the menu.
+``POST /coord/targets/domain/draw``
+    A domain draw (``domain``, the contests' indexes; ``size``; ``seed``):
+    cards drawn uniformly with replacement from the domain's cards, recorded
+    and added to the working list as a source.
 """
 
 from __future__ import annotations
 
 import re
+import threading
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
@@ -73,6 +88,7 @@ from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import JSONResponse, RedirectResponse
 
 from corla_observer import pulllists
+from corla_observer import targetmenu as tm
 from corla_observer import targets as tg
 from corla_observer.classify import DEMO_COUNTIES, is_test_county, known_county
 from corla_observer.cvr import CvrReader
@@ -260,7 +276,8 @@ def _page(state: WebState, request: Request, session: Session, county: str | Non
         last = remembered_county(request)
         county = last if last in with_cvr else None
     if county is None:
-        return state.render(request, "coord_targets.html", status_code, county=None, counties=with_cvr, error=error, message=None, **_common(state, session))
+        return state.render(request, "coord_targets.html", status_code, county=None, counties=with_cvr, error=error, message=None, page_intro=PAGE_INTRO,
+                            **_common(state, session))  # fmt: skip
     added = _added(request)
     data = _load(state, county, added)
     selection = _selection(request, data.votes)
@@ -331,6 +348,10 @@ def _page(state: WebState, request: Request, session: Session, county: str | Non
         max_extract_boards=MAX_BOARDS,
         demo_notes=DEMO_COUNTIES,
         draw_size=tg.DRAW_SIZE,
+        m=(menu_view := _menu_view(state, request, county)),
+        drew_message=_drew_message(state, county, request.query_params.get("drew", ""), menu_view),
+        page_intro=PAGE_INTRO,
+        open_other=error is not None or bool(extra.get("lookup_notes")) or any(k in request.query_params for k in ("v", "s", "add", "q", "drawn")),
         message=MESSAGES.get(request.query_params.get("msg", "")),
         error=error,
         **extra,
@@ -363,6 +384,7 @@ async def targets_page(request: Request) -> Response:
         return _login_redirect(state, request)
     county = _county(request)
     drawn = request.query_params.get("drawn")
+    domain_drawn = request.query_params.get("domain_drawn")
 
     def page() -> Response:
         text = None
@@ -371,6 +393,10 @@ async def targets_page(request: Request) -> Response:
             if record is not None:
                 skipped = f"; {len(record.collisions)} already listed or sampled, skipped" if record.collisions else ""
                 text = f"Draw {record.draw}: {len(record.ballots)} ballots added to the working list{skipped}."
+        if county and domain_drawn and domain_drawn.isdigit():
+            found = next((r for r, _ in tg.domain_draws(state.workspace, state.log, county) if r.draw == int(domain_drawn)), None)
+            if found is not None:
+                text = _domain_message(found)
         return _page(state, request, session, county, 200, None, added_message=text)
 
     return await run_in_threadpool(page)
@@ -807,3 +833,177 @@ async def targeted_allowed(request: Request) -> Response:
         return await run_in_threadpool(lambda: _page(state, request, session, county, 400, problem))
     return RedirectResponse(_url(state, "/coord/targets", county=county, msg="allowed") + "#sent", status_code=303)
 
+
+
+# ---------------------------------------------------------------------------
+# The targeting menu, and domain draws
+
+
+def _domain_message(record: tg.DomainDrawRecord) -> str:
+    text = f"Domain draw {record.draw}: {record.size} draw{'s' if record.size != 1 else ''} from the {record.domain_cards:,} cards carrying {record.describe()}"
+    text += f", {len(record.ballots)} distinct card{'s' if len(record.ballots) != 1 else ''} added to the working list"
+    if record.held:
+        text += f"; {len(record.held)} already on a list or in the RLA sample (pulled once, counted as drawn)"
+    return text + "."
+
+
+#: What targeted ballots are, said once: on the page without a county, and under "How this works" with one.
+PAGE_INTRO = (
+    "Ballots the observers choose, outside the RLA's random sample: the county pulls and examines them at the "
+    "observers' request, and they are not entered into CORLA. Start with the suggested draws: random draws from the "
+    "cards of the county's own contests where they would help most. Or, further down, draw from a pattern of votes "
+    "in the redacted CVR, or add any ballot by its imprinted ID. Then send the county one list in its pull order "
+    "(the design: docs/TARGETING.md in the repository). The counts are for coordinators only."
+)
+
+
+def _menu_view(state: WebState, request: Request, county: str) -> dict[str, Any]:
+    """The targeting menu's values for the top of /coord/targets (template ``_targets_menu.html``, as ``m``).
+
+    ``budget``, ``strategy`` and ``seed`` come from the query. A menu that can't be worked out (its
+    inputs unreadable) is shown as ``error``, and the rest of the page as usual.
+    """
+    view: dict[str, Any] = {"error": None, "pct": tm.pct, "line_rows": tm.line_rows}
+    try:
+        inputs = tm.gather(state.workspace, state.log, county, datamap=state.cache.get().datamap)
+        menu = tm.build_menu(inputs)
+    except Exception as exc:  # noqa: BLE001 - the rest of the page still works without the menu
+        view["error"] = str(exc) or type(exc).__name__
+        return view
+    typed = request.query_params.get("budget", "").strip()
+    if typed.isdigit() and 0 < int(typed) <= tm.MAX_BUDGET:
+        budget = int(typed)
+    else:
+        budget = inputs.budget if inputs.budget else tm.DEFAULT_BUDGET
+    strategy = request.query_params.get("strategy", tm.MINIMAX)
+    strategy = strategy if strategy in (tm.MINIMAX, tm.LADDER) else tm.MINIMAX
+    allocations = {s: menu.allocate(budget, s) for s in (tm.MINIMAX, tm.LADDER)}
+    chosen = allocations[strategy]
+    suggested = tm.suggested_draws(menu, chosen)
+    given = " ".join(request.query_params.get("seed", "").split())[: tg.MAX_SEED]
+    return view | {
+        "menu": menu, "budget": budget, "typed": typed if typed.isdigit() else "", "strategy": strategy,
+        "allocations": allocations, "chosen": chosen, "suggested": suggested, "suggested_total": sum(d.cards for d in suggested),
+        "suggestion_text": tm.suggestion_text(menu, chosen), "updated": request.query_params.get("updated") == "1",
+        "card_tags": tm.card_tags, "default_budget": tm.DEFAULT_BUDGET, "page_intro": PAGE_INTRO, "tie_note": tm.TIE_NOTE,
+        "limit": tm.limit_text(menu.limit), "style_note": tm.STYLE_NOTE, "seed": given or _seed_in_effect(state),
+        "seed_given": bool(given), "max_draw": tg.MAX_DRAW, "max_seed": tg.MAX_SEED, "max_budget": tm.MAX_BUDGET,
+        "draw_size": tg.DOMAIN_DRAW_SIZE,
+    }  # fmt: skip
+
+
+@router.get("/coord/targets/menu")
+async def targets_menu(request: Request) -> Response:
+    """The menu's former page: now the top of /coord/targets, its query kept."""
+    state = get_state(request)
+    query = urlencode(list(request.query_params.multi_items()))
+    return RedirectResponse(state.url("/coord/targets" + ("?" + query if query else "")) + "#menu", status_code=303)
+
+
+@router.post("/coord/targets/domain/draw")
+async def domain_draw(request: Request) -> Response:
+    state = get_state(request)
+    session, form = await checked_form(request)
+    county = _form_county(form)
+
+    def run() -> tg.DomainDrawRecord | str:
+        data = _load(state, county)
+        indexes = [int(i) for i in str(form.get("domain") or "").split(",") if i.strip().isdigit()]
+        names = [data.votes.contests[i].name for i in indexes if i in data.votes.contests]
+        if not names or len(names) != len(indexes):
+            return "no such domain in the county's current CVR"
+        size_text = str(form.get("size") or "").strip() or str(tg.DOMAIN_DRAW_SIZE)
+        if not size_text.isdigit() or not 1 <= int(size_text) <= tg.MAX_DRAW:
+            return f"the number of cards to draw is 1 to {tg.MAX_DRAW}"
+        in_effect = _seed_in_effect(state)
+        chosen = str(form.get("seed") or "").strip() or in_effect
+        if not chosen:
+            return "enter a seed for the draw (any text; no RLA seed has been entered yet)"
+        try:
+            found = tg.sources(state.workspace, state.log, county)
+            record = tg.domain_draw(
+                data.votes, county=county, cvr_sha256=data.cvr_sha256, contests=names, seed=chosen,
+                seed_source="the RLA seed in effect" if chosen == in_effect else "entered for this draw",
+                number=tg.domain_draw_count(state.log, county) + 1, locations=data.locations, manifest_sha256=data.manifest_sha256,
+                actor=session.actor, size=int(size_text), held=tg.holders(state.workspace, state.log, county, found),
+            )  # fmt: skip
+            record, _ = tg.record_domain_draw(state.workspace, state.log, record, session_id=session.label)
+        except tg.DrawError as exc:
+            return str(exc)
+        return record
+
+    result = await run_in_threadpool(run)
+    if isinstance(result, str):
+        return await run_in_threadpool(_problem, state, request, session, county, result)
+    return RedirectResponse(_url(state, "/coord/targets", county=county, domain_drawn=str(result.draw)) + "#list", status_code=303)
+
+
+@router.post("/coord/targets/domain/draw-all")
+async def domain_draw_all(request: Request) -> Response:
+    """Make every draw of the suggestion at once (``draw``, repeated: ``KEY:N``; ``seed``): each a domain draw,
+    recorded as its own ``targets.domain_drawn`` and source. All are checked and drawn before any is recorded, so a
+    bad one records none."""
+    state = get_state(request)
+    session, form = await checked_form(request)
+    county = _form_county(form)
+
+    def run() -> list[tg.DomainDrawRecord] | str:
+        data = _load(state, county)
+        wanted: list[tuple[list[str], int]] = []
+        for item in form.getlist("draw"):
+            key, _, size = str(item).partition(":")
+            indexes = [int(i) for i in key.split(",") if i.strip().isdigit()]
+            names = [data.votes.contests[i].name for i in indexes if i in data.votes.contests]
+            if not names or len(names) != len(indexes) or not size.isdigit() or not 1 <= int(size) <= tg.MAX_DRAW:
+                return "the suggestion names a domain or a number of cards the county's current CVR does not have; update it and try again"
+            wanted.append((names, int(size)))
+        if not wanted:
+            return "nothing to draw"
+        in_effect = _seed_in_effect(state)
+        chosen = str(form.get("seed") or "").strip() or in_effect
+        if not chosen:
+            return "enter a seed for the draws (any text; no RLA seed has been entered yet)"
+        source = "the RLA seed in effect" if chosen == in_effect else "entered for this draw"
+        try:
+            with _DRAW_ALL_LOCK:
+                held = tg.holders(state.workspace, state.log, county, tg.sources(state.workspace, state.log, county))
+                first = tg.domain_draw_count(state.log, county) + 1
+                records = [
+                    tg.domain_draw(
+                        data.votes, county=county, cvr_sha256=data.cvr_sha256, contests=names, seed=chosen, seed_source=source,
+                        number=first + i, locations=data.locations, manifest_sha256=data.manifest_sha256, actor=session.actor,
+                        size=size, held=held,
+                    )  # fmt: skip
+                    for i, (names, size) in enumerate(wanted)
+                ]
+                return [tg.record_domain_draw(state.workspace, state.log, r, session_id=session.label)[0] for r in records]
+        except tg.DrawError as exc:
+            return str(exc)
+
+    result = await run_in_threadpool(run)
+    if isinstance(result, str):
+        return await run_in_threadpool(_problem, state, request, session, county, result)
+    numbers = ",".join(str(r.draw) for r in result)
+    return RedirectResponse(_url(state, "/coord/targets", county=county, drew=numbers) + "#list", status_code=303)
+
+
+_DRAW_ALL_LOCK = threading.Lock()
+
+
+def _drew_message(state: WebState, county: str, numbers: str, menu_view: dict[str, Any]) -> str | None:
+    """"Drew 20 cards: 7 from A, 13 from B; they're in the working list below." for the domain draws ``numbers``."""
+    wanted = {int(n) for n in numbers.split(",") if n.strip().isdigit()}
+    records = [r for r, _ in tg.domain_draws(state.workspace, state.log, county) if r.draw in wanted]
+    if not records:
+        return None
+    titles: dict[tuple[str, ...], str] = {}
+    menu = menu_view.get("menu")
+    if menu is not None:
+        for line in menu.lines:
+            titles[tuple(sorted(line.group.contests))] = line.title
+    parts = []
+    for r in sorted(records, key=lambda r: -r.size):
+        name = titles.get(tuple(sorted(r.contests))) or tm.domain_title(r.contests[0], len(r.contests))
+        parts.append(f"{r.size} from {name}")
+    total = sum(r.size for r in records)
+    return f"Drew {total} card{'s' if total != 1 else ''}: {', '.join(parts)}; they're in the working list below."

@@ -2181,3 +2181,60 @@ def targets_send(
             raise typer.Exit(2) from None
         typer.echo(tg.list_email(county_name, sent.name, sent.entries, "sent today", [f"Extract {sent.extract_sha256[:12]}; record {sent.record_sha256[:16]}"]), nl=False)
         typer.echo(f"  {sent.name} ({sent.key}): extract {sent.extract_sha256}; recorded as event {sent.seq}")
+
+
+@targets_app.command("menu")
+def targets_menu(
+    workspace: WorkspaceOption,
+    county: Annotated[str, typer.Option("--county", help="The county.", show_default=False)],
+    budget: Annotated[
+        int | None, typer.Option("--budget", help="Draws to spread in the suggestion (default: the allowed total less the ballots sent).", show_default=False)
+    ] = None,
+) -> None:
+    """Print the county's targeting menu (docs/TARGETING.md, "The targeting menu"): its sampling domains worth drawing from, riskiest first, and a suggestion for a budget."""
+    from corla_observer import targetmenu as tm
+    from corla_observer.classify import known_county
+
+    store = Workspace.open(workspace)
+    with EventLog.open(store.root) as log:
+        try:
+            menu = tm.build_menu(tm.gather(store, log, known_county(county) or county))
+        except LookupError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(2) from None
+    typer.echo(tm.menu_text(menu, budget), nl=False)
+
+
+@targets_app.command("domain-draw")
+def targets_domain_draw(
+    workspace: WorkspaceOption,
+    county: Annotated[str, typer.Option("--county", help="The county.", show_default=False)],
+    actor: ActorOption,
+    domain: Annotated[str, typer.Option("--domain", help='The domain, as the menu names it ("domain 4,9").', show_default=False)],
+    seed: Annotated[str, typer.Option("--seed", help="The seed for the draw: any text.", show_default=False)],
+    size: Annotated[int, typer.Option("--size", help="Cards to draw, with replacement.")] = 5,
+) -> None:
+    """Draw cards uniformly with replacement from a sampling domain into the county's working list, and print them."""
+    from corla_observer import targets as tg
+
+    store = Workspace.open(workspace)
+    with EventLog.open(store.root) as log:
+        county_name, (cvr_sha, votes), manifest = _targets_county(store, log, county)
+        indexes = [int(i) for i in domain.removeprefix("domain").strip().split(",") if i.strip().isdigit()]
+        names = [votes.contests[i].name for i in indexes if i in votes.contests]
+        try:
+            if not names or len(names) != len(indexes):
+                raise tg.DrawError(f"no domain {domain!r} in the county's CVR")
+            found = tg.sources(store, log, county_name)
+            record = tg.domain_draw(
+                votes, county=county_name, cvr_sha256=cvr_sha, contests=names, seed=seed, seed_source="entered for this draw",
+                number=tg.domain_draw_count(log, county_name) + 1, locations=manifest.locations, manifest_sha256=manifest.sha256,
+                actor=actor, size=size, held=tg.holders(store, log, county_name, found),
+            )  # fmt: skip
+            record, sha = tg.record_domain_draw(store, log, record)
+        except tg.DrawError as exc:
+            typer.echo(f"error: {exc}", err=True)
+            raise typer.Exit(2) from None
+    typer.echo(f"Domain draw {record.draw} ({record.source_id}): {record.size} draws from the {record.domain_cards:,} cards carrying {record.describe()}; record {sha}")
+    for b in record.ballots:
+        typer.echo(f"  {b['imprinted_id']}  {b.get('location') or 'no location'}" + (f"  (drawn {b['times']} times)" if b["times"] > 1 else ""))
