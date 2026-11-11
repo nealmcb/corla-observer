@@ -784,7 +784,7 @@ def test_observers_entries_give_the_discrepancies_without_corla_comparisons(
     )
 
 
-def test_the_targets_page_opens_with_the_menu_and_a_domain_draw_from_it(
+def test_the_targets_page_opens_with_the_suggestion_and_draws_it_with_one_button(
     tmp_path: Path,
 ) -> None:
     _, root = _workspace(tmp_path)
@@ -801,44 +801,67 @@ def test_the_targets_page_opens_with_the_menu_and_a_domain_draw_from_it(
         assert login(client).status_code == 303
         page = client.get(f"/coord/targets?county={COUNTY}")
         text = page.text
-        # The menu first; then the working list, drafts and sent lists; the other ways last, collapsed.
+        # The suggestion first, computed without a budget (no allowed total: 20); then the working list, sent lists, the other ways.
         order = [
-            text.index(x) for x in ('id="menu"', 'id="list"', 'id="sent"', 'id="other"')
+            text.index(x)
+            for x in (
+                'id="suggestion-result"',
+                'id="how-this-works"',
+                'id="domains"',
+                'id="list"',
+                'id="sent"',
+                'id="other"',
+            )
         ]
         assert order == sorted(order)
         assert (
-            "Other ways to choose ballots" in text
-            and '<details id="other-ways">' in text
+            "Suggested: 20 cards — 20 from Synthetic County Commissioner. Highest risk: 100.0% → "
+            in text
         )
-        assert text.index('id="targets-grid"') > text.index(
-            'id="other"'
-        ) and text.index('action="/coord/targets/list/add"') > text.index('id="other"')
         assert (
-            "Where random draws would help most" in text
+            "No seed yet" in text and "Draw these 20 cards" not in text
+        )  # this workspace has no seed yet
+        assert (
+            '<details id="how-this-works">' in text
             and tm.STYLE_NOTE.replace("'", "&#39;") in text
         )
-        assert text.index("Where the numbers come from") < text.index('id="list"')
-        assert "Riskiest: Synthetic County Commissioner   100.0%  thin " in text
+        how = text[text.index('id="how-this-works"') : text.index('id="domains"')]
         assert (
-            'class="badge badge-info"><span aria-hidden="true">&#9679;</span> unseen</span>'
-            in text
-            and "[unseen]" not in text
+            "Where the numbers come from" in how
+            and "Use another seed" in how
+            and "Ballots the observers choose" in how
         )
         assert (
-            "% of its 82 cards" in text
-            and "Margin (votes, % of its cards)" in text
-            and "Draw from this domain" in text
-        )
-        assert "No allowed total is recorded" in text and "Regional (3)" in text
-        # The other ways open when one is in use (a pattern checked), and behave as before.
-        votes = tg.load_votes(tmp_path / "files" / "cvr.csv")
-        local = votes.contest_by_name(LOCAL)
-        assert local is not None
+            text.count("Ballots the observers choose") == 1
+        )  # the page's intro is under "How this works" only
+        # The domain as a compact card: name, risk now, "+N cards -> new risk", at most two badges; the rest under More.
+        card = text[
+            text.index('class="target-card"') : text.index('id="other-contests"')
+        ]
         assert (
-            '<details id="other-ways" open>'
-            in client.get(
-                f"/coord/targets?county={COUNTY}&add=Synthetic+County+Commissioner&v={local.index}:0"
-            ).text
+            "Synthetic County Commissioner</strong>" in card
+            and "Risk now 100.0%; <strong>+20 cards → " in card
+        )
+        assert card.count('class="badge ') <= 2 + card[card.index("<details") :].count(
+            'class="badge '
+        )
+        assert (
+            '<details class="target-card-more"><summary>More</summary>' in card
+            and "after 5 / 10 / 20 draws" in card
+        )
+        assert "% of its 82 cards" in card and "Draw from this domain only" in card
+        # Update: the result is marked, and the form takes the page to it.
+        updated = client.get(
+            f"/coord/targets?county={COUNTY}&budget=12&strategy=ladder&updated=1"
+        )
+        assert (
+            'class="target-result is-updated"' in updated.text
+            and "<strong>Updated:</strong> Suggested: 11 cards" in updated.text
+            and "1 of the 12 left unspent" in updated.text
+        )
+        assert (
+            'action="/coord/targets#suggestion-result"' in text
+            and '<input type="hidden" name="updated" value="1">' in text
         )
         # The menu's old page redirects here, its query kept.
         moved = client.get(
@@ -848,47 +871,73 @@ def test_the_targets_page_opens_with_the_menu_and_a_domain_draw_from_it(
         assert moved.status_code == 303 and moved.headers["location"].endswith(
             "/coord/targets?county=Delta+%282020+demo%29&budget=12&strategy=ladder#menu"
         )
-        suggested = client.get(moved.headers["location"])
+        # With a seed, one button draws the whole suggestion.
+        own = client.get(f"/coord/targets?county={COUNTY}&seed=our+words")
         assert (
-            "Ladder, 12 draws, one first to each of 1 domain with an unseen contest or a tie: the highest local pooled risk "
-            "(ties left out) goes from 100.0% to "
-            in suggested.text
-            and "suggested: " in suggested.text
+            "Draw these 20 cards" in own.text and "<code>our words</code>" in own.text
         )
-        # The seed is shown once, read only, and each domain's draw form carries it; the Cards box holds the suggestion.
-        assert "No RLA seed has been entered yet" in text  # this workspace has none
-        menu_html = text[text.index('id="menu"') : text.index('id="list"')]
-        assert (
-            menu_html.count('name="seed"') == 2
-        )  # the "Use another seed" box and the one draw form, hidden
-        filled = re.search(
-            r'name="size" value="(\d*)" min="1" max="500" inputmode="numeric" class="target-size" required',
-            suggested.text,
+        key = re.search(r'name="draw" value="([0-9,]+):20"', own.text).group(1)  # type: ignore[union-attr]
+        csrf = csrf_of(own)
+        # All or nothing: a bad part records nothing.
+        bad = client.post(
+            "/coord/targets/domain/draw-all",
+            data={
+                "csrf": csrf,
+                "county": COUNTY,
+                "seed": "w",
+                "draw": [f"{key}:3", "99:2"],
+            },
         )
-        assert (
-            filled is not None and int(filled.group(1)) > 0
-        )  # the ladder's suggestion for the one domain
-        own = client.get(f"/coord/targets?county={COUNTY}&seed=our+words&budget=12")
-        assert "<code>our words</code>" in own.text and "entered here" in own.text
-        assert '<input type="hidden" name="seed" value="our words">' in own.text
-        key = re.search(r'name="domain" value="([0-9,]+)"', text).group(1)  # type: ignore[union-attr]
-        drawn = client.post("/coord/targets/domain/draw", data={"csrf": csrf_of(page), "county": COUNTY, "domain": key, "size": "7", "seed": "words"},
+        assert bad.status_code == 400 and "update it and try again" in bad.text
+        with EventLog.open(root) as log:
+            assert tg.domain_draw_count(log, COUNTY) == 0
+        drawn = client.post("/coord/targets/domain/draw-all", data={"csrf": csrf, "county": COUNTY, "seed": "our words", "draw": [f"{key}:5", f"{key}:2"]},
                             follow_redirects=False)  # fmt: skip
         assert (
-            drawn.status_code == 303 and "domain_drawn=1" in drawn.headers["location"]
+            drawn.status_code == 303
+            and "drew=1%2C2" in drawn.headers["location"]
+            and drawn.headers["location"].endswith("#list")
         )
         listed = client.get(drawn.headers["location"]).text
         assert (
-            "Domain draw 1: 7 draws from the 82 cards carrying Synthetic County Commissioner"
+            "Drew 7 cards: 5 from Synthetic County Commissioner, 2 from Synthetic County Commissioner; they&#39;re in the working list below."
             in listed
-            and "Domain draw 1</strong>" in listed
         )
-        assert "Includes 7 domain draws already made." in listed
-        bad = client.post(
+        assert listed.index("Drew 7 cards") > listed.index(
+            'id="list"'
+        )  # shown where the page scrolls to
+        assert "Domain draw 1</strong>" in listed and "Domain draw 2</strong>" in listed
+        with EventLog.open(root) as log:
+            events = [e for e in log.iter_events() if e.kind == "targets.domain_drawn"]
+            assert [(e.data["draw"], e.data["size"]) for e in events] == [
+                (1, 5),
+                (2, 2),
+            ]
+            found = {x.id: x for x in tg.sources(Workspace.open(root), log, COUNTY)}
+            assert (
+                found["domain 1"].domain is not None
+                and found["domain 1"].domain.seed == "our words"
+                and found["domain 2"].included
+            )
+        # One domain's own draw is still under More.
+        single = client.post(
             "/coord/targets/domain/draw",
-            data={"csrf": csrf_of(page), "county": COUNTY, "domain": "99", "size": "7"},
+            data={
+                "csrf": csrf,
+                "county": COUNTY,
+                "domain": key,
+                "size": "3",
+                "seed": "x",
+            },
+            follow_redirects=False,
         )
-        assert bad.status_code == 400 and "No such domain" in bad.text
+        assert (
+            single.status_code == 303 and "domain_drawn=3" in single.headers["location"]
+        )
+        assert (
+            "Includes 10 domain draws already made."
+            in client.get(single.headers["location"]).text
+        )
 
 
 def test_the_command_line(tmp_path: Path) -> None:
@@ -1157,3 +1206,32 @@ def test_posted_selection_lists_give_corla_s_own_draws(tmp_path: Path) -> None:
         "CORLA's posted selection lists (2 sampling domain(s)"
     )
     assert "5 draws, 4 distinct cards" in inputs.draws_source
+
+
+def test_the_suggestion_in_words_and_the_cards_tags(tmp_path: Path) -> None:
+    menu = tm.build_menu(_inputs(_votes(tmp_path)))
+    result = menu.allocate(10, tm.MINIMAX)
+    draws = tm.suggested_draws(menu, result)
+    assert sum(d.cards for d in draws) == 10 - result.unspent and draws == sorted(
+        draws, key=lambda d: (-d.cards, d.title)
+    )
+    titles = {line.group.key: line.title for line in menu.lines}
+    assert all(d.title == titles[d.key] for d in draws)
+    assert all(
+        d.after is not None and d.now is not None and d.after <= d.now for d in draws
+    )
+    text = tm.suggestion_text(menu, result)
+    expected = ", ".join(f"{d.cards} from {d.title}" for d in draws)
+    assert (
+        text
+        == f"Suggested: 10 cards — {expected}. Highest risk: {tm.pct(result.before)} → {tm.pct(result.after)}."
+    )
+    assert tm.suggestion_text(menu, menu.allocate(0, tm.MINIMAX)).startswith(
+        "Nothing to draw"
+    )
+    pair = next(line for line in menu.lines if line.group.contests == (MAYOR, MEASURE))
+    assert [t.word for t in tm.card_tags(pair)] == ["flagged"]
+    council = tm.build_menu(_inputs(_votes(tmp_path), draws=[], comparisons={})).lines[
+        0
+    ]
+    assert len(tm.card_tags(council)) <= tm.CARD_TAGS

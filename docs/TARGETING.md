@@ -11,15 +11,35 @@ the coordinator page is `/coord/targets` (`corla_observer.web.targets`), the lib
 
 ## The coordinator page
 
-`/coord/targets`, for a county with a redacted CVR, reads from top to bottom:
+`/coord/targets`, for a county with a redacted CVR, is laid out for a phone first, and reads from
+top to bottom:
 
-1. **The targeting menu** (below): the caveat about card styles and where the numbers come from,
-   the county's local contests counted by tag, the suggestion for a budget (minimax or ladder),
-   the seed for draws shown once, and the sampling domains worth drawing from, riskiest first, each
-   with a draw form. This is the first choice offered.
-2. **The working list**, with its sources and ballots, Send to county and Make draft; then the
+1. **Suggested draws**, always shown, on the first screen: the suggestion in a sentence ("Suggested:
+   20 cards — 13 from Gilpin County RE-1 School District Issue 4A, 7 from City of Central Alderman
+   and 1 other. Highest risk: 14.2% → 11.0%."), worked out for the county's remaining allowed total
+   (the allowed total less the ballots sent), or 20 when none is recorded, or the budget typed;
+   then one button, **Draw these 20 cards**, which makes every draw of the suggestion at once. Each
+   is a domain draw of its own (its own `targets.domain_drawn` event and source); all are checked
+   and drawn before any is recorded, so a bad one records none. The page then goes to the working
+   list, which says what was drawn ("Drew 20 cards: 13 from …, 7 from …; they're in the working
+   list below"). Under the button, small: the budget, minimax or ladder, and **Update**, which
+   brings the page back to the suggestion, marked "Updated:" and outlined, so that pressing it
+   always shows its result. Without a seed in effect, there is no button, and the page says to
+   enter one.
+2. One line counting the county's local contests by tag.
+3. **How this works**, collapsed: what targeted ballots are, how the pooled risk is worked out, the
+   caveat about card styles, how the suggestion spreads the budget, the tags, where the numbers
+   come from, and the seed for draws (the RLA seed in effect) with a box to use another.
+4. **Domains**: each sampling domain on the menu as a short card, riskiest first: its name (its
+   riskiest contest, "and N others"), at most two tags, its risk now and, if the suggestion draws
+   from it, "+N cards → its risk after them" (else "not in the suggestion"). Under **More**: its
+   risk after 5, 10 and 20 draws, the riskiest contest's margin, the others, its ties, the menu
+   contests it also lands on, the table of its contests, and a form to draw from it alone.
+   Below them, collapsed, the other contests (local ones in domains not on the menu, and the
+   regional ones).
+5. **The working list**, with its sources and ballots, Send to county and Make draft; then the
    **drafts** and the **sent lists**. A domain draw joins the working list like any other source.
-3. **Other ways to choose ballots**, collapsed unless one is in use: the pattern grid (a pattern of
+6. **Other ways to choose ballots**, collapsed unless one is in use: the pattern grid (a pattern of
    votes, drawn from) and the entry of ballots by imprinted ID, as described below.
 
 `/coord/targets/menu`, the menu's former page, redirects to `/coord/targets` with the same query
@@ -317,16 +337,18 @@ Each line opens into a table of the domain's contests: name, risk, thin or settl
 contests in domains not on the menu, and the regional ones, are collapsed below.
 
 **The suggestion.** A budget, by default the county's allowed total less the ballots already sent,
-or a number the coordinator types, is spread over the domains. First each domain holding an unseen
-local contest (uncontested ones included) or a tie, that no domain draw has reached yet, gets one
-draw, the largest domains first if the budget is short: for an unseen contest one card checks that
-the CVR records it, and for a tie each card checks the CVR's count, which is the whole question. The
-rest is spread over the domains, each counted by its riskiest contest, in one of two ways:
-**minimax** gives draws to the domain with the highest pooled risk until it falls to the next
+else 20, or a number the coordinator types, is spread over the domains. First each domain holding an
+unseen local contest (uncontested ones included) or a tie, that no domain draw has reached yet, gets
+one draw, the largest domains first if the budget is short: for an unseen contest one card checks
+that the CVR records it, and for a tie each card checks the CVR's count, which is the whole
+question. The rest is spread over the domains, each counted by its riskiest contest, in one of two
+ways: **minimax** gives draws to the domain with the highest pooled risk until it falls to the next
 highest, and so on; **ladder** brings the cheapest domains under 90%, then 50%, 20%, 10% and the
 limit, leaving one it cannot afford as it is. Ties, whose risk can't fall, are left out of the
 highest risk that minimax and ladder lower, and that the suggestion reports. The coordinator picks
-one way, and the draw sizes on the menu are filled in from it, to be changed at will.
+one way and draws the whole suggestion with one button, or opens a domain's card and draws from it
+alone, the size filled in from the suggestion and changed at will. Where a way leaves some of the
+budget unspent (more would not lower the highest risk), the sentence says so.
 
 **Domain draws.** "Draw from this domain" (or `corla-observer targets domain-draw`) records a domain
 draw. Its inputs are the county, the CVR's SHA-256, the domain's contests (their names in the CVR,

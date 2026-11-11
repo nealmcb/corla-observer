@@ -464,6 +464,21 @@ ol.target-menu form.actions { display: flex; flex-wrap: wrap; gap: 0.5em; align-
 ol.target-menu form.actions label { display: inline-flex; flex-direction: column; }
 ol.target-menu form.actions input[type=text] { width: 14em; max-width: 100%; }
 @media (max-width: 600px) { ol.target-menu p.target-menu-row { padding-left: 0.6em; } }
+/* The suggestion at the top of /coord/targets, phone first: the result, one Draw button, then a small budget form. */
+form.target-county { margin: 6px 0; align-items: center; }
+form.target-county label { display: inline-flex; align-items: center; gap: 0.4em; white-space: nowrap; }
+.target-result { border: 2px solid var(--blue); border-radius: 8px; padding: 10px 12px; margin: 8px 0; background: var(--card); }
+.target-result h2 { margin: 0 0 4px; font-size: 1.1rem; }
+.target-result-text { font-size: 1.15rem; line-height: 1.4; margin: 0 0 10px; }
+.target-result.is-updated, .target-result:target { border-color: var(--orange); box-shadow: 0 0 0 4px var(--orange); }
+.target-result:focus { outline: none; }
+.target-draw-all { margin: 0 0 8px; }
+.target-draw-all-button { font-size: 1.1rem; padding: 12px 18px; width: 100%; max-width: 26em; }
+form.target-budget { margin: 4px 0 0; font-size: 0.9rem; align-items: center; }
+form.target-budget label { display: inline-flex; align-items: center; gap: 0.3em; white-space: nowrap; }
+ol.target-menu > li.target-card { margin-bottom: 0.9em; }
+ol.target-menu > li.target-card > p { margin: 0.1em 0; }
+.target-card-more > summary { font-size: 0.9rem; }
 .target-pattern { min-width: 12em; max-width: 36em; overflow-wrap: anywhere; }
 
 input.target-size:not([type=checkbox]) { width: 5.5em; padding: 4px 6px; }

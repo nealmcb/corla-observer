@@ -116,6 +116,10 @@ TOLERANCES: tuple[float, ...] = (0.90, 0.50, 0.20, 0.10)
 DEFAULT_RISK_LIMIT = 0.03
 #: The largest budget the suggestion spreads.
 MAX_BUDGET = 2000
+#: The budget the suggestion spreads when none is given and the county has no allowed total recorded.
+DEFAULT_BUDGET = 20
+#: The most tag badges a domain's card shows (the rest are under "More").
+CARD_TAGS = 2
 
 LOCAL = "local"
 REGIONAL = "regional"
@@ -1442,6 +1446,81 @@ def build_menu(
         tuple(steps),
         cutoff,
     )
+
+
+@dataclass(frozen=True)
+class SuggestedDraw:
+    """One domain's share of a suggestion: its key and name, the cards to draw, and its riskiest contest's
+    pooled risk now and after them (None when it has no contest draws can help: uncontested or a tie)."""
+
+    key: str
+    title: str
+    cards: int
+    now: float | None
+    after: float | None
+
+
+def suggested_draws(menu: Menu, allocation: Allocation) -> list[SuggestedDraw]:
+    """The domains a suggestion draws from, most cards first, each named as on the menu."""
+    lines = {line.group.key: line for line in menu.lines}
+    by_index = {f.index: f for f in menu.facts}
+    found = []
+    for group in menu.groups:
+        cards = allocation.draws.get(group.key, 0)
+        if not cards:
+            continue
+        line = lines.get(group.key)
+        if line is not None:
+            title, top = line.title, line.riskiest
+        else:
+            members = _allocatable(group, by_index)
+            top = members[0] if members else None
+            title = domain_title(
+                top.name if top else group.contests[0], len(group.indexes)
+            )
+        found.append(
+            SuggestedDraw(
+                group.key,
+                title,
+                cards,
+                top.risk if top else None,
+                top.risk_after(cards) if top else None,
+            )
+        )
+    return sorted(found, key=lambda d: (-d.cards, d.title))
+
+
+def suggestion_text(menu: Menu, allocation: Allocation) -> str:
+    """The suggestion in a sentence: "Suggested: 20 cards — 7 from A, 13 from B. Highest risk: 14.2% → 11.0%."."""
+    draws = suggested_draws(menu, allocation)
+    if not draws:
+        return "Nothing to draw: no local contest is unseen, a tie, or above the risk limit where draws can help."
+    total = sum(d.cards for d in draws)
+    parts = ", ".join(f"{d.cards} from {d.title}" for d in draws)
+    text = (
+        f"Suggested: {total} card{'s' if total != 1 else ''} — {parts}. "
+        f"Highest risk: {pct(allocation.before)} → {pct(allocation.after)}."
+    )
+    if allocation.unspent:
+        text += f" {allocation.unspent} of the {allocation.budget} left unspent: more would not lower it further this way."
+    return text
+
+
+def card_tags(line: MenuLine) -> list[Tag]:
+    """At most `CARD_TAGS` tags for a domain's card: unseen, flagged, tie, recount, uncontested, the first that any
+    of its contests has."""
+    members = line.members
+    found = []
+    for word, kind, test in (
+        (UNSEEN, "info", any(f.unseen for f in members)),
+        (FLAGGED, "high", any(f.flagged for f in members)),
+        (TIE, "tag", any(f.tie for f in members)),
+        (RECOUNT, "tag", any(f.recount_margin for f in members)),
+        (UNCONTESTED, "tag", any(f.uncontested for f in members)),
+    ):
+        if test:
+            found.append(Tag(word, kind))
+    return found[:CARD_TAGS]
 
 
 def menu_text(menu: Menu, budget: int | None = None) -> str:

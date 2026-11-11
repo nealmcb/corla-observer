@@ -3,7 +3,8 @@
 Marked ``browser`` and left out of the default run, like
 tests/test_browser_targets.py. It builds Testland (tests/testland.py: four
 ballot styles, an RLA extract), makes a domain draw from the first domain on
-its menu, serves it, logs in, and shows the menu at desktop and phone widths.
+its menu, serves it, logs in, and shows the suggested draws at phone and desktop widths: on the first screen
+with their one Draw button, updated in view, a card opened, and the whole suggestion drawn with the button.
 Set ``$CORLA_OBSERVER_SCREENSHOTS`` to keep the screenshots.
 """
 
@@ -78,7 +79,7 @@ def test_targeting_menu_page(tmp_path: Path) -> None:
             time.sleep(0.05)
         out = Path(os.environ.get("CORLA_OBSERVER_SCREENSHOTS") or tmp_path / "shots")
         result = subprocess.run(
-            [python, str(SCRIPT), str(out), f"http://127.0.0.1:{port}", "alice", PASSWORD, COUNTY, "20"],
+            [python, str(SCRIPT), str(out), f"http://127.0.0.1:{port}", "alice", PASSWORD, COUNTY, "12", "--draw"],
             capture_output=True, text=True, timeout=300, check=False,
         )  # fmt: skip
         summary: dict[str, Any] = (

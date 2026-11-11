@@ -1,5 +1,6 @@
-{#- The targeting menu (corla_observer.targetmenu), at the top of /coord/targets: ``m`` holds its values
-    (web/targets.py, `_menu_view`), apart from the pattern grid's. -#}
+{#- The targeting menu (corla_observer.targetmenu), at the top of /coord/targets, phone first: the suggestion and
+    its one Draw button, then the county's totals, "How this works", and the domains as compact cards. ``m``
+    holds its values (web/targets.py, `_menu_view`), apart from the pattern grid's. -#}
 {% from "_macros.html" import badge %}
 {% macro row_html(row) -%}{% for x in row %}{% if x is string %}{{ x }}{% else %}{{ badge(x.kind, x.word) }}{% endif %}{% endfor %}{%- endmacro %}
 {% macro facts_table(rows, regional=False) -%}
@@ -13,74 +14,85 @@
 </table></div>
 {%- endmacro %}
 <section id="menu" class="target-menu-section">
-  <h2>Where random draws would help most</h2>
-  {% if m.error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> The targeting menu could not be worked out: {{ m.error }}</p>
-  {% else %}{% set menu = m.menu %}
-  <p>Which of {{ county }}'s own (local) contests random draws from their cards would help most. Local contests carried by exactly the same cards form one sampling domain: a draw from it counts for every one of them. Each contest's <strong>pooled risk</strong> is Kaplan-Markov over CORLA's draws that landed on its cards, counted with multiplicity, plus the domain draws made here, with the discrepancies seen on them; risk limit {{ m.limit }}. Extra draws are assumed to show no discrepancy until examined. Draws are with replacement: a card drawn twice is pulled once and counted twice. A draw joins the working list below.</p>
-  <p class="notice"><span aria-hidden="true">&#9675;</span> {{ m.style_note }}</p>
-  <details>
-    <summary>Where the numbers come from</summary>
+  {% if m.error %}<h2>Suggested draws</h2>
+  <p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> The targeting menu could not be worked out: {{ m.error }}</p>
+  {% else %}{% set menu = m.menu %}{% set chosen = m.chosen %}
+  <div id="suggestion-result" class="target-result{% if m.updated %} is-updated{% endif %}" tabindex="-1">
+    <h2>Suggested draws</h2>
+    <p class="target-result-text" role="status">{% if m.updated %}<strong>Updated:</strong> {% endif %}{{ m.suggestion_text }}</p>
+    {% if m.suggested %}
+    {% if m.seed %}
+    <form method="post" action="{{ url('/coord/targets/domain/draw-all') }}" class="target-draw-all">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="seed" value="{{ m.seed }}">
+      {% for d in m.suggested %}<input type="hidden" name="draw" value="{{ d.key }}:{{ d.cards }}">{% endfor %}
+      <button type="submit" class="target-draw-all-button">Draw these {{ m.suggested_total }} card{{ '' if m.suggested_total == 1 else 's' }}</button>
+    </form>
+    {% else %}<p class="notice"><span aria-hidden="true">&#9650;</span> No seed yet: enter one under "How this works" to draw.</p>{% endif %}
+    {% endif %}
+    <form method="get" action="{{ url('/coord/targets') }}#suggestion-result" class="actions target-budget">
+      <input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="updated" value="1">{% if m.seed_given %}<input type="hidden" name="seed" value="{{ m.seed }}">{% endif %}
+      <label>Budget <input type="number" name="budget" value="{{ m.budget or '' }}" min="1" max="{{ m.max_budget }}" inputmode="numeric" class="target-size"></label>
+      <label>Spread by <select name="strategy">
+        <option value="minimax"{% if m.strategy == 'minimax' %} selected{% endif %}>minimax</option>
+        <option value="ladder"{% if m.strategy == 'ladder' %} selected{% endif %}>ladder</option>
+      </select></label>
+      <button type="submit" class="secondary small">Update</button>
+    </form>
+  </div>
+  <p id="totals" class="meta">{{ menu.totals_text() }}.</p>
+
+  <details id="how-this-works">
+    <summary>How this works</summary>
+    {% if m.page_intro %}<p>{{ m.page_intro }}</p>{% endif %}
+    <p>Which of {{ county }}'s own (local) contests random draws from their cards would help most. Local contests carried by exactly the same cards form one sampling domain: a draw from it counts for every one of them. Each contest's <strong>pooled risk</strong> is Kaplan-Markov over CORLA's draws that landed on its cards, counted with multiplicity, plus the domain draws made here, with the discrepancies seen on them; risk limit {{ m.limit }}. Extra draws are assumed to show no discrepancy until examined. Draws are with replacement: a card drawn twice is pulled once and counted twice. A draw joins the working list below.</p>
+    <p class="notice"><span aria-hidden="true">&#9675;</span> {{ m.style_note }}</p>
+    <p>The suggestion spreads the budget ({% if menu.inputs.budget is not none %}by default {{ menu.inputs.budget_source }}, {{ menu.inputs.budget }}{% else %}by default {{ m.default_budget }}: no allowed total is recorded for {{ county }}{% endif %}). First, each domain holding an unseen local contest or a tie that no domain draw has reached gets one draw (an uncontested one too: one card checks that the CVR records it); the rest goes by <strong>minimax</strong> (lower the highest risk first) or <strong>ladder</strong> (cheapest domains under 90%, 50%, 20%, 10%, then {{ m.limit }}). {{ m.tie_note }}{% if chosen %} ({{ 'Ladder' if m.strategy == 'minimax' else 'Minimax' }} would bring the highest risk to {{ m.pct(m.allocations['ladder' if m.strategy == 'minimax' else 'minimax'].after) }}.){% endif %}</p>
+    <p>Each contest is <strong>thin</strong> (pooled risk above {{ m.limit }}) or <strong>settled</strong>, and has any of these tags: {{ badge('info', 'unseen') }} no card of the official sample carried it (domain draws are shown apart: “seen by N domain draws”); {{ badge('high', 'flagged') }} a discrepancy was found on its cards, with its types; {{ badge('tag', 'uncontested') }} no more candidates than seats, so no risk; {{ badge('tag', 'recount') }} a margin of at most 0.5% of the highest vote, or for a multi-winner contest of the lowest winner's votes (C.R.S. 1-10.5-101), for information only: Colorado's recounts usually re-tabulate by machine, so it is checked like any other; {{ badge('tag', 'tie') }} a margin of zero: each card checks the CVR's count, but the risk can't fall. A domain is on the menu when any of its local contests is unseen, thin or flagged.</p>
+    <h4>Where the numbers come from</h4>
     <ul class="meta">{% for line in menu.sources() %}<li>{{ line }}</li>{% endfor %}</ul>
-  </details>
-  <p class="meta">Each contest is <strong>thin</strong> (pooled risk above {{ m.limit }}) or <strong>settled</strong>, and has any of these tags: {{ badge('info', 'unseen') }} no card of the official sample carried it (domain draws are shown apart: “seen by N domain draws”); {{ badge('high', 'flagged') }} a discrepancy was found on its cards, with its types; {{ badge('tag', 'uncontested') }} no more candidates than seats, so no risk; {{ badge('tag', 'recount') }} a margin of at most 0.5% of the highest vote, or for a multi-winner contest of the lowest winner's votes (C.R.S. 1-10.5-101), for information only: Colorado's recounts usually re-tabulate by machine, so it is checked like any other; {{ badge('tag', 'tie') }} a margin of zero: each card checks the CVR's count, but the risk can't fall.</p>
-  <p id="totals"><strong>{{ menu.totals_text() }}.</strong></p>
-
-  <h3 id="suggestion">Suggestion</h3>
-  <form method="get" action="{{ url('/coord/targets') }}#menu" class="actions">
-    <input type="hidden" name="county" value="{{ county }}">{% if m.seed_given %}<input type="hidden" name="seed" value="{{ m.seed }}">{% endif %}
-    <label>Budget <input type="number" name="budget" value="{{ m.typed or (m.budget or '') }}" min="1" max="{{ m.max_budget }}" inputmode="numeric" class="target-size"></label>
-    <label>Spread by <select name="strategy">
-      <option value="minimax"{% if m.strategy == 'minimax' %} selected{% endif %}>minimax: lower the highest risk first</option>
-      <option value="ladder"{% if m.strategy == 'ladder' %} selected{% endif %}>ladder: cheapest under 90%, 50%, 20%, 10%, then {{ m.limit }}</option>
-    </select></label>
-    <button type="submit">Suggest</button>
-    <span class="meta">{% if menu.inputs.budget is not none %}Default: {{ menu.inputs.budget_source }}, {{ menu.inputs.budget }}.{% else %}No allowed total is recorded for {{ county }}: type a number of draws.{% endif %}</span>
-  </form>
-  <p class="meta">First, each domain holding an unseen local contest or a tie that no domain draw has reached gets one draw (an uncontested one too: one card checks that the CVR records it); the rest of the budget is spread as chosen. {{ m.tie_note }}</p>
-  {% set chosen = m.chosen %}
-  {% if chosen %}
-  <p>{{ m.strategy|capitalize }}, {{ chosen.budget }} draws{% if chosen.seeded %}, one first to each of {{ chosen.seeded|length }} domain{{ '' if chosen.seeded|length == 1 else 's' }} with an unseen contest or a tie{% endif %}: the highest local pooled risk (ties left out) goes from {{ m.pct(chosen.before) }} to {{ m.pct(chosen.after) }}{% if chosen.unspent %}, {{ chosen.unspent }} draws unspent (every contest it can reach is under {{ m.limit }}){% endif %}. {% set other = m.allocations['ladder' if m.strategy == 'minimax' else 'minimax'] %}<span class="meta">({{ 'Ladder' if m.strategy == 'minimax' else 'Minimax' }}: to {{ m.pct(other.after) }}.)</span> The draw sizes below are filled in from it; change any before drawing.</p>
-  {% elif m.budget %}<p class="muted">Nothing to spread.</p>{% endif %}
-
-  <h3 id="domains">Domains on the menu ({{ menu.lines|length }})</h3>
-  <div id="seed">
-    {% if m.seed %}<p>Seed for these draws: <strong><code>{{ m.seed }}</code></strong> <span class="meta">({{ 'entered here' if m.seed_given else 'the RLA seed in effect' }}; any text, public, so anyone can redo each draw)</span></p>{% else %}<p>No RLA seed has been entered yet: enter one for these draws.</p>{% endif %}
-    <details{% if not m.seed %} open{% endif %}><summary class="meta">Use another seed</summary>
-      <form method="get" action="{{ url('/coord/targets') }}#menu" class="actions">
-        <input type="hidden" name="county" value="{{ county }}">{% if m.typed %}<input type="hidden" name="budget" value="{{ m.typed }}">{% endif %}<input type="hidden" name="strategy" value="{{ m.strategy }}">
-        <label>Seed <input type="text" name="seed" value="{{ m.seed if m.seed_given else '' }}" maxlength="{{ m.max_seed }}" size="20" placeholder="any text"></label>
+    <div id="seed">
+      <h4>Seed</h4>
+      {% if m.seed %}<p>Seed for these draws: <strong><code>{{ m.seed }}</code></strong> <span class="meta">({{ 'entered here' if m.seed_given else 'the RLA seed in effect' }}; any text, public, so anyone can redo each draw)</span></p>{% else %}<p>No RLA seed has been entered yet: enter one for these draws.</p>{% endif %}
+      <form method="get" action="{{ url('/coord/targets') }}#suggestion-result" class="actions">
+        <input type="hidden" name="county" value="{{ county }}">{% if m.typed %}<input type="hidden" name="budget" value="{{ m.typed }}">{% endif %}<input type="hidden" name="strategy" value="{{ m.strategy }}"><input type="hidden" name="updated" value="1">
+        <label>Use another seed <input type="text" name="seed" value="{{ m.seed if m.seed_given else '' }}" maxlength="{{ m.max_seed }}" size="20" placeholder="any text"></label>
         <button type="submit" class="secondary small">Use it</button>
       </form>
-    </details>
-  </div>
-  <p class="meta">A domain is on the menu when any of its local contests is unseen, thin or flagged.</p>
+    </div>
+    {% set checks = menu.card_checks() %}
+    {% if checks %}<p class="meta">Card counts that differ from CORLA's by more than 1% (the larger is used): {% for f, n in checks %}{{ f.name }}: CVR {{ '{:,}'.format(f.cvr_cards) }}, CORLA {{ '{:,}'.format(n) }}{% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
+  </details>
+
+  <h3 id="domains">Domains ({{ menu.lines|length }})</h3>
   {% if menu.lines %}
   <ol class="target-menu">
-  {% for line in menu.lines %}{% set g = line.group %}{% set suggested = (chosen.draws.get(g.key, 0) if chosen else 0) %}{% set rows = m.line_rows(line, menu.steps) %}
-    <li id="domain-{{ g.key|replace(',', '-') }}">
-      <p><strong>{{ row_html(rows[0]) }}</strong></p>
-      {% for row in rows[1:] %}<p class="target-menu-row">{{ row_html(row) }}</p>{% endfor %}
-      <details><summary class="meta">The domain's {{ line.members|length }} contest{{ '' if line.members|length == 1 else 's' }}</summary>{{ facts_table(line.members) }}</details>
-      <form method="post" action="{{ url('/coord/targets/domain/draw') }}" class="inline actions">
-        <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="domain" value="{{ g.key }}">
-        <input type="hidden" name="seed" value="{{ m.seed }}">
-        <label>Cards <input type="number" name="size" value="{% if chosen %}{{ suggested or '' }}{% else %}{{ m.draw_size }}{% endif %}" min="1" max="{{ m.max_draw }}" inputmode="numeric" class="target-size" required></label>
-        <button type="submit">Draw from this domain</button>
-        {% if chosen %}<span class="meta">suggested: {{ suggested }}</span>{% endif %}
-      </form>
+  {% for line in menu.lines %}{% set g = line.group %}{% set n = (chosen.draws.get(g.key, 0) if chosen else 0) %}{% set rows = m.line_rows(line, menu.steps) %}
+    <li id="domain-{{ g.key|replace(',', '-') }}" class="target-card">
+      <p class="target-card-name"><strong>{{ line.title }}</strong> {% for t in m.card_tags(line) %}{{ badge(t.kind, t.word) }} {% endfor %}</p>
+      <p class="target-card-risk">{% if line.riskiest %}Risk now {{ m.pct(line.now) }}{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }} → {{ m.pct(line.riskiest.risk_after(n)) }}</strong>{% else %}; not in the suggestion{% endif %}{% else %}No risk to lower{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }}</strong>{% else %}; not in the suggestion{% endif %}{% endif %}</p>
+      <details class="target-card-more"><summary>More</summary>
+        <p class="meta">{{ row_html(rows[0]) }}</p>
+        {% for row in rows[1:] %}<p class="target-menu-row">{{ row_html(row) }}</p>{% endfor %}
+        {{ facts_table(line.members) }}
+        <form method="post" action="{{ url('/coord/targets/domain/draw') }}" class="inline actions">
+          <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="domain" value="{{ g.key }}">
+          <input type="hidden" name="seed" value="{{ m.seed }}">
+          <label>Cards <input type="number" name="size" value="{{ n or m.draw_size }}" min="1" max="{{ m.max_draw }}" inputmode="numeric" class="target-size" required></label>
+          <button type="submit" class="secondary">Draw from this domain only</button>
+        </form>
+      </details>
     </li>
   {% endfor %}
   </ol>
   {% else %}<p class="muted">Nothing on the menu: no local contest is unseen, thin or flagged.</p>{% endif %}
-  {% set checks = menu.card_checks() %}
-  {% if checks %}<p class="meta">Card counts that differ from CORLA's by more than 1% (the larger is used): {% for f, n in checks %}{{ f.name }}: CVR {{ '{:,}'.format(f.cvr_cards) }}, CORLA {{ '{:,}'.format(n) }}{% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
 
-  <h3 id="other-contests">The other contests</h3>
-  <details><summary>Local, in domains not on the menu ({{ menu.off_menu|length }})</summary>{{ facts_table(menu.off_menu) }}</details>
-  <details><summary>Regional ({{ menu.regional|length }}): coverage only, CORLA's own risk</summary>
+  <details id="other-contests"><summary>The other contests ({{ menu.off_menu|length }} local not on the menu, {{ menu.regional|length }} regional)</summary>
+    <h4>Local, in domains not on the menu ({{ menu.off_menu|length }})</h4>
+    {{ facts_table(menu.off_menu) }}
+    <h4>Regional ({{ menu.regional|length }}): coverage only, CORLA's own risk</h4>
     <p class="meta">Draws in this county are not uniform over a contest that spans several counties, so they give these contests coverage only. A regional unseen or thin contest of which {{ county }} holds under {{ '{:.0%}'.format(menu.cutoff) }} of the cards is left off.</p>
     {{ facts_table(menu.regional, True) }}
+    {% if menu.left_off %}<p class="meta">Left off ({{ menu.left_off|length }}): {% for f in menu.left_off %}{{ f.name }}{% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
   </details>
-  {% if menu.left_off %}<p class="meta">Left off ({{ menu.left_off|length }}): {% for f in menu.left_off %}{{ f.name }}{% if not loop.last %}; {% endif %}{% endfor %}.</p>{% endif %}
   {% endif %}
 </section>

@@ -16,9 +16,9 @@
 {% if added_message %}<p class="notice" role="status"><span aria-hidden="true">&#10003;</span> {{ added_message }}</p>{% endif %}
 {% if lookup_notes %}<ul class="notice" role="status">{% for n in lookup_notes %}<li>{{ n }}</li>{% endfor %}</ul>{% endif %}
 {% if error %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> {{ error }}</p>{% endif %}
-<p>Ballots the observers choose, outside the RLA's random sample: the county pulls and examines them at the observers' request, and they are not entered into CORLA. Start with the targeting menu: random draws from the cards of the county's own contests where they would help most. Or, below, draw from a pattern of votes in the redacted CVR, or add any ballot by its imprinted ID. Then send the county one list in its pull order (the design: docs/TARGETING.md in the repository). The counts are for coordinators only.</p>
+{% if not county %}<p>{{ page_intro }}</p>{% endif %}
 
-<form method="get" action="{{ url('/coord/targets') }}" class="actions">
+<form method="get" action="{{ url('/coord/targets') }}" class="actions target-county">
   <label>County
     <select name="county">{% for c in counties %}<option{% if c == county %} selected{% endif %}>{{ c }}</option>{% endfor %}</select>
   </label>
@@ -27,14 +27,16 @@
 </form>
 
 {% if county %}
+{% include "_targets_menu.html" %}
+
 {% if county in demo_notes %}<p class="notice"><span aria-hidden="true">&#9675;</span> Demonstration county: {{ demo_notes[county] }} Kept apart from the county's current files.</p>{% endif %}
 <p class="meta">Redacted CVR <code class="hash">{{ data.cvr_sha256|h12 }}</code>: {{ data.votes.rows }} rows, {{ data.votes.ballots.bit_count() }} single ballot cards with votes{% if data.votes.redacted_rows %}, {{ data.votes.redacted_rows }} fully redacted{% endif %}{% if data.votes.aggregate_rows %}, {{ data.votes.aggregate_rows }} aggregate rows{% endif %}, {{ data.votes.contests|length }} contests. Manifest: {% if data.manifest_sha256 %}<code class="hash">{{ data.manifest_sha256|h12 }}</code>{% else %}{{ badge('missing', 'none, so no storage locations') }}{% endif %}.</p>
 
-{% include "_targets_menu.html" %}
 
 
 <section id="list">
   <h2>The working list</h2>
+  {% if drew_message %}<p class="notice target-drew" role="status"><span aria-hidden="true">&#10003;</span> <strong>{{ drew_message }}</strong></p>{% endif %}
   <p class="meta">The union of the sources checked below, each ballot once, in CORLA's pull order (storage location, tabulator, batch, record). Uncheck a source to leave its ballots out; it stays on record. <strong>Send to county</strong> freezes the list as Targeted list {{ next_number }}; <strong>Make draft</strong> freezes it as Draft {{ next_draft }} instead, with its extract and printouts, to decide later. What is added afterwards goes into the next list.</p>
   <h3>Sources</h3>
   {% if sources %}
