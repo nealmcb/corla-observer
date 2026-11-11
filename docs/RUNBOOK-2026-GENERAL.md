@@ -32,8 +32,10 @@ The scheduler (`corla-observer schedule run`, the sprite service `corla-observer
 | target list | Fri 6 Nov 7 PM to midnight | one crawl | yes |
 | early postings | Sat 7 to Thu 12 Nov, at noon | daily | yes |
 | tabulation deadline | Thu 12 Nov 6 PM to Fri 13 Nov midnight | hourly | yes |
-| weekend | Sat 14 Nov to Mon 16 Nov 7 AM | 3 hours | yes |
-| roll day | Mon 16 Nov 7 AM to midnight | 3 minutes | no |
+| weekend | Sat 14 Nov to Mon 16 Nov 6 AM | 8 hours | yes |
+| roll day | Mon 16 Nov 6 AM to 9 AM | 20 minutes | no |
+| roll day, seed meeting | Mon 16 Nov 9 AM to noon (the seed meeting at 10) | 10 minutes | no |
+| roll day, afternoon | Mon 16 Nov noon to 8 PM | 20 minutes | no |
 | audit | Tue 17 to Wed 25 Nov | hourly | no |
 
 Before 7 PM on 6 November the scheduler only sleeps. On a sprite it holds a Sprites task so the machine is not paused (`keep_awake = "always"` in `schedule.toml`). If the sprite was paused anyway, the first cycle after it wakes catches up. "Fetch now" on `/coord` runs one cycle at any time; so does `corla-observer schedule cycle --workspace WS`.

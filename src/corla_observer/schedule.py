@@ -43,8 +43,9 @@ the machine slept is made once, on waking. `GENERAL_2026_SCHEDULE` is the
 - Fri 6 Nov, the target-list deadline (5 PM MT): one crawl at 7 PM;
 - Sat 7 to Thu 12 Nov: once a day at noon, for early postings;
 - Thu 12 Nov 6 PM to Fri 13 Nov midnight: hourly;
-- the weekend, to Mon 16 Nov 7 AM: every 3 hours;
-- Mon 16 Nov 7 AM to midnight, roll day: every 3 minutes, without results;
+- the weekend, to Mon 16 Nov 6 AM: every 8 hours;
+- Mon 16 Nov, roll day, 6 AM to 8 PM, without results: every 20 minutes, but every 10 minutes from
+  9 AM to noon, around the seed meeting at 10;
 - Tue 17 to Wed 25 Nov: hourly, for the rounds' files.
 
 Before the first window the loop does nothing but sleep, so it is safe to
@@ -167,15 +168,29 @@ results = true
 [[window]]
 name = "weekend"
 start = "2026-11-14 00:00"
-end = "2026-11-16 07:00"
-every = "3h"
+end = "2026-11-16 06:00"
+every = "8h"
 results = true
 
 [[window]]
-name = "roll day"             # seed rolled Mon 16 Nov (past notices said 10 AM)
-start = "2026-11-16 07:00"
-end = "2026-11-16 23:59"
-every = "3m"
+name = "roll day"             # seed rolled Mon 16 Nov at 10 AM
+start = "2026-11-16 06:00"
+end = "2026-11-16 09:00"
+every = "20m"
+results = false
+
+[[window]]
+name = "roll day, seed meeting"  # the seed meeting at 10, and round 1's files posted after it
+start = "2026-11-16 09:00"
+end = "2026-11-16 12:00"
+every = "10m"
+results = false
+
+[[window]]
+name = "roll day, afternoon"
+start = "2026-11-16 12:00"
+end = "2026-11-16 20:00"
+every = "20m"
 results = false
 
 [[window]]

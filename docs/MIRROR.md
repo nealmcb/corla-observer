@@ -14,8 +14,9 @@ Status: a design, not yet built.
 
 - **The scheduler** is the service that runs all the time on the server. It decides when to fetch,
   following the windows in `schedule.toml`: for the 2026 general, daily at noon until 12 November,
-  hourly to the tabulation deadline on 13 November, every 3 hours over the weekend, every 3 minutes
-  on roll day, and hourly during the audit.
+  hourly to the tabulation deadline on 13 November, every 8 hours over the weekend, every 20 minutes
+  on roll day from 6 AM to 8 PM (every 10 minutes from 9 AM to noon, around the seed meeting), and
+  hourly during the audit. A sprint or Fetch now overrides the schedule at any time.
 - **A crawl** is one fetch of the Audit Center page and everything it links to under
   `/pubs/elections/RLA/`. The scheduler runs one in each cycle; a coordinator can also start one
   with **Fetch now** on `/coord`. The event log records every file a crawl finds new or changed.

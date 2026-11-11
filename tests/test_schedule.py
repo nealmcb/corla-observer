@@ -47,7 +47,9 @@ def test_the_2026_general_schedule() -> None:
     first = schedule.window_at(utc("2026-11-06 19:00"))
     assert first is not None and first.results
     roll = schedule.window_at(utc("2026-11-16 09:30"))
-    assert roll is not None and roll.every_seconds == 180 and not roll.results
+    assert roll is not None and roll.every_seconds == 600 and not roll.results
+    assert [schedule.window_at(utc(f"2026-11-16 {t}")).every_seconds for t in ("06:00", "08:59", "12:00", "19:59")] == [1200] * 4  # type: ignore[union-attr]
+    assert schedule.window_at(utc("2026-11-16 20:30")) is None and schedule.window_at(utc("2026-11-15 12:00")).every_seconds == 8 * 3600  # type: ignore[union-attr]
     assert schedule.next_start(utc("2026-10-26 12:00")) == utc("2026-11-06 19:00")
     assert parse_interval("1h30m") == 5400 and parse_interval("3m") == 180
     with pytest.raises(ValueError):
@@ -265,10 +267,14 @@ def test_the_next_check_in_words(tmp_path: Path) -> None:
         beat(ws, before)
         assert next_check_text(ws, log, before) == "next Audit Center check 2026-11-06 19:00 MST (the next window)"
     # In a window: one interval after the last cycle's start, or now if due; in a sprint, its interval.
-    roll = "2026-11-16T15:00:00.000Z"  # 8 AM MST on roll day: every 3 minutes
+    roll = "2026-11-16T15:00:00.000Z"  # 8 AM MST on roll day: every 20 minutes
     when, why = next_check(schedule, None, "2026-11-16T14:59:00.000Z", roll)
-    assert when == "2026-11-16T15:02:00.000Z" and why == "window 'roll day', every 3 min"
-    assert next_check(schedule, None, "2026-11-16T14:50:00.000Z", roll)[0] == roll
+    assert when == "2026-11-16T15:19:00.000Z" and why == "window 'roll day', every 20 min"
+    assert next_check(schedule, None, "2026-11-16T14:30:00.000Z", roll)[0] == roll
+    # Around the seed meeting, 9 AM to noon: every 10 minutes; none after 8 PM.
+    meeting = "2026-11-16T17:00:00.000Z"  # 10 AM MST
+    assert next_check(schedule, None, "2026-11-16T16:59:00.000Z", meeting) == ("2026-11-16T17:09:00.000Z", "window 'roll day, seed meeting', every 10 min")
+    assert next_check(schedule, None, "2026-11-17T03:29:00.000Z", "2026-11-17T03:30:00.000Z")[1] != "window 'roll day, afternoon', every 20 min"
     sprint = Sprint("2026-11-16T16:00:00.000Z", 60, "coordinator:ann", 1)
     assert next_check(schedule, sprint, "2026-11-16T14:59:30.000Z", roll) == ("2026-11-16T15:00:30.000Z", "sprint, every 60 s")
     assert next_check(schedule, None, None, "2026-12-31T00:00:00.000Z") == (None, "after the last window")
