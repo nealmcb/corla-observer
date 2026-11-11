@@ -760,3 +760,21 @@ def test_unchanged_extract_is_recorded_again_when_its_pages_change(ws: Workspace
     assert anew.sha256 == first.sha256 and anew.seq > first.seq and anew.page_index_sha256 != first.page_index_sha256
     assert event.data["page_index_sha256"] == anew.page_index_sha256 and event.data["pages"]["landscape-2"]
     assert set(event.data["pdfs"]) == set(corla_observer.extract.LAYOUTS) and anew.pdfs == event.data["pdfs"]
+
+
+def test_no_draws_in_a_county_says_why_and_what_to_do(tmp_path: Path) -> None:
+    """A prediction made before a county's files arrived, or one whose contests draw nothing there, is explained."""
+    ws = Workspace.open(tmp_path / "ws")
+    with EventLog.open(ws.root) as log:
+        fetch(ws, log, election_files(finalReports_ContestsListRound1_csv=contests_list(), finalReports_ContestIDsByCounty_csv=CONTEST_IDS))
+        enter_seed(log, SEED, ACTOR, "test")
+        record_prediction(ws, log, predict(build_map(log, ws), counties=["Adams"]), ACTOR)
+        cvr = ws.put_bytes(adams_cvr([f"101-1-{n}" for n in range(1, 31)], omit="", redact="", overvote=""))
+        log.append("file.received", ACTOR, county="Morgan", file_sha256=cvr.sha256,
+                   data={"kind": "redacted_cvr", "original_name": "morgan.csv", "sha256": cvr.sha256, "size": cvr.size})  # fmt: skip
+        with pytest.raises(ExtractError, match=r"made before Morgan's redacted CVR arrived.*press Fetch now"):
+            build_extract(ws, log, "Morgan")
+        # A new prediction that still draws nothing in Morgan names its contests and the likely cause.
+        record_prediction(ws, log, predict(build_map(log, ws), counties=["Adams"]), ACTOR)
+        with pytest.raises(ExtractError, match=r"none of its contests \(.+\) drew a ballot there.*same election's"):
+            build_extract(ws, log, "Morgan")

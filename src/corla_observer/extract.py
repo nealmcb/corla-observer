@@ -529,7 +529,7 @@ def make_extract(
             if prediction is None:
                 raise ExtractError(f"no pull list, no posting of CORLA's selections and no prediction for {county}")
             if not picks.ids:
-                raise ExtractError(f"the prediction has no draws in {county}")
+                raise ExtractError(f"{NO_DRAWS} {county}")
             order = "predicted"
             ordered = corla_order(picks.ids.values(), locations)
         possible = possible_boards(len(ordered), boards)
@@ -615,6 +615,41 @@ def _latest_upload(log: EventLog, county: str, kind: str) -> str | None:
     entry = upload_status(log, [county]).get(county)
     received = entry.latest.get(kind) if entry else None
     return received.sha256 if received else None
+
+
+#: The start of the error `make_extract` raises when the prediction draws no ballot in the county.
+NO_DRAWS = "the prediction has no draws in"
+
+
+def no_draws_reason(log: EventLog, county: str, prediction: Mapping[str, Any] | None, prediction_sha: str | None) -> str:
+    """Why the prediction from the seed draws no ballot in ``county``, and what to do, for a coordinator.
+
+    Two causes are told apart: the prediction was made before the county's manifest or CVR arrived
+    (the next cycle, such as Fetch now, makes a new one), and a prediction whose contests draw nothing
+    there, as when the target contest list is another election's than the county's files.
+    """
+    prediction_seq = None
+    newer: set[str] = set()
+    for event in log.iter_events():
+        if event.kind == "prediction.made" and prediction_sha is not None and event.file_sha256 == prediction_sha:
+            prediction_seq = event.seq
+            newer.clear()
+        elif event.kind == "file.received" and event.county == county and event.data.get("kind") in ("manifest", "redacted_cvr"):
+            if prediction_seq is not None:
+                newer.add("manifest" if event.data.get("kind") == "manifest" else "redacted CVR")
+    if prediction_seq is not None and newer:
+        return (
+            f"the prediction from the seed (event {prediction_seq}) was made before {county}'s "
+            f"{' and '.join(sorted(newer))} arrived, so it draws no ballots there: press Fetch now to make a new "
+            f"prediction, then build the extract again (or upload {county}'s pull list, which needs no prediction)"
+        )
+    names = [str(c.get("name")) for c in (prediction or {}).get("contests") or [] if isinstance(c, dict)]
+    listed = "; ".join(names[:8]) + ("; ..." if len(names) > 8 else "") if names else "none"
+    return (
+        f"the prediction from the seed draws no ballots in {county}: none of its contests ({listed}) drew a "
+        f"ballot there. Check that the target contest list is the same election's as {county}'s manifest and "
+        f"CVR, or upload {county}'s pull list, which needs no prediction"
+    )
 
 
 @dataclass
@@ -871,24 +906,29 @@ def build_extract(
         inputs["targeted_list"] = targeted_sha
         inputs["selection_list"] = inputs["cvr_comparison"] = None
     in_rla, targeted_in = overlaps(workspace, log, name, targeted=targeted_sha is not None)
-    extract = make_extract(
-        county=name,
-        election=sources.election,
-        seed=sources.seed,
-        prediction=sources.prediction,
-        cvr_path=workspace.path_for(cvr_sha),
-        pull_list=workspace.get_bytes(listed_sha) if listed_sha else None,
-        boards=boards,
-        locations=sources.locations,
-        inputs=inputs,
-        purpose=purpose,
-        published=published,
-        first=None if targeted_sha else sources.first,
-        targeted=targeted_sha is not None,
-        sources=source_lists if targeted_sha is not None else None,
-        in_rla=in_rla,
-        targeted_in=targeted_in,
-    )
+    try:
+        extract = make_extract(
+            county=name,
+            election=sources.election,
+            seed=sources.seed,
+            prediction=sources.prediction,
+            cvr_path=workspace.path_for(cvr_sha),
+            pull_list=workspace.get_bytes(listed_sha) if listed_sha else None,
+            boards=boards,
+            locations=sources.locations,
+            inputs=inputs,
+            purpose=purpose,
+            published=published,
+            first=None if targeted_sha else sources.first,
+            targeted=targeted_sha is not None,
+            sources=source_lists if targeted_sha is not None else None,
+            in_rla=in_rla,
+            targeted_in=targeted_in,
+        )
+    except ExtractError as exc:
+        if not str(exc).startswith(NO_DRAWS):
+            raise
+        raise ExtractError(no_draws_reason(log, name, sources.prediction, sources.prediction_sha)) from None
     body = canonical_json(extract)
     sha = hashlib.sha256(body).hexdigest()
     index = page_index(extract, sha)
