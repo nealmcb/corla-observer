@@ -42,6 +42,17 @@ def test_estimates_page_shows_hand_inputs_and_has_no_form(workspace: Path, make_
     assert client.post("/coord/estimates/margin", data={"csrf": csrf_of(page)}).status_code in (404, 405)
 
 
+def test_estimates_page_says_when_clarity_refuses_the_server(workspace: Path, make_client: Factory) -> None:
+    client: TestClient = make_client()
+    login(client)
+    assert "Clarity refuses this server" not in client.get("/coord/estimates").text
+    with EventLog.open(workspace) as log:
+        for _ in range(3):
+            log.append("results.fetch_failed", "system", data={"url": "u", "scope": "state", "what": "version", "error": "HTTP 202", "blocked": True})
+    page = client.get("/coord/estimates").text
+    assert "Clarity refuses this server" in page and "(3 attempts)" in page and "relay_results.sh" in page
+
+
 def test_schedule_page_and_sprint(workspace: Path, make_client: Factory) -> None:
     init_schedule(Workspace.open(workspace), "2026/general")
     client: TestClient = make_client()

@@ -64,7 +64,7 @@ def _estimates_view(state: Any) -> dict[str, Any]:
     results = load_results(state.workspace, state.log)
     estimates = estimate_contests(datamap, setup=setup, results=results, log=state.log)
     hand = hand_inputs(datamap, state.log)
-    from corla_observer.enr import results_by_scope
+    from corla_observer.enr import results_blocked, results_by_scope
     from corla_observer.totals import last_totals_check
 
     totals = last_totals_check(state.log)
@@ -73,6 +73,7 @@ def _estimates_view(state: Any) -> dict[str, Any]:
     return {
         "totals": totals,
         "differences": sorted(differences, key=lambda d: not d.get("flag")),
+        "results_blocked": results_blocked(state.log),
         "files_on_record": {scope: len(items) for scope, items in results_by_scope(state.log, state.workspace).items()},
         "estimates": estimates,
         "history": estimate_history(state.log),

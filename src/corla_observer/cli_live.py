@@ -112,6 +112,35 @@ def results_gather(workspace: WorkspaceOption) -> None:
         typer.echo(f"note: {note}")
 
 
+@results_app.command("download")
+def results_download(
+    to: Annotated[Path, typer.Option("--to", help="Directory to save the files in (created if missing).")],
+    election_id: Annotated[str, typer.Option("--election-id", help="The state election's Clarity ID (127407 for the 2026 general).")],
+    county: Annotated[list[str] | None, typer.Option("--county", help="A county whose own results to save as well; repeat for several.")] = None,
+    have: Annotated[list[str] | None, typer.Option("--have", help="SCOPE=VERSION already relayed, not fetched again ('state=386717', 'La Plata=385719'); repeatable.")] = None,
+) -> None:
+    """Save Clarity's current results into a directory, outside any workspace, to relay them to a server Clarity refuses (docs/RESULTS_RELAY.md).
+
+    Prints one line per file saved: its path, scope, version and source URL, separated by tabs.
+    """
+    from corla_observer.enr import ResultsError, download
+
+    known: dict[str, str] = {}
+    for item in have or []:
+        scope, sep, version = item.partition("=")
+        if not sep or not scope.strip() or not version.strip():
+            typer.echo(f"error: --have takes SCOPE=VERSION, not {item!r}", err=True)
+            raise typer.Exit(2)
+        known[scope.strip()] = version.strip()
+    try:
+        saved = download(election_id, to, counties=county or [], have=known)
+    except (ResultsError, OSError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(1) from None
+    for item in saved:
+        typer.echo(f"{item.path}\t{item.scope}\t{item.version}\t{item.url}")
+
+
 @results_app.command("show")
 def results_show(workspace: WorkspaceOption) -> None:
     """List the results file used per scope: its version, when it was generated, and whether it was fetched or uploaded by hand."""

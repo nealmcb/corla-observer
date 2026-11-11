@@ -22,7 +22,13 @@ allowed only Clarity's host, spaced by the setup's ``min_interval``): the
 version first, and the rest only when the version changed since the last
 fetch recorded; county details only for the counties asked for, and only
 when their version changed. Every body is stored in the workspace under its
-SHA-256 and recorded in a ``results.fetched`` event. The state election's
+SHA-256 and recorded in a ``results.fetched`` event. A response with no
+body, or Clarity's HTTP 202 (its bot challenge, which refuses some
+addresses outright: since 6 November 2026 every request from the
+corla-observer sprite's cloud address gets it, while a home connection is
+served), is recorded as ``results.fetch_failed`` with ``blocked`` true
+instead; `results_blocked` says whether the last attempt was refused, for
+the coordinator pages. The state election's
 ID comes from the setup, or else from the first Clarity link on the
 Secretary of State's results page (``results.discovered``).
 
@@ -32,6 +38,12 @@ the workbook form (as the observers saved it for the 2026 primary),
 `parse_summary_json` a county's summary, all into `Results`
 (`read_results` tells them apart by content, and says when Clarity
 generated the file where the file says: `results_file_time`).
+
+**Relaying from elsewhere.** `download` fetches the same files into a
+directory, outside any workspace, for a machine Clarity does serve:
+``corla-observer results download`` there, then ``corla-observer results
+add`` on the server for each new file (``scripts/relay_results.sh`` does
+both, docs/RESULTS_RELAY.md).
 
 **A file downloaded by hand.** When the automatic fetch is blocked or
 behind, a coordinator uploads the file (`receive_results`, from
@@ -53,7 +65,8 @@ Events:
     ``detail``, ``settings``, ``summary``), ``election_id``, ``version``, ``status``,
     ``sha256``, ``size``, ``headers``; ``file_sha256`` the body's.
 ``results.fetch_failed``
-    ``url``, ``scope``, ``what``, ``error``.
+    ``url``, ``scope``, ``what``, ``error``; ``blocked`` true when Clarity
+    answered with no body or HTTP 202 (its bot challenge).
 ``results.discovered``
     ``election_id`` and the ``page`` it was found on.
 ``results.uploaded``
@@ -85,11 +98,12 @@ import zipfile
 from datetime import UTC, datetime, timedelta, timezone
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from xml.etree import ElementTree as ET
 
 from corla_observer.classify import XlsxReader, canonical_county
 from corla_observer.datamap import DataMap, contest_key
-from corla_observer.election import ElectionSetup
+from corla_observer.election import CLARITY_CO_URL, ElectionSetup
 from corla_observer.events import Event, EventLog, JSONValue, check_actor, format_server_time
 from corla_observer.fetch import FetchError, Fetcher, FetchPolicy
 from corla_observer.localtime import colorado_offset
@@ -606,6 +620,8 @@ class GatherReport:
     fetched: list[str] = field(default_factory=list)
     failed: list[str] = field(default_factory=list)
     notes: list[str] = field(default_factory=list)
+    #: Whether Clarity refused a request (an empty body or HTTP 202: its bot challenge).
+    blocked: bool = False
 
 
 @dataclass(frozen=True)
@@ -979,6 +995,12 @@ def gather(
             log.append("results.fetch_failed", ACTOR, data={"url": url, "scope": scope, "what": what, "error": f"HTTP {result.status}"})
             report.failed.append(url)
             return None
+        if is_refusal(result.status, result.body):
+            log.append("results.fetch_failed", ACTOR, data={"url": url, "scope": scope, "what": what, "error": BLOCKED_ERROR.format(status=result.status), "blocked": True})
+            report.failed.append(url)
+            report.blocked = True
+            report.notes.append(BLOCKED_NOTE)
+            return None
         record_results_file(
             workspace, log, result.body, url=url, scope=scope, what=what,
             election_id=election_id, version=version, status=result.status, headers=result.headers,
@@ -1023,6 +1045,122 @@ def gather(
         report.changed = True
         get(f"{base}{county_path(name)}/{county_id}/{county_version}/json/en/summary.json", name, "summary", county_version)
     return report
+
+
+#: The error recorded when Clarity refuses a request.
+BLOCKED_ERROR = "HTTP {status} with no body: Clarity's bot challenge refuses this address"
+#: What a coordinator is told when Clarity refuses the server.
+BLOCKED_NOTE = (
+    "Clarity refuses this server's requests (an empty HTTP 202, its bot challenge); "
+    "relay the results from a machine it serves (docs/RESULTS_RELAY.md) or add them by hand"
+)
+
+
+def is_refusal(status: int, body: bytes) -> bool:
+    """Whether a 2xx response is Clarity's refusal: HTTP 202, or no body at all."""
+    return status == 202 or not body
+
+
+def results_blocked(log: EventLog) -> tuple[str, int] | None:
+    """``(since, attempts)`` if the last automatic results fetch was refused by Clarity, else None.
+
+    ``since`` is the server time of the first refusal after the last
+    successful fetch; ``attempts`` counts the refusals since. A
+    ``results.fetched`` event with an empty body (as recorded before
+    refusals were told apart) counts as one.
+    """
+    since: str | None = None
+    attempts = 0
+    for event in log.iter_events():
+        if event.kind == "results.fetched":
+            refused = not event.data.get("size") or event.data.get("status") == 202
+        elif event.kind == "results.fetch_failed":
+            refused = bool(event.data.get("blocked"))
+            if not refused:
+                continue
+        else:
+            continue
+        if refused:
+            since = since or event.server_time
+            attempts += 1
+        else:
+            since, attempts = None, 0
+    return (since, attempts) if since else None
+
+
+@dataclass(frozen=True)
+class Downloaded:
+    """A results file `download` saved: its path, where it came from, its scope and its version."""
+
+    path: Path
+    url: str
+    scope: str
+    what: str
+    version: str
+
+
+def download(
+    election_id: str,
+    dest: Path,
+    *,
+    counties: Sequence[str] = (),
+    have: Mapping[str, str] | None = None,
+    base_url: str = CLARITY_CO_URL,
+    fetcher: Fetcher | None = None,
+) -> list[Downloaded]:
+    """Save the state election's current detail, and ``counties``' own summaries, into ``dest``; outside any workspace.
+
+    For relaying results from a machine Clarity serves to a server it
+    refuses. ``have`` maps a scope (``state`` or a county) to the version
+    already relayed, which is then not fetched again. Each file is saved
+    as ``<scope>-<version>-<name>`` (``state-386717-detailxml.zip``,
+    ``La_Plata-385719-summary.json``), written whole or not at all.
+
+    Raises:
+        ResultsError: if Clarity refuses (see `is_refusal`) or answers
+            with an error, or the version text is not a number.
+    """
+    have = dict(have or {})
+    fetcher = fetcher or Fetcher(FetchPolicy(allowed_hosts=frozenset({CLARITY_HOST})))
+    dest.mkdir(parents=True, exist_ok=True)
+
+    def get(url: str) -> bytes:
+        try:
+            result = fetcher.fetch(url)
+        except FetchError as exc:
+            raise ResultsError(f"could not fetch {url}: {exc}") from None
+        if not result.ok:
+            raise ResultsError(f"{url}: HTTP {result.status}")
+        if is_refusal(result.status, result.body):
+            raise ResultsError(f"{url}: {BLOCKED_ERROR.format(status=result.status)}")
+        return result.body
+
+    def save(body: bytes, scope: str, version: str, name: str) -> Path:
+        path = dest / f"{county_path(scope)}-{version}-{name}"
+        tmp = path.with_name(path.name + ".part")
+        tmp.write_bytes(body)
+        tmp.replace(path)
+        return path
+
+    saved: list[Downloaded] = []
+    version = get(f"{base_url}{election_id}/current_ver.txt").decode("ascii", errors="replace").strip()
+    if not version.isdigit():
+        raise ResultsError(f"unexpected version text {version[:40]!r}")
+    if have.get("state") != version:
+        url = f"{base_url}{election_id}/{version}/reports/detailxml.zip"
+        saved.append(Downloaded(save(get(url), "state", version, "detailxml.zip"), url, "state", "detail", version))
+    if counties:
+        county_versions = parse_settings(get(f"{base_url}{election_id}/{version}/json/en/electionsettings.json"))
+        for county in counties:
+            name = canonical_county(county) or county
+            if name not in county_versions:
+                raise ResultsError(f"{name} has no results of its own on the results site")
+            county_id, county_version = county_versions[name]
+            if have.get(name) == county_version:
+                continue
+            url = f"{base_url}{county_path(name)}/{county_id}/{county_version}/json/en/summary.json"
+            saved.append(Downloaded(save(get(url), name, county_version, "summary.json"), url, name, "summary", county_version))
+    return saved
 
 
 def results_counties(datamap: DataMap, setup: ElectionSetup) -> list[str]:

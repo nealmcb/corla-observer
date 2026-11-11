@@ -10,6 +10,7 @@
 
 <section>
   <h2>Results</h2>
+  {% if results_blocked %}<p class="notice notice-error" role="alert"><span aria-hidden="true">&#9650;</span> <strong>Clarity refuses this server.</strong> Every automatic results fetch since <span class="nowrap">{{ results_blocked[0]|local }}</span> ({{ results_blocked[1] }} attempt{{ '' if results_blocked[1] == 1 else 's' }}) got an empty HTTP 202, Clarity's bot challenge, which turns away some cloud addresses. Relay the results from a machine Clarity serves (<code>scripts/relay_results.sh</code>, docs/RESULTS_RELAY.md), or upload a file downloaded by hand.</p>{% endif %}
   {% if results %}
   <p class="meta">Per scope, the file used: the newest by the time Clarity generated it (from the file itself), a fetched one before an upload of the same time, and for the state a file with counties before a summary.</p>
   <ul>{% for scope, pair in results %}<li>{{ scope }}: {% if pair[1].version %}version {{ pair[1].version }}, {% endif %}generated {{ pair[1].generated|local if pair[1].generated else '(time not in the file)' }}, {{ pair[1].origin }} {{ pair[1].time|local }}{% if pair[1].uploaded and pair[1].note %} <span class="meta">({{ pair[1].note }})</span>{% endif %}, {{ pair[0].form or pair[1].form }}, {{ pair[0].contests|length }} contests <code class="hash">{{ pair[1].sha256|h12 }}</code>{% if files_on_record.get(scope, 0) > 1 %} <span class="meta">({{ files_on_record[scope] }} files on record)</span>{% endif %}</li>{% endfor %}</ul>

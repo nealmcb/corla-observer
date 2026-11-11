@@ -12,12 +12,14 @@ from corla_observer.enr import (
     ResultsError,
     contest_votes,
     discover_election_id,
+    download,
     find_contest,
     gather,
     load_results,
     margin_of,
     parse_settings,
     read_results,
+    results_blocked,
 )
 from corla_observer.events import EventLog
 from corla_observer.fetch import FetchPolicy, FetchResult
@@ -135,6 +137,62 @@ def test_gather_fetches_only_what_changed(tmp_path: Path) -> None:
     with EventLog.open(tmp_path / "other") as log2:
         nothing = gather(Workspace.open(tmp_path / "other"), log2, setup, fetcher=site, discover_fetcher=FakeClarity({}))  # type: ignore[arg-type]
     assert nothing.election_id is None and "election_id" in nothing.notes[-1]
+
+
+class RefusingClarity(FakeClarity):
+    """Clarity's bot challenge: an empty HTTP 202 for everything."""
+
+    def fetch(self, url: str, *, etag: str | None = None, last_modified: str | None = None) -> FetchResult:
+        self.requested.append(url)
+        return FetchResult(url, url, 202, b"", {})
+
+
+def test_a_refusal_is_recorded_as_blocked_and_clears_on_success(tmp_path: Path) -> None:
+    setup = parse_setup(GENERAL_2026_SETUP.replace('election_id = ""', 'election_id = "130100"', 1))
+    base = "https://results.enr.clarityelections.com/CO/"
+    ws = Workspace.open(tmp_path / "ws")
+    with EventLog.open(ws.root) as log:
+        for _ in range(2):
+            report = gather(ws, log, setup, fetcher=RefusingClarity({}))  # type: ignore[arg-type]
+            assert report.blocked and report.version is None and "relay" in report.notes[-1]
+        failed = [e for e in log.iter_events() if e.kind == "results.fetch_failed"]
+        assert len(failed) == 2 and all(e.data["blocked"] for e in failed)
+        assert not any(e.kind == "results.fetched" for e in log.iter_events())  # an empty body is never stored as results
+        blocked = results_blocked(log)
+        assert blocked is not None and blocked[1] == 2 and blocked[0] == failed[0].server_time
+        site = FakeClarity({base + "130100/current_ver.txt": b"5\n", base + "130100/5/reports/detailxml.zip": DETAIL})
+        assert not gather(ws, log, setup, fetcher=site).blocked  # type: ignore[arg-type]
+        assert results_blocked(log) is None
+
+
+def test_download_saves_the_current_files_and_skips_versions_already_relayed(tmp_path: Path) -> None:
+    import gzip
+    import json
+
+    base = "https://results.enr.clarityelections.com/CO/"
+    settings = {"settings": {"electiondetails": {"participatingcounties": ["La_Plata|200|7|t|16", "Weld|300|8|t|16"]}}}
+    site = FakeClarity(
+        {
+            base + "130100/current_ver.txt": b"5\n",
+            base + "130100/5/reports/detailxml.zip": DETAIL,
+            base + "130100/5/json/en/electionsettings.json": gzip.compress(json.dumps(settings).encode()),
+            base + "La_Plata/200/7/json/en/summary.json": b"{}",
+            base + "Weld/300/8/json/en/summary.json": b"[]",
+        }
+    )
+    saved = download("130100", tmp_path / "out", counties=["La Plata", "Weld"], fetcher=site)  # type: ignore[arg-type]
+    assert [(d.path.name, d.scope, d.version) for d in saved] == [
+        ("state-5-detailxml.zip", "state", "5"),
+        ("La_Plata-7-summary.json", "La Plata", "7"),
+        ("Weld-8-summary.json", "Weld", "8"),
+    ]
+    assert saved[0].path.read_bytes() == DETAIL and not list((tmp_path / "out").glob("*.part"))
+    again = download("130100", tmp_path / "out", counties=["La Plata", "Weld"], have={"state": "5", "La Plata": "7"}, fetcher=site)  # type: ignore[arg-type]
+    assert [d.scope for d in again] == ["Weld"]
+    with pytest.raises(ResultsError, match="bot challenge"):
+        download("130100", tmp_path / "out", fetcher=RefusingClarity({}))  # type: ignore[arg-type]
+    with pytest.raises(ResultsError, match="no results of its own"):
+        download("130100", tmp_path / "out", counties=["Morgan"], fetcher=site)  # type: ignore[arg-type]
 
 
 def test_cvr_tally_counts_aggregate_rows(tmp_path: Path) -> None:
