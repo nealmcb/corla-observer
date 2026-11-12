@@ -15,7 +15,8 @@
 #   COUNTY       each county whose own results to relay as well ("La Plata" Weld Morgan)
 #
 # Environment:
-#   RELAY_ACTOR      who is responsible, as coordinator:ID (default coordinator:$USER)
+#   RELAY_ACTOR      who is responsible, as coordinator:ID (default coordinator: then $USER, else
+#                    $LOGNAME, which cron sets, else id -un)
 #   RELAY_STATE      local directory for the files and the record of what was relayed
 #                    (default ~/.local/state/corla-observer-relay/HOST)
 #   CORLA_OBSERVER   the local corla-observer command (default: this checkout's .venv/bin/corla-observer)
@@ -33,7 +34,7 @@ shift 3
 
 here=$(cd "$(dirname "$0")/.." && pwd)
 cli=${CORLA_OBSERVER:-$here/.venv/bin/corla-observer}
-actor=${RELAY_ACTOR:-coordinator:$USER}
+actor=${RELAY_ACTOR:-coordinator:${USER:-${LOGNAME:-$(id -un)}}}
 state=${RELAY_STATE:-$HOME/.local/state/corla-observer-relay/$host}
 remote_checkout=${REMOTE_CHECKOUT:-'~/corla-observer'}
 mkdir -p "$state/files"

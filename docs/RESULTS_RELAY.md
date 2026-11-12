@@ -42,7 +42,7 @@ run with nothing new makes two small requests to Clarity):
 */30 * * * * cd /srv/s/electionaudits/corla-observer && scripts/relay_results.sh corla-observer.sprite-app /home/sprite/workspaces/2026-general 127407 "La Plata" Weld Morgan >> ~/.local/state/corla-observer-relay/cron.log 2>&1
 ```
 
-`RELAY_ACTOR` sets who is recorded as responsible (default `coordinator:$USER`), and `RELAY_STATE`
+`RELAY_ACTOR` sets who is recorded as responsible (default `coordinator:` then `$USER`, else `$LOGNAME`, which cron sets), and `RELAY_STATE`
 where the files and `relayed.tsv` are kept (default
 `~/.local/state/corla-observer-relay/HOST`).
 
