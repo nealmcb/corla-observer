@@ -227,7 +227,7 @@ append = [
 evidence = [
   "batch_count_comparison.csv, the state's batch-by-batch comparison of each county's manifest with its CVR: Teller,1,682,25,25,0; Teller,1,683,25,25,0; Teller,1,684,25,25,0; Teller,1,685,16,16,0",
   "round_1/manifest-Teller.csv ends at batch 1-681 and sums to 17087 cards; the comparison's Teller batches sum to 17178, 91 more",
-  "round_1/contest.csv: ballot_card_count 4114582 for the statewide contests; the 64 published manifests sum to 4114491, 91 fewer",
+  "round_1/contest.csv: ballot_card_count 4114582 for the statewide contests; the 62 published manifests of the counties in CORLA's statewide audit (all but Gunnison, in none of CORLA's 2020 files, and San Juan) sum to 4114491, 91 fewer",
 ]
 reason = "Appends batches 1-682 to 1-685 (91 cards) after Teller's last row, so the statewide domain is the 4114582 cards CORLA sampled: the published manifest download stops short, and every other batch matches the state's comparison exactly. No storage location for them is published. The evidence was posted after the roll (the comparison file in January 2021); the replay applies it from its first step, with hindsight, so that its draws are CORLA's."
 """
