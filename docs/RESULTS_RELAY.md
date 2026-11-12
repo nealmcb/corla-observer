@@ -35,15 +35,20 @@ For the 2026 general, with the server's workspace and the pilot counties:
 scripts/relay_results.sh corla-observer.sprite-app /home/sprite/workspaces/2026-general 127407 "La Plata" Weld Morgan
 ```
 
-From cron, every 30 minutes during the canvass (the files change a few times a day at most, and a
-run with nothing new makes two small requests to Clarity):
+Each line of the script's output starts with the local time, so the cron log shows when each run
+happened. From cron, every 30 minutes during the canvass (the files change a few times a day at
+most, and a run with nothing new makes two small requests to Clarity). It runs from a checkout of
+its own on `main` (`/srv/s/electionaudits/corla-observer-relay`, updated with `git pull`), and cron
+has no ssh agent or `~/bin` of its own, so the line names the desktop session's keyring agent (it
+works while Neal is logged in) and puts `~/bin`, where the `sprite` command the ssh alias needs
+lives, on the path:
 
 ```
-*/30 * * * * cd /srv/s/electionaudits/corla-observer && scripts/relay_results.sh corla-observer.sprite-app /home/sprite/workspaces/2026-general 127407 "La Plata" Weld Morgan >> ~/.local/state/corla-observer-relay/cron.log 2>&1
+*/30 * * * * cd /srv/s/electionaudits/corla-observer-relay && RELAY_ACTOR=coordinator:neal SSH_AUTH_SOCK=/run/user/1000/keyring/ssh PATH=/home/neal/bin:/usr/bin:/bin scripts/relay_results.sh corla-observer.sprite-app /home/sprite/workspaces/2026-general 127407 "La Plata" Weld Morgan >> /home/neal/.local/state/corla-observer-relay/cron.log 2>&1
 ```
 
-`RELAY_ACTOR` sets who is recorded as responsible (default `coordinator:` then `$USER`, else `$LOGNAME`, which cron sets), and `RELAY_STATE`
-where the files and `relayed.tsv` are kept (default
+`RELAY_ACTOR` sets who is recorded as responsible (default `coordinator:` then `$USER`, else
+`$LOGNAME`, which cron sets), and `RELAY_STATE` where the files and `relayed.tsv` are kept (default
 `~/.local/state/corla-observer-relay/HOST`).
 
 ## What relayed results change

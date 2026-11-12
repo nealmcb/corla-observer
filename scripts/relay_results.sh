@@ -27,6 +27,9 @@
 # marked relayed unless the server recorded it.
 set -euo pipefail
 
+# Every line of output, the commands' own included, starts with the local time (for cron's log).
+exec > >(while IFS= read -r line; do printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S %Z')" "$line"; done) 2>&1
+
 host=${1:?usage: relay_results.sh HOST WORKSPACE ELECTION_ID COUNTY...}
 workspace=${2:?usage: relay_results.sh HOST WORKSPACE ELECTION_ID COUNTY...}
 election_id=${3:?usage: relay_results.sh HOST WORKSPACE ELECTION_ID COUNTY...}
