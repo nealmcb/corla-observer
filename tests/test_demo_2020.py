@@ -73,9 +73,13 @@ def test_the_2020_general_setup() -> None:
     assert setup.crawl is False and setup.probe_urls == ()
     assert setup.results.election_id == "" and setup.results.discover_from == ()
     assert setup.mirror is not None and setup.mirror.election == "2020/general"
-    (update,) = setup.mirror.updates
+    update, round_1 = setup.mirror.updates
     assert update.commit.startswith("382a035") and update.exclude == GENERAL_2020_AFTER_ROLL
     assert "round_1/contest_selection.csv" in update.exclude and "20201116NoticeOfRandomSeed.pdf" in update.exclude
+    # The roll's step adds the seed's notice and the round 1 files, and still leaves out the later rounds and final reports.
+    assert round_1.commit == update.commit and round_1.time is not None
+    assert not any(p.startswith("round_1/") or p.startswith("2020111") for p in round_1.exclude)
+    assert "round_2/" in round_1.exclude and "finalReport" in round_1.exclude and "batch_count_comparison.csv" in round_1.exclude
     assert setup.milestone("roll") is not None and setup.milestone("roll").time == "2020-11-16T16:00:00.000Z"  # type: ignore[union-attr]
 
 
@@ -215,7 +219,7 @@ def test_web_seed_entry_predicts_and_the_home_page_shows_the_mirror(tmp_path: Pa
         assert token
         client.post("/login", data={"csrf": token.group(1), "name": "alice", "password": "correct horse battery"})
         home = client.get("/coord").text
-        assert "the public mirror's <code>2020/general</code> files" in home and "0 of 1 applied" in home
+        assert "the public mirror's <code>2020/general</code> files" in home and "0 of 2 applied" in home
         csrf = re.search(r'name="csrf" value="([^"]+)"', client.get("/coord/seed").text)
         assert csrf
         client.post("/coord/seed/set", data={"csrf": csrf.group(1), "seed": "12345678901234567890", "source": "dice roll"})

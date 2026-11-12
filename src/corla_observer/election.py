@@ -227,6 +227,13 @@ GENERAL_2020_AFTER_ROLL = (
 )
 
 
+#: The 2020 general's files still left out after the roll: the later rounds, CORLA's final reports and the
+#: state's after-audit files. The seed's notice and the round 1 files are posted at the roll's step.
+GENERAL_2020_AFTER_ROUND_1 = tuple(
+    p for p in GENERAL_2020_AFTER_ROLL if p != "20201116NoticeOfRandomSeed.pdf" and not p.startswith("round_1/")
+)
+
+
 def _quoted(paths: Sequence[str]) -> str:
     return "\n".join(f'  "{p}",' for p in paths)
 
@@ -268,6 +275,15 @@ commit = "382a035fe0ff90291382a6dfb33bf583032d1605"
 time = "2020-11-13 15:00"
 exclude = [
 {_quoted(GENERAL_2020_AFTER_ROLL)}
+]
+
+[[audit_center_mirror.updates]]
+title = "After the roll: the seed's notice and CORLA's round 1 files, with its sample counts and selections (16 November 2020)"
+commit = "382a035fe0ff90291382a6dfb33bf583032d1605"
+# Approximate: the afternoon of the roll; the mirror does not record when each round 1 file was posted.
+time = "2020-11-16 15:00"
+exclude = [
+{_quoted(GENERAL_2020_AFTER_ROUND_1)}
 ]
 
 # The 2026 general's calendar rules applied to 2020 (election day was 3 November
