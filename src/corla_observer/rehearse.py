@@ -208,6 +208,33 @@ reason = "Appends batch 102-139 (11 cards) to Alamosa's rows, so the domain is t
 
 PRIMARY_2026_OVERRIDES = PRIMARY_2026_OVERRIDES_HEADER + PRIMARY_2026_PROWES_ALIAS + PRIMARY_2026_ALAMOSA_ADJUSTMENT
 
+#: The 2020 general's data map overrides, for its replay from the mirror: Teller's manifest as
+#: published stops at batch 1-681, four batches (91 cards) short of the manifest CORLA sampled.
+GENERAL_2020_OVERRIDES = """\
+# Data map overrides for the replay of the 2020 general election (corla_observer.datamap).
+# Written by the first "Fetch now" of the replay (corla_observer.rehearse.mirror_update), and
+# applied after each one; edit it in place, then run corla-observer map apply.
+format = 1
+
+[[manifest_adjustment]]
+county = "Teller"
+append = [
+  { tabulator = "1", batch = "682", count = 25, location = "" },
+  { tabulator = "1", batch = "683", count = 25, location = "" },
+  { tabulator = "1", batch = "684", count = 25, location = "" },
+  { tabulator = "1", batch = "685", count = 16, location = "" },
+]
+evidence = [
+  "batch_count_comparison.csv, the state's batch-by-batch comparison of each county's manifest with its CVR: Teller,1,682,25,25,0; Teller,1,683,25,25,0; Teller,1,684,25,25,0; Teller,1,685,16,16,0",
+  "round_1/manifest-Teller.csv ends at batch 1-681 and sums to 17087 cards; the comparison's Teller batches sum to 17178, 91 more",
+  "round_1/contest.csv: ballot_card_count 4114582 for the statewide contests; the 64 published manifests sum to 4114491, 91 fewer",
+]
+reason = "Appends batches 1-682 to 1-685 (91 cards) after Teller's last row, so the statewide domain is the 4114582 cards CORLA sampled: the published manifest download stops short, and every other batch matches the state's comparison exactly. No storage location for them is published. The evidence was posted after the roll (the comparison file in January 2021); the replay applies it from its first step, with hindsight, so that its draws are CORLA's."
+"""
+
+#: Overrides written and applied with each "Fetch now" of an election replayed from the mirror, by election.
+MIRROR_OVERRIDES = {"2020/general": GENERAL_2020_OVERRIDES}
+
 
 class RehearsalError(RuntimeError):
     """A rehearsal stage cannot run (no mirror, an unknown commit, a missing file)."""
@@ -344,7 +371,9 @@ def mirror_update(workspace: Workspace, log: EventLog, setup: MirrorSetup, *, ac
     the election's files as the mirror held them at the update's commit, less
     its exclusions (`stage_fetch`): ordinary fetch events, each marked
     ``simulated`` with the mirror's repository and commit. The checkout is
-    the one `set_mirror_checkout` named.
+    the one `set_mirror_checkout` named. For an election with known
+    corrections (`MIRROR_OVERRIDES`: the 2020 general's Teller manifest), the
+    overrides file is then written if the workspace has none, and applied.
 
     Raises:
         RehearsalError: when no checkout is named, or it lacks the commit.
@@ -366,7 +395,11 @@ def mirror_update(workspace: Workspace, log: EventLog, setup: MirrorSetup, *, ac
               "election": setup.election, "exclude": list(update.exclude), "again": done >= len(setup.updates),
               **({"time": update.time} if update.time else {})},
     )  # fmt: skip
-    return stage_fetch(workspace, log, mirror, full, election=setup.election, repository=setup.repository, exclude=update.exclude)
+    report = stage_fetch(workspace, log, mirror, full, election=setup.election, repository=setup.repository, exclude=update.exclude)
+    overrides = MIRROR_OVERRIDES.get(setup.election)
+    if overrides:
+        stage_overrides(workspace, log, actor=actor, text=overrides)
+    return report
 
 
 @dataclass
