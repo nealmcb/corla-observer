@@ -89,3 +89,24 @@ def test_the_rolls_step_brings_corlas_round_one_contest_list(tmp_path: Path, mir
     assert seen[0][:3] == (17, True, ["Presidential Electors"])
     assert seen[1][:3] == (17, False, ["Presidential Electors", "Proposition 114 (STATUTORY)", "United States Senator"])
     assert (seen[0][3], seen[1][3]) == (17, 18)  # CORLA's round 1 comparison has 18 Morgan ballots
+
+
+def test_otero_ids_saved_as_dates_are_read_back_and_reported(tmp_path: Path, mirror: Path) -> None:
+    """The published round 1 comparison has 47 Otero imprinted IDs a spreadsheet saved as dates (3/19/2007 for
+    3-19-7); they are read back as IDs, so CORLA's selections place in Otero, and the data map warns about the file."""
+    from corla_observer.datamap import build_map
+    from corla_observer.election import GENERAL_2020_SETUP, parse_setup
+    from corla_observer.predict import published_selections
+
+    setup = parse_setup(GENERAL_2020_SETUP)
+    assert setup.mirror is not None
+    ws = Workspace.open(tmp_path)
+    with EventLog.open(tmp_path) as log:
+        for update in setup.mirror.updates:
+            stage_fetch(ws, log, mirror, update.commit, election="2020/general", exclude=update.exclude)
+        datamap = build_map(log, ws)
+        warned = [p for p in datamap.problems if p.code == "imprinted_ids_saved_as_dates"]
+        assert any("47 imprinted IDs" in p.message and "contestComparison" in p.message for p in warned)
+        otero = published_selections(datamap, ws).by_county.get("Otero", {})
+    ids = [i for contest in otero.values() for i in contest]
+    assert ids and not any("/" in i for i in ids)

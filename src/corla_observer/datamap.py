@@ -909,8 +909,10 @@ def table_rows(data: bytes, classification: Classification) -> tuple[list[str], 
 
     Uses the evidence's format, delimiter, sheet and header row, so every
     header spelling and layout the classifier accepts is read the same way.
-    Excel ``="..."`` wrapping is removed. Returns ``([], [])`` for anything
-    that is not a CSV, JSON or workbook table.
+    Excel ``="..."`` wrapping is removed, and an imprinted ID a spreadsheet
+    turned into a date is read back as the ID (`repair_excel_date_id`; the
+    data map warns about each file with one, `_check_excel_dates`). Returns
+    ``([], [])`` for anything that is not a CSV, JSON or workbook table.
     """
     evidence = classification.evidence
     header_row = evidence.get("header_row")
@@ -936,12 +938,41 @@ def table_rows(data: bytes, classification: Classification) -> tuple[list[str], 
     if index >= len(rows):
         return [], []
     header = [_unwrap(cell).strip() for cell in rows[index]]
+    id_column = role_column(classification, "imprinted_id")
     result = []
     for row in rows[index + 1 :]:
         if not any(cell.strip() for cell in row):
             continue
-        result.append({name: _unwrap(row[i]).strip() if i < len(row) else "" for i, name in enumerate(header) if name})
+        record = {name: _unwrap(row[i]).strip() if i < len(row) else "" for i, name in enumerate(header) if name}
+        if id_column and (repaired := repair_excel_date_id(record.get(id_column, ""))):
+            record[id_column] = repaired
+        result.append(record)
     return header, result
+
+
+#: An imprinted ID as a spreadsheet saves it after reading ``tabulator-batch-record`` as a date.
+_EXCEL_DATE_ID = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{4})$")
+#: The same, found anywhere in a file's bytes (a cheap test before reading the file as a table).
+_EXCEL_DATE_BYTES = re.compile(rb"(?<![\d/])\d{1,2}/\d{1,2}/(?:19|20)\d\d(?![\d/])")
+
+
+def repair_excel_date_id(value: str) -> str | None:
+    """The imprinted ID a spreadsheet saved as a date, or None if ``value`` is not one.
+
+    Opening a CORLA export in Excel and saving it turns an imprinted ID such as
+    ``3-19-7`` (tabulator 3, batch 19, record 7) into the date ``3/19/2007``:
+    Excel reads ``M-D-YY``, with its two-digit-year window (00-29 as 20xx, 30-99
+    as 19xx). The record number is the year modulo 100, so the reversal is
+    exact. Only IDs whose first two parts could be a month and a day are
+    changed this way, so only those can be mistaken for one here.
+    """
+    match = _EXCEL_DATE_ID.match(value.strip())
+    if not match:
+        return None
+    month, day, year = (int(g) for g in match.groups())
+    if not (1 <= month <= 12 and 1 <= day <= 31 and 1930 <= year <= 2029):
+        return None
+    return f"{month}-{day}-{year % 100}"
 
 
 def _unwrap(cell: str) -> str:
@@ -1252,6 +1283,7 @@ def build_map(
     imported = _imported_manifests(entries, content)
     manifests = _choose_manifests(entries, aliases, content, imported, problems)
     _check_imported(manifests, imported, problems)
+    _check_excel_dates(entries, content, problems)
     adjustments = (
         [adjustment_from_item(item) for item in overrides.section("manifest_adjustment")] if overrides else []
     )
@@ -2586,6 +2618,39 @@ def _upload_hash_checks(entries: Sequence[MapEntry], content: _Content) -> list[
 def imported_manifests(datamap: DataMap, workspace: Workspace) -> dict[str, ImportedManifest]:
     """Per county, the last manifest CORLA's latest upload status shows it importing."""
     return _imported_manifests(datamap.entries, _Content(workspace))
+
+
+def _check_excel_dates(entries: Sequence[MapEntry], content: _Content, problems: list[Problem]) -> None:
+    """Warn about each file whose imprinted IDs a spreadsheet turned into dates (repaired on reading, `table_rows`)."""
+    for entry in entries:
+        if entry.ignored or not entry.sha256:
+            continue
+        classification = Classification(entry.classified_kind, entry.classified_county, entry.evidence)
+        id_column = role_column(classification, "imprinted_id")
+        data = content.get(entry.sha256) if id_column else None
+        if not data or not _EXCEL_DATE_BYTES.search(data):
+            continue
+        # Read without the repair (no matched columns, so `table_rows` leaves the IDs as stored).
+        raw = Classification(entry.classified_kind, entry.classified_county, {**entry.evidence, "matched_columns": {}})
+        _, rows = table_rows(data, raw)
+        stored = (row.get(id_column or "", "") for row in rows)
+        changed = [(value, repaired) for value in stored if (repaired := repair_excel_date_id(value))]
+        if changed:
+            first, fixed = changed[0]
+            problems.append(
+                Problem(
+                    "warning",
+                    "imprinted_ids_saved_as_dates",
+                    f"{entry.name}: {len(changed)} imprinted IDs were saved by a spreadsheet as dates (such as {first}); "
+                    f"they are read back as IDs ({first} as {fixed})",
+                    refs=(entry.ref,),
+                    hint=(
+                        "the file was opened and saved in a spreadsheet program after CORLA wrote it; the IDs are "
+                        "recovered exactly, but the file is not as CORLA produced it: worth asking who saved it"
+                    ),
+                    county=entry.county,
+                )
+            )
 
 
 def _check_imported(

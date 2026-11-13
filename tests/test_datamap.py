@@ -700,3 +700,35 @@ def test_an_adapters_output_and_source_are_evidence_and_its_ignored_input_is_not
     assert paths["observerfiles/adapters/weld_layout.py"] == ran.data["source_sha256"]
     assert not any(p.endswith("files/Weld.csv") for p in paths)
     assert any("the data map ignores are not listed" in note for note in notes)
+
+
+def test_an_imprinted_id_saved_as_a_date_is_read_back_exactly() -> None:
+    from corla_observer.datamap import repair_excel_date_id
+
+    # Excel reads tabulator-batch-record as M-D-YY, with its window: 00-29 as 20xx, 30-99 as 19xx.
+    assert repair_excel_date_id("3/19/2007") == "3-19-7"
+    assert repair_excel_date_id("4/5/1969") == "4-5-69"
+    assert repair_excel_date_id("6/24/2029") == "6-24-29"
+    assert repair_excel_date_id(" 2/14/2001 ") == "2-14-1"
+    # Anything else is left alone: real IDs, impossible dates, other text.
+    for value in ("3-19-7", "101-5-12", "13/1/2001", "3/32/2001", "3/1/1899", "1/2/3", "", "GEN-2026"):
+        assert repair_excel_date_id(value) is None
+
+
+def test_a_comparison_file_saved_by_a_spreadsheet_is_repaired_and_reported(ws: Workspace, log: EventLog) -> None:
+    from corla_observer.datamap import build_map, table_rows
+    from corla_observer.classify import classify_bytes
+
+    data = (
+        b"county_name,contest_name,imprinted_id,ballot_type,choice_per_voting_computer,audit_board_selection,"
+        b"consensus,record_type,audit_board_comment,timestamp,cvr_id\r\n"
+        b'Otero,Amendment 76,3/19/2007,STATE,"""No""","""No""",YES,uploaded,"",2020-11-19 10:41:26.782,3985510\r\n'
+        b'Otero,Amendment 76,3-20-8,STATE,"""Yes""","""Yes""",YES,uploaded,"",2020-11-19 10:42:00.000,3985511\r\n'
+    )
+    classification = classify_bytes(data)
+    assert classification.kind == "cvr_comparison"
+    _, rows = table_rows(data, classification)
+    assert [r["imprinted_id"] for r in rows] == ["3-19-7", "3-20-8"]
+    fetch(ws, log, {"round_1/contestComparison.csv": data})
+    problems = [p for p in build_map(log, ws).problems if p.code == "imprinted_ids_saved_as_dates"]
+    assert len(problems) == 1 and "1 imprinted IDs" in problems[0].message and "3/19/2007 as 3-19-7" in problems[0].message
