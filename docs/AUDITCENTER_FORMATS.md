@@ -27,6 +27,23 @@ Pull-list order and boards. CORLA (its server's `BallotSequencer` and `CVRToAudi
 
 Upload status. From 2019 on, CORLA publishes the hash of every file a county uploaded (`upload_status.csv` and its later names). In the 2026 primary, all but one of the 63 published manifests are byte-identical to the last manifest CORLA records importing for that county. The data map checks every manifest against this record and reports any that differs.
 
+Drawn ballots and their audit records. CORLA's selection list (`contest_selection.csv` and its later
+names) gives each contest's drawn CVR IDs in draw order, a CVR drawn twice listed twice; its
+CVR-to-audit-board comparison (`contestComparison.csv`,
+`CVRtoAuditBoardInterpretationComparison.csv`) has a row per contest on each drawn CVR, with the
+CVR's `cvr_id`, its `record_type` in lower case, and the audit board's reading, consensus, comment
+and time. Both are cumulative over the rounds. When no uploaded CVR matches a drawn ballot's county,
+scanner, batch and record, CORLA makes a phantom record (`CastVoteRecordQueries.phantomRecord`):
+`record_type` `phantom_record`, `ballot_type` `PHANTOM RECORD`, and, once audited, a row for every
+contest of the county with no choices and the comment `PHANTOM_RECORD - CVR not found`
+(`PhantomBallots.auditPhantomRecord`). A ballot the audit board reports not found keeps its CVR's
+record type, with no reading and the comment `ballot not found` (`BallotNotFound`). CORLA counts a
+phantom record as a two-vote overstatement in each contest it was drawn for, once per draw, and a
+ballot not found as a two-vote overstatement if its CVR shows a vote for a winner, else a one-vote
+one (`ComparisonAudit.computeDiscrepancy`). No published comparison file from 2019 to 2026 has a
+phantom record or a ballot not found. `corla_observer.drawn` checks each round's draws against its
+comparison file and contest list, and `corla-observer map drawn` lists what it finds.
+
 ## The kinds the classifier knows
 
 `county_manifest`, `contest_ids_by_county`, `contests_list`, `target_contests`, `selection_list` (each contest's drawn CVR IDs), `cvr_comparison` (audit board interpretations against the CVR), `manifest_cvr_comparison` (CORLA's batch-by-batch manifest against CVR counts), `cvr`, `pull_list` (CORLA's ballot lists), `upload_status`, `file_hashes` (2017 and 2018 hash lists), `canonical_contest_list`, `vote_totals`, `state_audit_report`, `county_audit_report`, `discrepancy_report`, `audit_activity_report`, `seed`, `html_page` and `unknown`.
@@ -104,6 +121,12 @@ Fourteen files, and no manifests or audit report in the mirror: `targetContests.
 - **Manifests:** `round_1/manifest-<County>.csv`, plus one named `Manifest-Gunnison.csv`. Rio Blanco's header cell says `2`, and Yuma's is blank.
 - **Other files:** `targetContests.xlsx`, `canonicalTitleCase.csv`, and the CORLA exports.
 - **Footnote:** the target list ends with a footnote about the "# of CVRs" column in its County column. The classifier counts it as a footer.
+- **Drawn ballots:** every CVR ID drawn in each round has an audit board record in that round's
+  comparison file. Three of Otero's drawn ballots (3-11-4 and 3-14-23 from round 1, 3-19-7 from
+  round 2) are there only as dates (3/11/2004, 3/14/2023, 3/19/2007), which the data map reads back.
+  Round 3's comparison file holds 300 El Paso CVR IDs that round 3's selection list does not draw:
+  its list for City of Colorado Springs Ballot Question 2C has round 2's 816 draws, while its
+  contest list counts 1,117 audited.
 
 ### 2021 coordinated
 
