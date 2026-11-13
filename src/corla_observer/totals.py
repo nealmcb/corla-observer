@@ -1,11 +1,12 @@
 """The totals check: each targeted contest's votes and ballots cast in the results, against every other count of them.
 
-Run whenever results arrive, fetched or uploaded (`record_totals_check`, from
-each cycle's `corla_observer.schedule.update_derived` and after an upload),
-it compares, for every targeted contest and every county with data, the
-votes of the contest's last winner and first loser (as the results used for
-the estimates rank them, over the contest's counties in CORLA's audit) and
-each county's ballots cast:
+Run whenever results arrive, fetched or uploaded, or a county has both a
+manifest and a redacted CVR (`record_totals_check`, from each cycle's
+`corla_observer.schedule.update_derived` and after an upload), it compares,
+for every targeted contest and every county with data, the votes of the
+contest's last winner and first loser (as the results used for the
+estimates rank them, over the contest's counties in CORLA's audit) and each
+county's ballots cast, and each county's manifest batch by batch:
 
 ``results``
     with the other results files on record for the same scope (the next
@@ -37,6 +38,18 @@ each county's ballots cast:
     a county's manifest total against its ballots cast times its cards per
     ballot: flagged when there are fewer cards than ballots, or, at one card
     per ballot, any difference.
+``manifest_cvr_batches``
+    each county's manifest against its redacted CVR as uploaded, batch by
+    batch (`corla_observer.batches`), with or without results: a batch only
+    in the manifest, a batch only in the CVR, a manifest batch and a CVR
+    batch whose IDs differ only in letter case, surrounding spaces or
+    leading zeros (a likely typo), a batch whose cards and CVR rows differ,
+    and a batch the manifest lists more than once, each flagged. CORLA
+    matches batch IDs exactly, so a card drawn from a manifest batch without
+    CVR rows is a phantom record, and CORLA's own batch comparison shows
+    neither a manifest batch without CVR rows nor a CVR batch outside the
+    manifest. At most `MAX_COUNTY_LINES` lines per county, then one line
+    with the totals.
 
 Each difference is one line with the numbers, and ``flag`` when it is worth
 a flag (normal severity, reason ``totals_differ``,
@@ -201,6 +214,9 @@ class _Inputs:
             "vote_totals": list[JSONValue](sorted(e.sha256 for e in self.vote_totals)),
             "manifests": {c: m.sha256 for c, m in sorted(self.datamap.manifests.items())},
             "adjustments": len(self.datamap.adjustments),
+            "manifest_batches": hashlib.sha256(canonical_json({
+                c: [[b.tabulator_id, b.batch_number, b.ballot_count] for b in m.batches] for c, m in sorted(self.datamap.manifests.items())
+            })).hexdigest(),
             "contests": hashlib.sha256(canonical_json(contests)).hexdigest(),  # type: ignore[arg-type]
             "setup": self.setup.sha256 if self.setup else None,
         }
@@ -233,6 +249,10 @@ class _Inputs:
                 table = by_county.setdefault((key, county), {}) if county else overall.setdefault(key, {})
                 table[choice] = table.get(choice, 0) + int(votes)
         return by_county, overall, ",".join(shas[:2]) or None
+
+    def batch_counties(self) -> list[str]:
+        """The counties with both a manifest and a redacted CVR, whose batches are compared."""
+        return sorted(c for c in self.datamap.manifests if c in self.cvrs)
 
     def cards_per_ballot(self, county: str) -> tuple[float, str]:
         if county in self.datamap.target_cards:
@@ -544,9 +564,44 @@ def _check(inputs: _Inputs) -> TotalsReport:
             if len(changed) > MAX_COUNTY_LINES:
                 out.append(Difference("results", None, None, f"and {len(changed) - MAX_COUNTY_LINES} more counties' ballots cast differ between these two files",
                                       False, f"totals|ballots_cast_more|-|-|{state_item.sha256[:12]}|{other_item.sha256[:12]}"))  # fmt: skip
+    _check_batches(inputs, report)
     seen: set[str] = set()
     report.differences = [d for d in out if not (d.key in seen or seen.add(d.key))]  # type: ignore[func-returns-value]
     return report
+
+
+def _check_batches(inputs: _Inputs, report: TotalsReport) -> None:
+    """(e) Each county's manifest against its redacted CVR, batch by batch (`corla_observer.batches`)."""
+    from corla_observer.batches import NoBatchColumns, compare_batches, comparison_lines, read_cvr_batches, summary
+    from corla_observer.cvr import CvrFormatError
+
+    for county in inputs.batch_counties():
+        manifest = inputs.datamap.manifests[county]
+        sha, _ = inputs.cvrs[county]
+        try:
+            found = read_cvr_batches(inputs.workspace.path_for(sha))
+        except NoBatchColumns as exc:
+            report.notes.append(f"{county}'s CVR cannot be compared with its manifest batch by batch: {exc}")
+            continue
+        except (OSError, CvrFormatError, ValueError, UnicodeDecodeError) as exc:
+            report.notes.append(f"{county}'s CVR could not be read for its batches: {exc}")
+            continue
+        report.compared += 1
+        comparison = compare_batches(county, manifest.batches, found)
+        lines = comparison_lines(comparison)
+        pair = f"{manifest.sha256[:12]}|{sha[:12]}"
+        for kind, batch, line in lines[:MAX_COUNTY_LINES]:
+            report.differences.append(Difference(
+                "manifest_cvr_batches", None, county, line, True,
+                f"totals|manifest_cvr_batches|{kind}:{batch}|{county}|{pair}",
+            ))  # fmt: skip
+        if len(lines) > MAX_COUNTY_LINES:
+            report.differences.append(Difference(
+                "manifest_cvr_batches", None, county,
+                f"{county}: and {len(lines) - MAX_COUNTY_LINES:,} more batch differences between the manifest and the CVR "
+                f"({summary(comparison)} in all, over {comparison.batches:,} manifest batches)",
+                False, f"totals|manifest_cvr_batches_more|-|{county}|{pair}",
+            ))  # fmt: skip
 
 
 def datamap_contests(datamap: DataMap) -> Sequence[ContestSpec]:
@@ -580,7 +635,7 @@ def record_totals_check(
     previous = last_totals_check(log)
     if not force and previous is not None and previous[2].get("digest") == digest:
         return None
-    if previous is None and not inputs.chosen and not force:
+    if previous is None and not inputs.chosen and not inputs.batch_counties() and not force:
         return None
     report = _check(inputs)
     data: dict[str, JSONValue] = {

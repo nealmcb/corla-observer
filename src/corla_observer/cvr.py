@@ -57,7 +57,8 @@ Each data row is classified (`CvrRow.status`):
     A blank first cell does not make a row an aggregate.
 
 A row never exposes its votes: `CvrRow` carries only the card's
-identification, its precinct and ballot type, and which contests are on it.
+identification (CVR number, imprinted ID, tabulator and batch), its precinct
+and ballot type, and which contests are on it.
 
 Standard library only.
 """
@@ -229,6 +230,9 @@ class CvrRow:
     has_votes: bool
     #: Whether the row has non-blank cells beyond the column-name row's width.
     extra_cells: bool = False
+    #: The tabulator and batch columns' values, unwrapped ("" when blank or there is no such column).
+    tabulator: str = ""
+    batch: str = ""
 
     @property
     def redacted(self) -> bool:
@@ -476,6 +480,8 @@ def _classify_row(
         contests=names,
         has_votes=has_votes,
         extra_cells=extra,
+        tabulator=_cell(row, h.tabulator_index),
+        batch=_cell(row, h.batch_index),
     )
 
 
