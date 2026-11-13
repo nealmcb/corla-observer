@@ -723,6 +723,35 @@ def map_check(
         raise typer.Exit(1)
 
 
+@map_app.command("drawn")
+def map_drawn(
+    workspace: WorkspaceOption,
+    log_path: LogOption = None,
+    as_json: Annotated[bool, typer.Option("--json", help="Print the report as JSON.")] = False,
+    preview: PreviewOption = False,
+) -> None:
+    """List, round by round, the ballots CORLA drew that have no audit board record, and its phantom records.
+
+    Each round's selection list is compared with its CVR-to-audit-board comparison: drawn CVR IDs
+    with no row, phantom records, ballots not found, rows with no audit board entry, and imprinted
+    IDs read back from a spreadsheet's dates. For each contest drawn for such a ballot, whether
+    CORLA's contest list counts the worst case its source gives them. Exits 1 if any drawn ballot
+    has no audit board record, or a contest's counts leave a worst case out.
+    """
+    from corla_observer.drawn import WARN_KINDS, drawn_report, report_lines
+
+    datamap = _load_map(workspace, log_path, preview)
+    report = drawn_report(datamap, Workspace.open(workspace))
+    if as_json:
+        typer.echo(json.dumps(report.to_dict(), ensure_ascii=False, indent=1))
+    else:
+        typer.echo("\n".join(report_lines(report)))
+    if any(f.kind in WARN_KINDS for r in report.rounds for f in r.findings) or any(
+        c.status == "disagree" for r in report.rounds for c in r.contests
+    ):
+        raise typer.Exit(1)
+
+
 @map_app.command("override")
 def map_override(
     section: Annotated[

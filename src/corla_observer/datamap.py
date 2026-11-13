@@ -71,6 +71,14 @@ How the map decides, before overrides:
   in any order or several at once. The sample count is round one's. The
   target list's denominator and cards per ballot (from its remarks) are
   kept on each contest for the estimates.
+- **Drawn ballots.** Once a round's selection list and CVR-to-audit-board
+  comparison are both fetched, every CVR ID drawn is looked up in the
+  comparison (`corla_observer.drawn`): a county with drawn ballots that have
+  no audit board record there (no row, a phantom record, a ballot not
+  found, or no audit board entry) is a warning
+  (``drawn_without_record``), and so is a contest whose counts in the
+  round's contest list leave out the two-vote overstatements CORLA's source
+  gives its phantom records (``worst_case_not_counted``).
 
 **Overrides.** The workspace's ``overrides.toml`` (`OVERRIDES_FILENAME`),
 specified in `OVERRIDES_FORMAT_HELP`: reassign a file's kind or county,
@@ -904,15 +912,19 @@ def adjustment_from_item(item: OverrideItem) -> ManifestAdjustment:
 # Reading files' tables
 
 
-def table_rows(data: bytes, classification: Classification) -> tuple[list[str], list[dict[str, str]]]:
+def table_rows(
+    data: bytes, classification: Classification, *, stored_ids: list[str] | None = None
+) -> tuple[list[str], list[dict[str, str]]]:
     """A classified table's header and data rows, read the way the classifier found them.
 
     Uses the evidence's format, delimiter, sheet and header row, so every
     header spelling and layout the classifier accepts is read the same way.
     Excel ``="..."`` wrapping is removed, and an imprinted ID a spreadsheet
     turned into a date is read back as the ID (`repair_excel_date_id`; the
-    data map warns about each file with one, `_check_excel_dates`). Returns
-    ``([], [])`` for anything that is not a CSV, JSON or workbook table.
+    data map warns about each file with one, `_check_excel_dates`). With
+    ``stored_ids``, a list, each row's imprinted ID as stored is appended to
+    it when it was read back from a date, and an empty string otherwise.
+    Returns ``([], [])`` for anything that is not a CSV, JSON or workbook table.
     """
     evidence = classification.evidence
     header_row = evidence.get("header_row")
@@ -944,8 +956,11 @@ def table_rows(data: bytes, classification: Classification) -> tuple[list[str], 
         if not any(cell.strip() for cell in row):
             continue
         record = {name: _unwrap(row[i]).strip() if i < len(row) else "" for i, name in enumerate(header) if name}
+        was = ""
         if id_column and (repaired := repair_excel_date_id(record.get(id_column, ""))):
-            record[id_column] = repaired
+            was, record[id_column] = record[id_column], repaired
+        if stored_ids is not None:
+            stored_ids.append(was)
         result.append(record)
     return header, result
 
@@ -1284,6 +1299,7 @@ def build_map(
     manifests = _choose_manifests(entries, aliases, content, imported, problems)
     _check_imported(manifests, imported, problems)
     _check_excel_dates(entries, content, problems)
+    _check_drawn(entries, content, problems)
     adjustments = (
         [adjustment_from_item(item) for item in overrides.section("manifest_adjustment")] if overrides else []
     )
@@ -2630,11 +2646,9 @@ def _check_excel_dates(entries: Sequence[MapEntry], content: _Content, problems:
         data = content.get(entry.sha256) if id_column else None
         if not data or not _EXCEL_DATE_BYTES.search(data):
             continue
-        # Read without the repair (no matched columns, so `table_rows` leaves the IDs as stored).
-        raw = Classification(entry.classified_kind, entry.classified_county, {**entry.evidence, "matched_columns": {}})
-        _, rows = table_rows(data, raw)
-        stored = (row.get(id_column or "", "") for row in rows)
-        changed = [(value, repaired) for value in stored if (repaired := repair_excel_date_id(value))]
+        stored: list[str] = []
+        _, rows = table_rows(data, classification, stored_ids=stored)
+        changed = [(was, row.get(id_column or "", "")) for was, row in zip(stored, rows, strict=True) if was]
         if changed:
             first, fixed = changed[0]
             problems.append(
@@ -2651,6 +2665,14 @@ def _check_excel_dates(entries: Sequence[MapEntry], content: _Content, problems:
                     county=entry.county,
                 )
             )
+
+
+def _check_drawn(entries: Sequence[MapEntry], content: _Content, problems: list[Problem]) -> None:
+    """Warn about ballots CORLA drew with no audit board record, and contests whose counts leave out their worst
+    cases (`corla_observer.drawn`), once a round's selection list and comparison file are both fetched."""
+    from corla_observer.drawn import drawn_problems, report_from_entries
+
+    problems.extend(drawn_problems(report_from_entries(entries, content.get)))
 
 
 def _check_imported(

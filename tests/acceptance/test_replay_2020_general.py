@@ -110,3 +110,30 @@ def test_otero_ids_saved_as_dates_are_read_back_and_reported(tmp_path: Path, mir
         otero = published_selections(datamap, ws).by_county.get("Otero", {})
     ids = [i for contest in otero.values() for i in contest]
     assert ids and not any("/" in i for i in ids)
+
+
+def test_every_drawn_ballot_has_an_audit_record_once_dates_are_read_back(tmp_path: Path, mirror: Path) -> None:
+    """In every round of the 2020 general, every CVR ID CORLA drew has an audit board record in that round's
+    comparison file, with no phantom record or ballot not found, once Otero's imprinted IDs a spreadsheet saved as
+    dates are read back: three drawn ballots (3-11-4 and 3-14-23 from round 1, 3-19-7 from round 2) match only
+    after that repair. Round 3's comparison file also holds 300 El Paso CVR IDs that no contest of round 3's
+    selection list drew: its list for City of Colorado Springs Ballot Question 2C has round 2's 816 draws, while
+    its contest list counts 1,117 audited."""
+    from corla_observer.datamap import build_map
+    from corla_observer.drawn import ID_REPAIRED, drawn_report
+
+    ws = Workspace.open(tmp_path)
+    with EventLog.open(tmp_path) as log:
+        stage_fetch(ws, log, mirror, COMMIT, election="2020/general")
+        datamap = build_map(log, ws)
+    assert not [p for p in datamap.problems if p.code in ("drawn_without_record", "worst_case_not_counted")]
+    report = drawn_report(datamap, ws)
+    assert [(r.round, r.ballots, r.draws) for r in report.rounds] == [(1, 6432, 6960), (2, 8006, 8621), (3, 8006, 8621)]
+    repaired = [
+        sorted((f.county, f.imprinted_id, f.stored_id) for f in r.findings if f.kind == ID_REPAIRED) for r in report.rounds
+    ]
+    first = [("Otero", "3-11-4", "3/11/2004"), ("Otero", "3-14-23", "3/14/2023")]
+    assert repaired == [first, [*first, ("Otero", "3-19-7", "3/19/2007")], [*first, ("Otero", "3-19-7", "3/19/2007")]]
+    assert all(f.kind == ID_REPAIRED for r in report.rounds for f in r.findings)
+    assert all(not r.contests for r in report.rounds)
+    assert [r.undrawn for r in report.rounds] == [{}, {}, {"El Paso": 300}]
