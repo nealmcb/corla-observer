@@ -230,7 +230,8 @@ Work: with the anonymizer's maintainer, make its analysis importable without the
 ### 4. Consistency checks before the seed
 
 A per-county report, run on upload and on each manifest fetch:
-- per-batch CVR row counts against the manifest
+- per-batch CVR row counts against the manifest, in both directions, with likely typos in batch IDs
+  (built: `corla_observer.batches`, in the totals check)
 - the manifest total against CORLA's ballot-card count (a shortfall is the signature of a batch missing from the published manifest)
 - imprinted-ID coverage
 - duplicate files across counties

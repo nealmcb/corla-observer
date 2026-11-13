@@ -151,6 +151,9 @@ class Ballot:
     marker: str | None = None
     #: Write every vote cell blank (a county's redaction).
     blank: bool = False
+    #: The TabulatorNum and BatchId cells.
+    tabulator: str = "101"
+    batch: str = "1"
 
 
 def ballots(count: int, *contests: str, precinct: str = "101", ballot_type: str = "BT-1") -> list[Ballot]:
@@ -193,7 +196,7 @@ def make_cvr(
     ]
     for number, ballot in enumerate(rows, start=1):
         record = str(number)
-        ident = [ballot.cvr_number or record, "101", "1", record, f"101-1-{record}"]
+        ident = [ballot.cvr_number or record, ballot.tabulator, ballot.batch, record, f"{ballot.tabulator}-{ballot.batch}-{record}"]
         if excel:
             ident = [f'="{cell}"' if cell else cell for cell in ident]
         row = ident

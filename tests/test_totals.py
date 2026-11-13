@@ -76,7 +76,8 @@ def weld_cvr() -> bytes:
     ]
     for n in range(1, 66):
         votes = "1,0" if n <= 39 else ("0,1" if n <= 55 else "0,0")
-        lines.append(f"{n},7,1,{n},7-1-{n},Mail,101,BT-1,{votes}")
+        batch = 1 if n <= 25 else (2 if n <= 50 else 3)  # as Weld's manifest lists them
+        lines.append(f"{n},7,{batch},{n},7-{batch}-{n},Mail,101,BT-1,{votes}")
     return ("\r\n".join(lines) + "\r\n").encode()
 
 

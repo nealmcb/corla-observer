@@ -21,7 +21,7 @@
 <section id="totals">
   <h2>Totals check</h2>
   {% if totals %}
-  <p class="meta">Checked {{ totals[1]|local }}: {{ totals[2].compared }} comparisons of the results (each targeted contest's last winner and first loser, and ballots cast, per county) with the other results files, the redacted CVRs, CORLA's tallies and contest list, and the manifests. Flagged differences are also on <a href="{{ url('/coord/flags') }}">the flags page</a>; the others are information (results move during the canvass).</p>
+  <p class="meta">Checked {{ totals[1]|local }}: {{ totals[2].compared }} comparisons of the results (each targeted contest's last winner and first loser, and ballots cast, per county) with the other results files, the redacted CVRs, CORLA's tallies and contest list, and the manifests, and of each county's manifest with its redacted CVR batch by batch. Flagged differences are also on <a href="{{ url('/coord/flags') }}">the flags page</a>; the others are information (results move during the canvass).</p>
   {% if differences %}
   <ul class="totals">{% for d in differences %}<li>{% if d.flag %}{{ badge('warning', 'flag') }} {% endif %}{{ d.line }}</li>{% endfor %}</ul>
   {% else %}<p>No differences.</p>{% endif %}
