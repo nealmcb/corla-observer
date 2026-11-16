@@ -257,6 +257,11 @@ These are warnings for the coordinator, never silent corrections.
   day, at the close). Open question: publishing pushes to the mirror repository, which today
   needs the coordinator's forwarded SSH agent; a button would need them connected at the time, or
   a stored credential limited to that repository.
+- **TODO: download a received file.** The upload page shows each received file's SHA-256, but a
+  coordinator can't get the file back from the site: uploads live only in the server's content
+  store. Add a "Download" link beside each received CVR, manifest and pull list, for logged-in
+  coordinators only, serving the stored bytes under the name they were uploaded with, so a
+  coordinator can check the site's copy against what the county sent, or recover a lost copy.
 
 ### 5. Timestamping
 
