@@ -74,8 +74,9 @@ def test_missing_inputs_are_never_problems(ws: Workspace, log: EventLog) -> None
     assert {p.code for p in early.current} == set()
     assert early.errors == 0 and early.lines == []
     texts = [w.text for w in early.waiting]
-    assert "Manifests: 2 of 63 posted, due Fri 13 Nov 2:00 PM" in texts
-    assert "CORLA's upload status: not yet posted, due Fri 13 Nov 2:00 PM" in texts
+    # Observers see the manifests and upload status when the Audit Center posts them (postings_expected).
+    assert "Manifests: 2 of 63 posted, due Mon 16 Nov 8:00 AM" in texts
+    assert "CORLA's upload status: not yet posted, due Mon 16 Nov 8:00 AM" in texts
     assert "Seed: not yet entered, due at the roll, Mon 16 Nov 10:00 AM" in texts
     assert any(t.startswith("CORLA's contest list: not yet posted (") and "expected after the roll" in t for t in texts)
     assert any(t.startswith("Redacted CVRs of the counties followed: 0 of 1 received (none yet from Weld)") for t in texts)
@@ -93,8 +94,8 @@ def test_missing_inputs_are_never_problems(ws: Workspace, log: EventLog) -> None
         "selections",
         "pull_lists",
     ]
-    assert "Manifests: 2 of 63 posted, due Fri 13 Nov 2:00 PM" in [w.text for w in later.waiting]
-    assert later.valid_until == GENERAL.at("roll")
+    assert "Manifests: 2 of 63 posted, due Mon 16 Nov 8:00 AM" in [w.text for w in later.waiting]
+    assert later.valid_until == GENERAL.at("postings_expected")
 
     # After the roll, the same: the seed is still to come, its due time passed.
     after = stage(datamap, datamap.check(), now=AFTER_ROLL, calendar=GENERAL, followed=["Weld"])
@@ -191,7 +192,7 @@ def test_the_dashboard_snapshot_is_staged_and_rebuilt_at_the_due_time(ws: Worksp
     early = views.build_snapshot(log, ws, ["Weld"], now=BEFORE_UPLOADS)
     assert early.problems == [] and early.error_count == 0 and early.public_error_count == 0
     assert early.valid_until == GENERAL.at("tabulation_deadline")
-    assert early.not_yet["Weld"] == {"cvr": "Fri 13 Nov 2:00 PM", "corla": "Fri 13 Nov 2:00 PM"}
+    assert early.not_yet["Weld"] == {"cvr": "Fri 13 Nov 6:00 PM", "corla": "Mon 16 Nov 8:00 AM"}
     assert any(w["key"] == "manifests" for w in early.waiting)
     late = views.build_snapshot(log, ws, ["Weld"], now=AFTER_ROLL)
     # After the roll the seed is still to come, not a problem.
@@ -237,3 +238,17 @@ def test_a_replayed_audit_center_is_judged_at_its_own_time(ws: Workspace, log: E
     (ws.root / SETUP_FILENAME).write_text(GENERAL_2020_SETUP.replace('time = "2020-11-13 15:00"\n', ""), encoding="utf-8")
     with EventLog.open(ws.root / "other") as fresh:
         assert clock(ws, fresh).source == "now"
+
+
+def test_a_calendar_without_the_observers_times_uses_the_upload_deadline() -> None:
+    """The manifests, upload status and CVRs fall back to tabulation_deadline when the calendar has
+    no cvrs_expected or postings_expected (the 2026 primary's built-in calendar, for one)."""
+    from corla_observer.due import EXPECTED, calendar_for
+
+    primary = calendar_for("2026/primary")
+    general = calendar_for("2026/general")
+    due = {item.key: item.due(primary) for item in EXPECTED}
+    assert due["manifests"] == due["upload_status"] == due["cvrs"] == primary.at("tabulation_deadline")
+    due = {item.key: item.due(general) for item in EXPECTED}
+    assert due["cvrs"] == parse_time("2026-11-13 18:00")
+    assert due["manifests"] == due["upload_status"] == parse_time("2026-11-16 08:00")

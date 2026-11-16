@@ -520,7 +520,7 @@ def _apply_progress(snap: Snapshot) -> None:
 
 def _apply_view(snap: Snapshot, log: EventLog, workspace: Workspace, now: str | None) -> None:
     """Stage the problems as of the clock (`corla_observer.due`): what is wrong, and what is still to come."""
-    from corla_observer.due import UPLOAD, stage, view_for
+    from corla_observer.due import CVRS, POSTINGS, UPLOAD, stage, view_for
 
     datamap = snap.datamap
     if datamap is None:
@@ -539,12 +539,15 @@ def _apply_view(snap: Snapshot, log: EventLog, workspace: Workspace, now: str | 
     snap.waiting = [w.to_dict() for w in view.waiting]
     snap.status_lines = list(view.status)
     snap.as_of, snap.as_of_source, snap.valid_until, snap.upcoming = view.now, view.now_source, view.valid_until, view.upcoming
-    upload = view.upcoming.get(UPLOAD)
-    if upload:
-        for row in snap.counties:
-            snap.not_yet[row.county] = {"cvr": upload, "corla": upload}
+    cvrs = view.upcoming.get(CVRS) or view.upcoming.get(UPLOAD)
+    postings = view.upcoming.get(POSTINGS) or view.upcoming.get(UPLOAD)
+    for row in snap.counties:
+        due = {k: v for k, v in (("cvr", cvrs), ("corla", postings)) if v}
+        if due:
+            snap.not_yet[row.county] = due
+    if postings:
         for county in snap.statuses:
-            snap.not_yet.setdefault(county, {"corla": upload})
+            snap.not_yet.setdefault(county, {"corla": postings})
 
 
 def _build_map(snap: Snapshot, log: EventLog, workspace: Workspace, flag_checker: FlagChecker | None) -> None:

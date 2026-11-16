@@ -208,7 +208,7 @@ def test_overrides_arrive_with_their_evidence_and_problems_wait_for_their_due_ti
         assert datamap.overrides_sha256 is None
         view = view_for(datamap, ws, log)
         assert view.now_source == "the walkthrough's simulated time" and view.lines == []
-        assert "Manifests: 0 of 63 posted, due Fri 13 Nov 2:00 PM" in [w.text for w in view.waiting]
+        assert "Manifests: 0 of 63 posted, due Mon 16 Nov 8:00 AM" in [w.text for w in view.waiting]
         for _ in range(len(staged) - 2):
             next_step(ws, log)
         assert build_map(log, ws).overrides_sha256 is None

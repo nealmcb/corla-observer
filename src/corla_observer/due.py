@@ -9,10 +9,12 @@ puts each problem in its stage:
 **Due times.** Each kind of input (`EXPECTED`) is due at a calendar
 milestone (`Calendar`): the workspace's ``election.toml`` ``[calendar]``
 (`corla_observer.election`), else the built-in calendar of a known election
-(`KNOWN_CALENDARS`). The manifests, the counties' redacted CVRs and CORLA's
-upload status are due by the upload deadline (``tabulation_deadline``: the
-10th day after the election, 2:00 PM); the seed at the roll (``roll``, the
-13th day); the pull lists and CORLA's contest list and selections are
+(`KNOWN_CALENDARS`). The counties upload their manifests and CVRs to CORLA by
+the upload deadline (``tabulation_deadline``: the 10th day after the
+election, 2:00 PM), but observers see them later: the counties' redacted
+CVRs by ``cvrs_expected``, and the manifests and CORLA's upload status, posted
+on the Audit Center, by ``postings_expected`` (a calendar without these keys
+uses the upload deadline); the seed at the roll (``roll``, the 13th day); the pull lists and CORLA's contest list and selections are
 expected after the roll; the target contest list by ``targets_deadline``.
 Election night results are never due: they are only status.
 
@@ -66,6 +68,11 @@ if TYPE_CHECKING:
 TARGETS = "targets_deadline"
 UPLOAD = "tabulation_deadline"
 ROLL = "roll"
+#: When observers can expect what the counties uploaded to CORLA: their redacted CVRs, sent to
+#: observers (CVRS), and the manifests and CORLA's upload status, posted on the Audit Center
+#: (POSTINGS). Both come later than the upload deadline; a calendar without them uses UPLOAD.
+CVRS = "cvrs_expected"
+POSTINGS = "postings_expected"
 
 #: Colorado counties in CORLA's audit (San Juan counts by hand).
 CORLA_COUNTIES = tuple(c for c in COLORADO_COUNTIES if c != "San Juan")
@@ -75,7 +82,13 @@ KNOWN_CALENDARS: dict[str, dict[str, str]] = {
     # Primary of 30 June 2026: tabulation done by the 10th day, roll on the 13th.
     "2026/primary": {UPLOAD: "2026-07-10 14:00", ROLL: "2026-07-13 10:00"},
     # General of 3 November 2026 (the Secretary of State's calendar of 31 July 2026).
-    "2026/general": {TARGETS: "2026-11-06 17:00", UPLOAD: "2026-11-13 14:00", ROLL: "2026-11-16 10:00"},
+    "2026/general": {
+        TARGETS: "2026-11-06 17:00",
+        UPLOAD: "2026-11-13 14:00",
+        CVRS: "2026-11-13 18:00",
+        POSTINGS: "2026-11-16 08:00",
+        ROLL: "2026-11-16 10:00",
+    },
 }
 
 #: Problems of three or more counties are grouped into one line.
@@ -123,13 +136,19 @@ class Expected:
     #: Expected some time after the milestone, rather than by it.
     after: bool = False
     codes: frozenset[str] = frozenset()
+    #: The milestone used when the calendar lacks ``milestone``.
+    fallback: str | None = None
+
+    def due(self, calendar: Calendar) -> str | None:
+        """When it is due by ``calendar``: its milestone, else its fallback, else None."""
+        return calendar.at(self.milestone) or (calendar.at(self.fallback) if self.fallback else None)
 
 
 EXPECTED: tuple[Expected, ...] = (
     Expected("targets", "Target contest list", TARGETS, codes=frozenset({"no_contests"})),
-    Expected("manifests", "Manifests", UPLOAD, codes=frozenset({"no_manifest", "statewide_counties_assumed"})),
-    Expected("upload_status", "CORLA's upload status", UPLOAD),
-    Expected("cvrs", "Redacted CVRs of the counties followed", UPLOAD),
+    Expected("manifests", "Manifests", POSTINGS, codes=frozenset({"no_manifest", "statewide_counties_assumed"}), fallback=UPLOAD),
+    Expected("upload_status", "CORLA's upload status", POSTINGS, fallback=UPLOAD),
+    Expected("cvrs", "Redacted CVRs of the counties followed", CVRS, fallback=UPLOAD),
     Expected("seed", "Seed", ROLL, codes=frozenset({"no_seed"})),
     Expected("contest_list", "CORLA's contest list", ROLL, after=True, codes=frozenset({"estimated_sample_count"})),
     Expected("selections", "CORLA's selections", ROLL, after=True),
@@ -422,7 +441,7 @@ def stage(
     waiting: list[Waiting] = []
     held_codes: set[str] = set()
     upcoming: dict[str, str] = {}
-    for key in (TARGETS, UPLOAD, ROLL):
+    for key in (TARGETS, UPLOAD, CVRS, POSTINGS, ROLL):
         moment = calendar.at(key)
         if moment and (now is None or moment > now):
             upcoming[key] = due_text(moment)
@@ -433,7 +452,7 @@ def stage(
         if done:
             continue
         held_codes |= item.codes
-        due = calendar.at(item.milestone)
+        due = item.due(calendar)
         if due is None:
             waiting.append(Waiting(item.key, item.label, words, "", "due date unknown (no election calendar)"))
             continue

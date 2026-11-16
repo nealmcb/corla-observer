@@ -238,6 +238,12 @@ A per-county report, run on upload and on each manifest fetch:
 
 These are warnings for the coordinator, never silent corrections.
 
+- **TODO: observers' due times for future elections.** `cvrs_expected` (the counties' redacted
+  CVRs, to observers) and `postings_expected` (manifests and CORLA's upload status, on the Audit
+  Center) are set only for the 2026 general; other elections fall back to the upload deadline.
+  Derive defaults from the calendar (CVRs: the upload deadline plus 4 hours; manifests and upload
+  status: the roll minus 2 hours), overridable in `election.toml`.
+
 ### 5. Timestamping
 
 Turn the [July 2026 procedure](https://github.com/nealmcb/auditcenter/blob/main/observerfiles/evidence-timestamping.md) into one command:
