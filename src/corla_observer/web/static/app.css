@@ -116,6 +116,7 @@ ol.activity li { padding: 4px 0; border-bottom: 1px solid var(--border); display
 
 .notice { background: var(--card); border: 1px solid var(--border); border-radius: 6px; padding: 8px 12px; }
 .notice-error { border-left: 6px double var(--vermilion); }
+.notice-sample { border: 2px dashed var(--orange); }
 
 form.inline { display: inline; margin: 0; }
 .form { display: flex; flex-direction: column; gap: 10px; max-width: 520px; }

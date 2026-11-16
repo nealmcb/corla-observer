@@ -204,3 +204,42 @@ def test_web_seed_entry(client: TestClient) -> None:
     changed = client.post("/coord/seed/set", data={"csrf": csrf, "seed": OTHER, "source": "a misreading"})
     assert "DIFFERENT value" in changed.text
     assert client.get("/dashboard.json").json()["seed"] == OTHER
+
+
+def _events(root: Path) -> int:
+    with EventLog.open(root) as log:
+        return sum(1 for _ in log.iter_events())
+
+
+def test_web_seed_preview_with_no_manifests(client: TestClient, tmp_path: Path) -> None:
+    assert client.get("/coord/seed/preview", follow_redirects=False).status_code == 303  # coordinators only
+    login(client, "alice")
+    before = _events(tmp_path / "web")
+    fresh = client.get("/coord/seed/preview", follow_redirects=False)
+    sample = re.search(r"seed=(\d{20})", fresh.headers["location"])
+    assert fresh.status_code == 303 and sample  # a sample seed, put in the address
+    page = client.get(fresh.headers["location"])
+    assert "not the RLA seed" in page.text and sample.group(1) in page.text and "no manifests" in page.text
+    assert client.get("/coord/seed/preview?seed=123", follow_redirects=False).status_code == 303  # not a seed: a fresh one
+    assert _events(tmp_path / "web") == before  # nothing recorded
+    assert "Preview with a sample seed" in client.get("/coord/seed").text
+
+
+def test_web_seed_preview_for_a_county(tmp_path: Path) -> None:
+    root = tmp_path / "web"
+    store = Workspace.open(root)
+    with EventLog.open(store.root) as log:
+        fetch(store, log, election_files())
+        AccountStore(root).add("alice", "correct horse battery", log)
+    application = create_app(AppConfig(workspace=root, secret=b"s" * 32, crawl=lambda ws, log: None))
+    with TestClient(application, base_url="https://testserver") as client:
+        login(client, "alice")
+        before = _events(root)
+        page = client.get(f"/coord/seed/preview?county=Adams&seed={SEED}")
+        assert page.status_code == 200 and "not the RLA seed" in page.text
+        assert "Adams County Clerk - Republican Party (Adams)" in page.text and "ballot card" in page.text
+        assert "Not worked out yet (1)" in page.text and "61 counties have no manifest yet" in page.text
+        assert "Choose a county" in client.get(f"/coord/seed/preview?seed={SEED}").text
+        assert _events(root) == before
+    with EventLog.open(root) as log:
+        assert seed_state(log.iter_events()).seed is None  # no seed entered

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import io
 import json
 from collections.abc import Iterator
@@ -19,11 +20,12 @@ from corla_observer.predict import (
     latest_prediction,
     optimistic_sample_size,
     predict,
+    preview_county,
     record_prediction,
     round_one_sample_count,
 )
 from corla_observer.sampling import ManifestBatch, build_domain_from_manifests, load_county_manifest, select_ballots
-from corla_observer.seeds import enter_and_confirm
+from corla_observer.seeds import check_seed, enter_and_confirm, sample_seed
 from corla_observer.workspace import Workspace
 from synthetic import (
     ADAMS_MANIFEST,
@@ -196,3 +198,54 @@ def test_uploaded_manifest_feeds_the_prediction(ws: Workspace, log: EventLog) ->
     enter_and_confirm(log, SEED, ACTOR, "test")
     statewide = predict(build_map(log, ws)).contests[0]
     assert statewide.counties == ["Adams", "Boulder", "Weld"] and statewide.domain_size == 165
+
+
+
+def _imported(*counties: str) -> bytes:
+    """CORLA's upload status showing each county's synthetic manifest imported."""
+    manifests = {"Adams": ADAMS_MANIFEST, "Boulder": BOULDER_MANIFEST, "Weld": WELD_MANIFEST}
+    rows = "".join(
+        f"{c},{c}.csv,manifest,50,99,IMPORTED,2026-11-10 10:00:00,{hashlib.sha256(manifests[c]).hexdigest()},X\r\n"
+        for c in counties
+    )
+    return ("name,filename,type,approx_count,size,status,timestamp,computed_hash,submitted_hash\r\n" + rows).encode()
+
+
+def test_preview_county_predicts_what_it_can_and_records_nothing(ws: Workspace, log: EventLog) -> None:
+    fetch(ws, log, election_files(files_uploadStatus_csv=_imported("Adams", "Boulder", "Weld")))
+    datamap = build_map(log, ws)
+    before = sum(1 for _ in log.iter_events())
+    preview = preview_county(datamap, "Adams", SEED)
+    assert sum(1 for _ in log.iter_events()) == before  # a preview is never recorded
+    full = predict(datamap, counties=["Adams"], seed=SEED)
+    assert [c.name for c in preview.predicted] == [c.name for c in full.contests] and not preview.not_yet
+    for got, expected in zip(preview.predicted, full.contests):
+        assert got.draws_for("Adams") == expected.draws_for("Adams")
+    ids = [d.imprinted_id for c in full.contests for d in c.draws_for("Adams")]
+    assert preview.pull_list() == list(dict.fromkeys(ids)) and len(set(preview.pull_list())) == len(preview.pull_list())
+
+
+def test_preview_county_lists_contests_it_cannot_work_out(ws: Workspace, log: EventLog, monkeypatch: pytest.MonkeyPatch) -> None:
+    # CORLA imported Weld's manifest, but its file isn't here: the statewide contest waits for it.
+    fetch(ws, log, election_files(files_Weld_csv=None, files_uploadStatus_csv=_imported("Adams", "Boulder", "Weld")))
+    datamap = build_map(log, ws)
+    preview = preview_county(datamap, "Adams", SEED)
+    assert [c.name for c in preview.predicted] == ["Adams County Clerk - Republican Party (Adams)"]
+    assert preview.not_yet == [("Governor - Democratic Party", "no manifest for Weld")]
+    monkeypatch.setattr("corla_observer.predict.MAX_NAMED_MISSING", 0)
+    assert preview_county(datamap, "Adams", SEED).not_yet == [("Governor - Democratic Party", "no manifest yet for 1 of its 3 counties")]
+
+
+def test_preview_county_waits_for_an_assumed_statewide_county_list(ws: Workspace, log: EventLog) -> None:
+    # No upload status: the statewide contest is assumed to cover the counties with a manifest so far,
+    # and most counties have none, so its draws could all shift. The county's own contest still works.
+    fetch(ws, log, election_files())
+    preview = preview_county(build_map(log, ws), "Adams", SEED)
+    assert [c.name for c in preview.predicted] == ["Adams County Clerk - Republican Party (Adams)"]
+    ((name, why),) = preview.not_yet
+    assert name == "Governor - Democratic Party" and why == "its counties aren't known yet, and 61 counties have no manifest yet"
+
+
+def test_sample_seed_has_the_real_seed_form() -> None:
+    seeds = {sample_seed() for _ in range(20)}
+    assert len(seeds) == 20 and all(check_seed(s) == s for s in seeds)

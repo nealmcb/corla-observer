@@ -41,6 +41,7 @@ Standard library only.
 
 from __future__ import annotations
 
+import secrets
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 
@@ -63,6 +64,11 @@ def check_seed(seed: str) -> str:
     if not (value.isascii() and value.isdigit() and len(value) == SEED_DIGITS):
         raise SeedError(f"a seed is {SEED_DIGITS} digits, got {seed.strip()[:40]!r}")
     return value
+
+
+def sample_seed() -> str:
+    """A random `SEED_DIGITS`-digit seed for previews: the real seed's form, never recorded or entered."""
+    return f"{secrets.randbelow(10**SEED_DIGITS):0{SEED_DIGITS}d}"
 
 
 @dataclass(frozen=True)

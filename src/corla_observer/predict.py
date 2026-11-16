@@ -41,8 +41,9 @@ from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import TYPE_CHECKING
 
-from corla_observer.classify import Classification, canonical_county
+from corla_observer.classify import COLORADO_COUNTIES, Classification, canonical_county
 from corla_observer.datamap import (
+    STATEWIDE_ASSUMED,
     ContestSpec,
     DataMap,
     MapEntry,
@@ -61,6 +62,8 @@ if TYPE_CHECKING:
 CORLA_GAMMA = Decimal("1.03905")
 #: Draws CORLA's round one makes beyond the optimistic sample size.
 ROUND_ONE_EXTRA_DRAWS = 1
+#: A preview names the counties a contest lacks manifests for up to this many, and counts them beyond.
+MAX_NAMED_MISSING = 3
 
 
 class PredictionError(ValueError):
@@ -195,6 +198,50 @@ def predict(
         overrides_sha256=datamap.overrides_sha256,
         contests=results,
     )
+
+
+@dataclass
+class CountyPreview:
+    """What a seed would select in one county: each of its contests that can be predicted, and why the others can't."""
+
+    county: str
+    seed: str
+    predicted: list[ContestPrediction]
+    #: (contest name, why it can't be predicted yet), e.g. a statewide contest missing other counties' manifests.
+    not_yet: list[tuple[str, str]]
+
+    def pull_list(self) -> list[str]:
+        """The county's imprinted IDs over all predicted contests, each once, in first-drawn order (contest by contest)."""
+        return list(dict.fromkeys(d.imprinted_id for c in self.predicted for d in c.draws_for(self.county)))
+
+
+def preview_county(datamap: DataMap, county: str, seed: str) -> CountyPreview:
+    """Predict, contest by contest, what ``seed`` would select in ``county``, for a preview that is never recorded.
+
+    Unlike `predict`, a contest that can't be predicted (a manifest, a county ID or a sample count
+    missing) doesn't stop the rest: it is listed in ``not_yet`` with the reason. So is a statewide
+    contest whose counties are assumed to be those with a manifest so far (before CORLA's upload
+    status shows which imported one) while some county has none: its draws could all shift. The
+    contests are the statewide ones and those entirely within ``county`` (`DataMap.contests_for`).
+    """
+    order = {county_key(c): n for c, n in datamap.county_order.value.items()}
+    predicted: list[ContestPrediction] = []
+    not_yet: list[tuple[str, str]] = []
+    without = [c for c in COLORADO_COUNTIES if c not in datamap.manifests]
+    for spec in datamap.contests_for([county]):
+        if spec.statewide and without and STATEWIDE_ASSUMED in spec.notes:
+            # Its counties are only those with a manifest so far: a missing one would shift every draw.
+            not_yet.append((spec.name, f"its counties aren't known yet, and {len(without)} counties have no manifest yet"))
+            continue
+        missing = [c for c in spec.counties if c not in datamap.manifests]
+        if len(missing) > MAX_NAMED_MISSING:
+            not_yet.append((spec.name, f"no manifest yet for {len(missing)} of its {len(spec.counties)} counties"))
+            continue
+        try:
+            predicted.append(_predict_one(datamap, spec, seed, order, None))
+        except ValueError as exc:  # PredictionError, or an estimate that can't be made
+            not_yet.append((spec.name, str(exc).removeprefix(f"{spec.name}: ")))
+    return CountyPreview(county=county, seed=seed, predicted=predicted, not_yet=not_yet)
 
 
 def _predict_one(

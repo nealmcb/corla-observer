@@ -1,0 +1,49 @@
+{% extends "base.html" %}
+{% from "_macros.html" import badge %}
+{% block title %}Coordinator: preview with a sample seed{% endblock %}
+{% block main %}
+<h1>Preview with a sample seed</h1>
+<p class="notice notice-sample" role="note"><span aria-hidden="true">&#9679;</span> <strong>Sample seed <code class="seed">{{ seed }}</code>: not the RLA seed.</strong> This shows what CORLA would select if the dice gave this seed. Nothing here is recorded, sent or entered{% if real_seed %}; the seed in effect, <code class="seed">{{ real_seed }}</code>, is unchanged{% endif %}.</p>
+
+<form method="get" action="{{ url('/coord/seed/preview') }}" class="actions">
+  <label>County <select name="county">
+    <option value="">choose…</option>
+    {% for c in counties %}<option{% if c == county %} selected{% endif %}>{{ c }}</option>{% endfor %}
+  </select></label>
+  <label>Seed <input name="seed" value="{{ seed }}" inputmode="numeric" maxlength="40" pattern="[0-9 ]{20,40}" size="24" autocomplete="off" spellcheck="false"></label>
+  <button type="submit" class="secondary small">Preview</button>
+  <a href="{{ url('/coord/seed/preview') }}{% if county %}?county={{ county|urlencode }}{% endif %}">Another sample seed</a>
+</form>
+
+{% if not counties %}
+<p>{{ badge('missing', 'no manifests') }} No county's ballot manifest is in yet, so no draws can be worked out. A preview needs at least the county's own manifest.</p>
+{% elif not county %}
+<p>Choose a county: those with a ballot manifest are listed.</p>
+{% elif preview %}
+<section class="card">
+  <h2>{{ county }}: {{ preview.pull_list()|length }} ballot card{{ '' if preview.pull_list()|length == 1 else 's' }} to pull</h2>
+  {% if preview.predicted %}
+  <table>
+    <thead><tr><th>Contest</th><th class="num">Draws in {{ county }}</th><th class="num">Of round one's</th><th>Sample count</th></tr></thead>
+    <tbody>
+    {% for c in preview.predicted %}{% set here = c.draws_for(county) %}
+    <tr><td>{{ c.name }}{% if c.statewide %} {{ badge('tag', 'statewide') }}{% endif %}</td><td class="num">{{ here|length }}</td><td class="num">{{ c.sample_count }}</td><td class="meta">{% if c.estimated %}estimated{% else %}CORLA's{% endif %}</td></tr>
+    {% endfor %}
+    </tbody>
+  </table>
+  {% if preview.pull_list() %}
+  <h3>The pull list, in draw order</h3>
+  <p class="meta">Each card once, though a card drawn for several contests, or twice for one, counts each time.</p>
+  <p><code>{{ preview.pull_list()|join(' ') }}</code></p>
+  {% endif %}
+  {% else %}
+  <p>None of {{ county }}'s contests can be worked out yet.</p>
+  {% endif %}
+  {% if preview.not_yet %}
+  <h3>Not worked out yet ({{ preview.not_yet|length }})</h3>
+  <ul class="meta">{% for name, why in preview.not_yet %}<li>{{ name }}: {{ why }}</li>{% endfor %}</ul>
+  {% endif %}
+</section>
+{% endif %}
+<p><a href="{{ url('/coord/seed') }}">Back to the seed</a></p>
+{% endblock %}

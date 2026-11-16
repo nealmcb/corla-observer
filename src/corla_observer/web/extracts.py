@@ -76,7 +76,7 @@ from corla_observer.pdfextract import pdf_filename, printout
 from corla_observer.pulllists import RLA, county_lists
 from corla_observer.pulllists import load as load_list
 from corla_observer.printlayout import LAYOUTS as PRINT_LAYOUTS
-from corla_observer.seeds import SeedError, confirm_seed, enter_seed, seed_state
+from corla_observer.seeds import SeedError, check_seed, confirm_seed, enter_seed, sample_seed, seed_state
 from corla_observer.uploads import status as upload_status
 from corla_observer.testcounty import SAMPLE_COUNT as TEST_SAMPLE_COUNT
 from corla_observer.web.app import WebState, get_state
@@ -167,6 +167,46 @@ async def seed_confirm(request: Request) -> Response:
     else:
         msg = "confirmed" if outcome.matched else "mismatch"
     return RedirectResponse(state.url(f"/coord/seed?msg={msg}"), status_code=303)
+
+
+def _preview_page(state: WebState, request: Request, session: Session, county: str | None, seed: str) -> Response:
+    """What ``seed`` would select in ``county``: worked out here and shown, never recorded."""
+    from corla_observer.predict import preview_county
+
+    datamap = state.cache.get().datamap
+    counties = sorted(datamap.manifests) if datamap else []
+    preview = preview_county(datamap, county, seed) if datamap and county in counties else None
+    return state.render(
+        request,
+        "coord_seed_preview.html",
+        200,
+        county=county,
+        counties=counties,
+        seed=seed,
+        preview=preview,
+        real_seed=seed_state(state.log.iter_events()).seed,
+        **_common(state, session),
+    )
+
+
+@router.get("/coord/seed/preview")
+async def seed_preview(request: Request) -> Response:
+    """A preview of the selections from a sample seed (random unless one is given), for practice before the real one."""
+    state = get_state(request)
+    session = current_session(request)
+    if session is None:
+        return _login_redirect(state, request)
+    county = known_county(request.query_params.get("county", ""))
+    given = request.query_params.get("seed", "")
+    try:
+        seed = check_seed(given) if given.strip() else ""
+    except SeedError:
+        seed = ""
+    if not seed:
+        # A fresh sample seed, put in the address so the preview can be reloaded or shared.
+        query = {"seed": sample_seed()} | ({"county": county} if county else {})
+        return RedirectResponse(state.url("/coord/seed/preview?" + urlencode(query)), status_code=303)
+    return await run_in_threadpool(_preview_page, state, request, session, county, seed)
 
 
 # ---------------------------------------------------------------------------
