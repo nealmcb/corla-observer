@@ -213,9 +213,13 @@ contests that CORLA's sample left unseen or thin. It can be shown after the offi
 any time, and is recomputed on every view.
 
 **Local and regional.** A contest held only in this county is **local**; one spanning several
-counties is **regional**. CORLA's contest list by county says which; without it a contest is
-regional when its name is a statewide office's or a US House seat's, else local, and the page says
-so.
+counties is **regional**. CORLA's contest list by county says which. Until it is posted, the
+state's results by county do: a contest they report in more than one county is regional, in one
+county local (a differently worded name is matched by its words). Only when neither says is a
+contest regional by its name, a statewide office's or a US House seat's, else local. The page says
+which source decided. A margin larger than a local contest's cards in the county (more votes than
+cards, so not a local contest after all) is not used: its risk is not computed, and a note says
+why.
 
 **Pooled risk.** CORLA draws cards uniformly over the county (or the state). Its draws that landed
 on cards carrying a local contest are, given where they landed, uniform over that contest's own
