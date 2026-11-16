@@ -2458,6 +2458,10 @@ def _contests_from_targets(
     return contests
 
 
+#: The note on a statewide contest whose counties are taken to be those with a manifest so far.
+STATEWIDE_ASSUMED = "counties: every county with a manifest"
+
+
 def _statewide_counties(
     manifests: Mapping[str, ChosenManifest], imported: Mapping[str, ImportedManifest], problems: list[Problem]
 ) -> tuple[list[str], str]:
@@ -2482,7 +2486,7 @@ def _statewide_counties(
                 ),
             )
         )
-    return sorted(manifests, key=county_key), "counties: every county with a manifest"
+    return sorted(manifests, key=county_key), STATEWIDE_ASSUMED
 
 
 @dataclass(frozen=True)

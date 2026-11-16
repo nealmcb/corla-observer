@@ -875,8 +875,13 @@ def _menu_view(state: WebState, request: Request, county: str) -> dict[str, Any]
     inputs unreadable) is shown as ``error``, and the rest of the page as usual.
     """
     view: dict[str, Any] = {"error": None, "pct": tm.pct, "line_rows": tm.line_rows}
+    given = " ".join(request.query_params.get("seed", "").split())[: tg.MAX_SEED]
+    in_effect = _seed_in_effect(state)
     try:
-        inputs = tm.gather(state.workspace, state.log, county, datamap=state.cache.get().datamap)
+        # Before the roll, a seed entered here also stands in for the RLA seed in predicting CORLA's draws.
+        inputs = tm.gather(
+            state.workspace, state.log, county, datamap=state.cache.get().datamap, practice_seed=None if in_effect else given or None
+        )
         menu = tm.build_menu(inputs)
     except Exception as exc:  # noqa: BLE001 - the rest of the page still works without the menu
         view["error"] = str(exc) or type(exc).__name__
@@ -891,8 +896,6 @@ def _menu_view(state: WebState, request: Request, county: str) -> dict[str, Any]
     allocations = {s: menu.allocate(budget, s) for s in (tm.MINIMAX, tm.LADDER)}
     chosen = allocations[strategy]
     suggested = tm.suggested_draws(menu, chosen)
-    given = " ".join(request.query_params.get("seed", "").split())[: tg.MAX_SEED]
-    in_effect = _seed_in_effect(state)
     return view | {
         "menu": menu, "budget": budget, "typed": typed if typed.isdigit() else "", "strategy": strategy,
         "allocations": allocations, "chosen": chosen, "suggested": suggested, "suggested_total": sum(d.cards for d in suggested),

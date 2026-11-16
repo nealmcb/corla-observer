@@ -1305,3 +1305,4 @@ def test_the_targets_page_offers_dummy_seeds_before_the_rla_seed(tmp_path: Path)
         dummy = client.get(f"/coord/targets?county={COUNTY}&seed=DUMMY+PREVIEW+1").text
         assert "Practice seed <code>DUMMY PREVIEW 1</code>, not the RLA seed" in dummy
         assert "Next dummy seed: DUMMY PREVIEW 2" in dummy and "Draw these 20 cards" in dummy
+

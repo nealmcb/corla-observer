@@ -76,7 +76,7 @@
   {% for line in menu.lines %}{% set g = line.group %}{% set n = (chosen.draws.get(g.key, 0) if chosen else 0) %}{% set rows = m.line_rows(line, menu.steps) %}
     <li id="domain-{{ g.key|replace(',', '-') }}" class="target-card">
       <p class="target-card-name"><strong>{{ line.title }}</strong> {% for t in m.card_tags(line) %}{{ badge(t.kind, t.word) }} {% endfor %}</p>
-      <p class="target-card-risk">{% if line.riskiest %}Risk now {{ m.pct(line.now) }}{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }} → {{ m.pct(line.riskiest.risk_after(n)) }}</strong>{% else %}; not in the suggestion{% endif %}{% else %}No risk to lower{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }}</strong>{% else %}; not in the suggestion{% endif %}{% endif %}</p>
+      <p class="target-card-risk">{% if line.riskiest %}Risk now {{ m.pct(line.now) }}{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }} → {{ m.pct(line.riskiest.risk_after(n)) }}</strong>{% else %}; not in the suggestion{% endif %}{% else %}{% set all_uncontested = line.members|rejectattr('uncontested')|list|length == 0 %}No risk to lower{% if all_uncontested %}: uncontested{% endif %}{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }}</strong>, to check that the CVR records {{ 'it' if line.members|length == 1 else 'them' }}{% else %}; not in the suggestion{% endif %}{% endif %}</p>
       <details class="target-card-more"><summary>More</summary>
         <p class="meta">{{ row_html(rows[0]) }}</p>
         {% for row in rows[1:] %}<p class="target-menu-row">{{ row_html(row) }}</p>{% endfor %}

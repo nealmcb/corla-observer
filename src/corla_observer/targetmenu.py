@@ -1807,7 +1807,7 @@ _DRAWS_LOCK = threading.Lock()
 
 
 def corla_draws(
-    workspace: Workspace, log: EventLog, datamap: DataMap | None, county: str
+    workspace: Workspace, log: EventLog, datamap: DataMap | None, county: str, practice_seed: str | None = None
 ) -> tuple[list[str], str, list[str]]:
     """CORLA's draws on the county's cards with multiplicity, where they came from, and notes.
 
@@ -1815,7 +1815,14 @@ def corla_draws(
     county, up to its latest cumulative draw count (`corla_observer.datamap.round_target`, from
     each round's contest list), taken from the latest recorded prediction when it has enough draws
     and predicted afresh otherwise. Without that, the RLA extract's distinct cards, once each.
+
+    With no RLA seed, ``practice_seed`` (a dummy seed, for practice before the roll) is used
+    instead, never the recorded prediction; a statewide contest whose counties are only those with
+    a manifest so far is left out while any county lacks one, since a missing one would shift every
+    draw.
     """
+    from corla_observer.classify import COLORADO_COUNTIES
+    from corla_observer.datamap import STATEWIDE_ASSUMED
     from corla_observer.extract import latest_extract
     from corla_observer.predict import PredictionError, latest_prediction, predict
     from corla_observer.sampling import county_key
@@ -1833,7 +1840,18 @@ def corla_draws(
         for s in (datamap.contests if datamap else [])
         if s.statewide or target in {county_key(c) for c in s.counties}
     ]
-    if datamap is None or not specs or datamap.seed is None:
+    seed = datamap.seed.value if datamap and datamap.seed else practice_seed
+    practice = bool(datamap and datamap.seed is None and practice_seed)
+    if practice and datamap is not None:
+        without = [c for c in COLORADO_COUNTIES if c not in datamap.manifests]
+        waiting = [s for s in specs if s.statewide and without and STATEWIDE_ASSUMED in s.notes]
+        if waiting:
+            notes.append(
+                f"With the practice seed, {len(waiting)} statewide contest(s) left out: their counties aren't known "
+                f"yet, and {len(without)} counties have no manifest yet."
+            )
+            specs = [s for s in specs if s not in waiting]
+    if datamap is None or not specs or not seed:
         if extract_ids:
             return (
                 extract_ids,
@@ -1858,7 +1876,7 @@ def corla_draws(
             by_domain[domain] = spec
     domains = len(by_domain)
     specs = list(by_domain.values())
-    latest = latest_prediction(workspace, log)
+    latest = None if practice else latest_prediction(workspace, log)
     contests: Any = latest[1].get("contests") if latest else None
     predicted = {str(c["name"]): c for c in contests or []}
     ids: list[str] = []
@@ -1880,10 +1898,14 @@ def corla_draws(
             ]
         elif count:
             missing.append(replace(spec, sample_count=count))
+        elif practice:
+            # No count from CORLA yet: predict estimates one from the target list, as a recorded prediction does.
+            missing.append(spec)
+            estimated.append(spec.name)
     manifests = tuple(sorted(e.sha256 for e in datamap.used("county_manifest")))
     for spec in missing:
         cache_key = (
-            datamap.seed.value,
+            seed,
             spec.name,
             spec.sample_count,
             datamap.overrides_sha256,
@@ -1894,7 +1916,7 @@ def corla_draws(
         if cached is None:
             try:
                 (contest,) = predict(
-                    replace(datamap, contests=[spec]), contests=[spec.name]
+                    replace(datamap, contests=[spec]), contests=[spec.name], seed=seed
                 ).contests
             except (PredictionError, ValueError) as exc:
                 notes.append(f"Could not reproduce the draws of {spec.name}: {exc}.")
@@ -1913,7 +1935,8 @@ def corla_draws(
         )
         ids += outside
     source = (
-        f"reproduced from the seed and the manifests for {domains} sampling domain(s) of targeted contests, each "
+        (f"predicted from the practice seed {seed} (not the RLA seed) and the manifests" if practice else "reproduced from the seed and the manifests")
+        + f" for {domains} sampling domain(s) of targeted contests, each "
         f"drawn as far as its contests' latest round needs: {len(ids)} draws, {len({id_key(i) for i in ids})} "
         "distinct cards"
     )
@@ -2157,12 +2180,13 @@ def remaining_budget(
 
 
 def gather(
-    workspace: Workspace, log: EventLog, county: str, *, datamap: DataMap | None = None
+    workspace: Workspace, log: EventLog, county: str, *, datamap: DataMap | None = None, practice_seed: str | None = None
 ) -> MenuInputs:
     """The menu's inputs for a county with a redacted CVR in the workspace.
 
     ``datamap`` defaults to `corla_observer.datamap.build_map`. A test or demonstration county
-    uses none of CORLA's data, which is not its own.
+    uses none of CORLA's data, which is not its own. ``practice_seed``, used only while no RLA seed
+    is entered, predicts CORLA's draws for practice (`corla_draws`).
 
     Raises:
         LookupError: if the county has no redacted CVR.
@@ -2196,7 +2220,7 @@ def gather(
             inputs.draws, inputs.draws_source = posted_list
         else:
             inputs.draws, inputs.draws_source, notes = corla_draws(
-                workspace, log, datamap, county
+                workspace, log, datamap, county, practice_seed
             )
             inputs.notes += notes
         comparisons, posted = corla_comparisons(datamap, workspace, county, votes)
