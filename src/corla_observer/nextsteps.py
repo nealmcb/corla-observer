@@ -93,7 +93,7 @@ def next_steps(county: str, facts: Facts) -> list[Path]:
             manifest,
             Step(
                 "Experiment with targeting", False, f"/coord/targets{q}",
-                "try the suggestion and its draws with a dummy seed (DUMMY PREVIEW 1, 2, ...); the steps to send lists follow once the real seed is entered",
+                "draw with a dummy seed (DUMMY PREVIEW 1, 2, ...), then make a draft or send a list and see its extract; on the live site, send the county only lists drawn with the real seed",
             ),  # fmt: skip
         ],
     )

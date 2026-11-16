@@ -243,6 +243,11 @@ These are warnings for the coordinator, never silent corrections.
   Center) are set only for the 2026 general; other elections fall back to the upload deadline.
   Derive defaults from the calendar (CVRs: the upload deadline plus 4 hours; manifests and upload
   status: the roll minus 2 hours), overridable in `election.toml`.
+- **TODO: predict contest by contest after the seed.** The prediction made when the seed is
+  entered is all or nothing: one contest that can't be predicted (a county's manifest missing, say)
+  leaves every county without a prediction, and so without an RLA extract until its pull list
+  arrives. Predict each contest that can be worked out, record those, and list the others with the
+  reason, as the targeting menu does with a practice seed.
 
 ### 5. Timestamping
 
