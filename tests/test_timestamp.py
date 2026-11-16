@@ -745,3 +745,20 @@ def test_the_published_message_starts_with_the_explainer() -> None:
     message = _publish_message("SUMS.txt", data, 7, title="2026 General, timestamp v3", ots_status="complete", signer=None, explainer=link)
     assert message.splitlines()[:4] == ["2026 General, timestamp v3", "", f"These files are explained at {link}", ""]
     assert "These files are explained" not in _publish_message("SUMS.txt", data, 7, title=None, ots_status="complete", signer=None)
+
+
+def test_the_explainer_is_found_in_a_sparse_mirror(ws: Workspace, log: EventLog, out_repo: Path, fake_tools: Path) -> None:
+    """A sparse checkout without observerfiles/ (as on the live server) still links the explanation."""
+    (out_repo / "observerfiles").mkdir()
+    (out_repo / "observerfiles" / "evidence-timestamping.md").write_text("how to check\n")
+    git(out_repo, "add", "observerfiles")
+    git(out_repo, "commit", "--quiet", "-m", "explanation")
+    remote = _remote(out_repo)
+    git(out_repo, "remote", "set-url", "origin", "https://github.com/example/mirror.git")
+    git(out_repo, "remote", "set-url", "--push", "origin", str(remote))
+    git(out_repo, "sparse-checkout", "set", "--no-cone", "/README.md", f"/{SUBDIR}/")
+    assert not (out_repo / "observerfiles" / "evidence-timestamping.md").exists()
+    commit_evidence(ws, log, election=ELECTION, out_repo=out_repo, actor=ACTOR)
+    shown = publish_evidence(log, out_repo=out_repo, title="2026 General, timestamp v1", dry_run=True)
+    link = "https://github.com/example/mirror/blob/main/observerfiles/evidence-timestamping.md"
+    assert shown.message.splitlines()[:3] == ["2026 General, timestamp v1", "", f"These files are explained at {link}"]

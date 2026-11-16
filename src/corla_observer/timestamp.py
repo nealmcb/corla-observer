@@ -1224,7 +1224,9 @@ def publish_evidence(
         files.append(log_rel)
         published_log = {"path": log_rel, "events": head_seq, "head_hash": head_hash}
     branch = _git(out_repo, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
-    explainer = _web_link(remote, branch, EXPLAINER) if remote and branch and (out_repo / EXPLAINER).is_file() else None
+    # Asked of the repository, not the working tree: a sparse checkout may leave the file out.
+    in_repo = _git(out_repo, "cat-file", "-e", f"HEAD:{EXPLAINER}", check=False).returncode == 0
+    explainer = _web_link(remote, branch, EXPLAINER) if remote and branch and in_repo else None
     message = _publish_message(name, data, event.seq, title=title, ots_status=ots_status, signer=signer, replaced=replaced, remote=remote,
                                log=published_log, explainer=explainer)  # fmt: skip
     earlier = data.get("commit")
