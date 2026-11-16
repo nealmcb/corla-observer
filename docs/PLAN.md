@@ -269,6 +269,14 @@ These are warnings for the coordinator, never silent corrections.
   and a dash and removing blanks: `Morgan-LATBallotManifest.csv`,
   `La_Plata-Modified_CVR_Export_20261113122247.csv`. Keep the name the county gave it in the
   record (`original_name`), so the two can always be matched.
+- **TODO: export the contests and the numbers behind the selections.** Others checking the
+  selections independently start from whatever file they have, which may be out of date (the
+  target list's spreadsheet, before CORLA's round-one contest list is posted). Offer a download,
+  on the coordinator pages and as a command, of the data map's targeted contests as CSV: each
+  contest's name, counties, statewide or not, margin, risk limit, ballot cards in its domain,
+  sample count and where each came from (CORLA's contest list, or an estimate and its inputs),
+  with the county order, the manifests' card totals and the seed in effect, so a second
+  implementation can reproduce the draws from exactly the same inputs.
 - **TODO: use the targeting terms consistently.** docs/TARGETING.md defines **style**, **contest
   group** and **domain** (its "Terms"). Bring the rest of the docs, the targeting page and the
   code's names into line with them where they differ, and check that CORLA's own documents use
