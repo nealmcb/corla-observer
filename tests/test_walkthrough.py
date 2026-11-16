@@ -154,10 +154,13 @@ def test_the_web_pages_say_it_is_a_walkthrough(tmp_path: Path, replay: Path) -> 
         assert "Next step: results" in page.text and "2026-11-06 17:00" in page.text
         # Only the target list has arrived: nothing else is a problem yet.
         datamap = client.get("/coord/map").text
-        assert "Not yet expected" in datamap and "0 of 63 posted" in datamap and "Problems (0)" in datamap
+        assert "Still to come" in datamap and "0 of 63 posted" in datamap and "Problems (0)" in datamap
         assert "no_manifest" not in datamap and "no manifest" not in datamap
-        assert "Data map: 0 problems" in client.get("/coord").text
-        assert "nothing blocking" in client.get("/").text
+        # The coordinator home and the public dashboard carry no data map messages.
+        home = client.get("/coord").text
+        assert ">Data map<" in home and "problem" not in home.lower().split("next steps")[0]
+        dashboard = client.get("/").text
+        assert "blocking" not in dashboard and "Data map problems" not in dashboard
         home = client.get("/coord")
         assert "nothing is fetched from the real sites" in home.text
 

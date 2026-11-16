@@ -504,7 +504,8 @@ def test_describe_for_ai_and_explain(ws: Workspace, log: EventLog) -> None:
     datamap = build_map(log, ws)
     text = describe(datamap, for_ai=True)
     assert text.startswith("# corla-observer data map")
-    assert "ERROR no_seed" in text and "## Overrides format" in text and "[[manifest_adjustment]]" in text
+    assert "still to come:" in text and "Seed: not yet entered" in text and "ERROR no_seed" not in text
+    assert "## Overrides format" in text and "[[manifest_adjustment]]" in text
     explained = explain(datamap, "files/Boulder.csv")
     assert '"count": "# of Ballot Cards"' in explained and "chosen as Boulder's manifest" in explained
     assert "matches no file" in explain(datamap, "nothing.csv")
@@ -524,12 +525,14 @@ def test_cli_map_commands(ws: Workspace, log: EventLog) -> None:
     assert "Seed: not yet entered, due at the roll, Mon 16 Nov 10:00 AM" in early.output and "no_seed" not in early.output
     show = runner.invoke(app, ["map", "show", "--workspace", root, "--as-of", "2026-11-16 11:00"])
     assert show.exit_code == 0, show.output
-    assert "election: 2026/general" in show.output and "ERROR no_seed" in show.output
+    assert "election: 2026/general" in show.output and "problems: none" in show.output
+    assert "Seed: not yet entered, due Mon 16 Nov 10:00 AM" in show.output and "ERROR" not in show.output
     waiting = runner.invoke(app, ["map", "check", "--workspace", root, "--county", "Adams", "--as-of", "2026-11-07 09:00"])
-    assert waiting.exit_code == 0 and "not yet expected:" in waiting.output
+    assert waiting.exit_code == 0 and "still to come:" in waiting.output
     check = runner.invoke(app, ["map", "check", "--workspace", root, "--county", "Adams", "--as-of", "2026-11-16 11:00"])
-    assert check.exit_code == 1 and "no_seed" in check.output
-    assert "statewide_counties_assumed" in check.output and "Weld" in check.output
+    # After the roll the missing seed blocks a sampling run (exit 1), but it is still to come, not a problem.
+    assert check.exit_code == 1 and "Seed: not yet entered" in check.output and "no_seed" not in check.output
+    assert "statewide_counties_assumed" not in check.output
     as_json = runner.invoke(app, ["map", "show", "--workspace", root, "--json"])
     assert json.loads(as_json.output)["election"] == "2026/general"
     added = runner.invoke(

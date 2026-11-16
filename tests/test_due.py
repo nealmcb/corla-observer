@@ -63,7 +63,8 @@ def test_calendars_and_due_texts() -> None:
     assert calendar_for("2030/odd").times == {}
 
 
-def test_missing_inputs_are_not_problems_before_they_are_due(ws: Workspace, log: EventLog) -> None:
+def test_missing_inputs_are_never_problems(ws: Workspace, log: EventLog) -> None:
+    """A missing input is still to come, before its due time and after it: never a problem."""
     fetch(ws, log, election_files(files_Adams_csv=None))
     datamap = build_map(log, ws)
     raw = {p.code for p in datamap.check()}
@@ -80,18 +81,26 @@ def test_missing_inputs_are_not_problems_before_they_are_due(ws: Workspace, log:
     assert any(t.startswith("Redacted CVRs of the counties followed: 0 of 1 received (none yet from Weld)") for t in texts)
     assert early.valid_until == GENERAL.at("tabulation_deadline")
 
-    # After the upload deadline: the manifests and the counties' files are problems; the seed is not yet due.
+    # After the upload deadline: the manifests and the counties' files are still to come, not problems.
     later = stage(datamap, datamap.check(), now=AFTER_UPLOADS, calendar=GENERAL, followed=["Weld"])
-    codes = {p.code for p in later.current}
-    assert {"no_manifest", "statewide_counties_assumed", "no_upload_status", "no_redacted_cvr"} <= codes
-    assert "no_seed" not in codes and "estimated_sample_count" not in codes
-    assert [w.key for w in later.waiting] == ["seed", "contest_list", "selections", "pull_lists"]
+    assert later.current == [] and later.errors == 0 and later.lines == []
+    assert [w.key for w in later.waiting] == [
+        "manifests",
+        "upload_status",
+        "cvrs",
+        "seed",
+        "contest_list",
+        "selections",
+        "pull_lists",
+    ]
+    assert "Manifests: 2 of 63 posted, due Fri 13 Nov 2:00 PM" in [w.text for w in later.waiting]
     assert later.valid_until == GENERAL.at("roll")
 
-    # After the roll, everything missing is a problem again.
+    # After the roll, the same: the seed is still to come, its due time passed.
     after = stage(datamap, datamap.check(), now=AFTER_ROLL, calendar=GENERAL, followed=["Weld"])
-    assert {"no_seed", "estimated_sample_count", "no_selections_yet", "no_pull_list"} <= {p.code for p in after.current}
-    assert after.waiting == [] and after.valid_until is None and after.errors >= 2
+    assert after.current == [] and after.errors == 0 and after.valid_until is None
+    assert "Seed: not yet entered, due Mon 16 Nov 10:00 AM" in [w.text for w in after.waiting]
+    assert {"no_seed", "estimated_sample_count", "no_manifest"} <= {p.code for p in after.held}
 
 
 def test_without_a_calendar_nothing_missing_is_overdue(ws: Workspace, log: EventLog) -> None:
@@ -115,12 +124,14 @@ def test_something_present_but_wrong_is_always_a_problem(ws: Workspace, log: Eve
     assert "no_manifest" not in {p.code for p in early.current}
 
 
-def test_without_a_clock_every_problem_is_current(ws: Workspace, log: EventLog) -> None:
+def test_without_a_clock_missing_inputs_are_still_to_come(ws: Workspace, log: EventLog) -> None:
     fetch(ws, log, election_files())
     datamap = build_map(log, ws)
     view = stage(datamap, datamap.check(), now=None, calendar=GENERAL)
-    assert {p.code for p in view.current} == {p.code for p in datamap.check()} and view.waiting == []
-    assert "ERROR no_seed" in describe(datamap)
+    assert "no_seed" not in {p.code for p in view.current} and "no_seed" in {p.code for p in view.held}
+    assert "Seed: not yet entered, due at the roll, Mon 16 Nov 10:00 AM" in [w.text for w in view.waiting]
+    text = describe(datamap)
+    assert "still to come:" in text and "ERROR no_seed" not in text
 
 
 def test_view_for_uses_the_setup_and_the_counties_with_uploads(ws: Workspace, log: EventLog, tmp_path: Path) -> None:
@@ -134,7 +145,7 @@ def test_view_for_uses_the_setup_and_the_counties_with_uploads(ws: Workspace, lo
     assert view.calendar.source == "the workspace's election.toml"
     assert view.followed == ["Adams", "La Plata", "Morgan", "Weld"]
     text = describe(datamap, view=view)
-    assert "not yet expected:" in text and "Manifests: 3 of 63 posted" in text and "problems: none" in text
+    assert "still to come:" in text and "Manifests: 3 of 63 posted" in text and "problems: none" in text
 
 
 def problem(code: str, county: str | None, severity: str = "error") -> Problem:
@@ -160,11 +171,11 @@ def test_problems_many_counties_share_are_one_line() -> None:
 def test_grouped_lines_in_the_text() -> None:
     from corla_observer.due import view_lines
 
-    problems = [problem("no_manifest", c) for c in ["Adams", "Alamosa", "Baca"]]
+    problems = [problem("conflicting_manifests", c) for c in ["Adams", "Alamosa", "Baca"]]
     lines = view_lines(stage(_empty_map(), problems, now=None, calendar=Calendar({}, "none")))
-    assert lines == [
+    assert lines[-3:] == [
         "problems (1):",
-        "  ERROR no_manifest: no usable manifest (3 counties): Adams, Alamosa, Baca",
+        "  ERROR conflicting_manifests: manifests that list different batches (3 counties): Adams, Alamosa, Baca",
         "    hint: do this",
     ]
 
@@ -183,8 +194,10 @@ def test_the_dashboard_snapshot_is_staged_and_rebuilt_at_the_due_time(ws: Worksp
     assert early.not_yet["Weld"] == {"cvr": "Fri 13 Nov 2:00 PM", "corla": "Fri 13 Nov 2:00 PM"}
     assert any(w["key"] == "manifests" for w in early.waiting)
     late = views.build_snapshot(log, ws, ["Weld"], now=AFTER_ROLL)
-    assert late.error_count >= 2 and late.not_yet == {} and late.waiting == []
-    assert "no_seed" in {p["code"] for p in late.public_problems}
+    # After the roll the seed is still to come, not a problem.
+    assert late.error_count == 0 and late.not_yet == {}
+    assert "no_seed" not in {p["code"] for p in late.public_problems}
+    assert any(w["key"] == "seed" for w in late.waiting)
     # The cache rebuilds by itself once a due time it was judged before has passed.
     built: list[str | None] = []
 

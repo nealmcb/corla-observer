@@ -1,4 +1,4 @@
-"""When each kind of input is due, and the data map's problems as of a moment: what is wrong now, and what is not yet expected.
+"""When each kind of input is due, and the data map's problems as of a moment: what is wrong now, and what is still to come.
 
 The data map (`corla_observer.datamap`) reports everything missing for a
 sampling run, whatever the time: just after the target list is posted, that
@@ -25,17 +25,16 @@ calendar's earliest deadline (or, without a calendar, at the first
 update's time), so a fresh replay shows nothing overdue; otherwise the real
 time (`clock`).
 
-**Staging** (`stage`). Before its due time, or when no due time is known
-(no calendar: a workspace without an election setup, as a practice one
-after a reset), a missing input is not a problem: its problems (`Expected.codes`) are held back and it is listed in a
-short "not yet expected" summary with counts (`Waiting`: "Manifests: 0 of
-63 posted, due Fri 10 Jul 2:00 PM"). From its due time on, its problems are
-problems as before, and an input that has none of its own in the data map
-gets one (CORLA's upload status, a followed county's redacted CVR or pull
-list, CORLA's selections). Anything present but wrong (a file that cannot
-be read, a hash or batch mismatch, a manifest under another county's name)
-is a problem whatever the time: only the codes of missing inputs are ever
-held back.
+**Staging** (`stage`). A missing input is never a problem, before its due
+time or after it: observers see the files only when the Audit Center posts
+them, often well after the counties' deadlines. Its problems
+(`Expected.codes`) are held back and it is listed in a short "still to
+come" summary with counts and its due time (`Waiting`: "Manifests: 0 of 63
+posted, due Fri 10 Jul 2:00 PM"). Anything present but wrong (a file that
+cannot be read, a hash or batch mismatch, a manifest under another county's
+name) is a problem whatever the time: only the codes of missing inputs are
+ever held back. A sampling run still needs its inputs, and says so when
+asked for.
 
 **Grouping** (`group_problems`). When three or more counties have the same
 problem, it is one line with the count and the county names
@@ -140,7 +139,7 @@ EXPECTED: tuple[Expected, ...] = (
 
 @dataclass(frozen=True)
 class Waiting:
-    """An input not yet expected: how much of it has arrived, and when it is due."""
+    """An input still to come: how much of it has arrived, and when it is due."""
 
     key: str
     label: str
@@ -399,39 +398,6 @@ def _progress(item: Expected, datamap: DataMap, followed: Sequence[str]) -> tupl
     return True, "", []
 
 
-def _overdue(item: Expected, due: str, lacking: Sequence[str]) -> list[Problem]:
-    """The problems of an input past its due time that the data map has no problem of its own for."""
-    when = due_text(due)
-    if item.key == "upload_status":
-        return [
-            Problem(
-                "warning",
-                "no_upload_status",
-                f"CORLA's upload status has not been posted; counties' uploads were due {when}",
-                hint="fetch again; it shows which counties' manifests and CVRs CORLA imported",
-            )
-        ]
-    if item.key == "cvrs":
-        return [
-            Problem(
-                "warning",
-                "no_redacted_cvr",
-                f"{county}'s redacted CVR has not been provided; counties' CVRs were due in CORLA {when}",
-                hint="ask the county for it, and upload it",
-                county=county,
-            )
-            for county in lacking
-        ]
-    if item.key == "pull_lists":
-        return [
-            Problem("info", "no_pull_list", f"{county}'s pull list has not been received (expected after the roll, {when})", county=county)
-            for county in lacking
-        ]
-    if item.key == "selections":
-        return [Problem("info", "no_selections_yet", f"CORLA's selections have not been posted (expected after the roll, {when})")]
-    return []
-
-
 def stage(
     datamap: DataMap,
     problems: Iterable[Problem],
@@ -449,43 +415,44 @@ def stage(
     """
     items = list(problems)
     status = [results] if results else []
-    if now is None:
-        lines = group_problems(items, followed)
-        return ProblemView(None, now_source or "every input judged as due", calendar, items, [], [], lines, status, followed=list(followed))
+    # An input not yet in is never a problem, before its due time or after it: observers see the
+    # files only when the Audit Center posts them, often well after the counties' deadlines. It is
+    # listed as still to come, and its absence problems are held back. Problems are what is wrong
+    # in the files that are in.
     waiting: list[Waiting] = []
     held_codes: set[str] = set()
-    extra: list[Problem] = []
     upcoming: dict[str, str] = {}
     for key in (TARGETS, UPLOAD, ROLL):
         moment = calendar.at(key)
-        if moment and moment > now:
+        if moment and (now is None or moment > now):
             upcoming[key] = due_text(moment)
     for item in EXPECTED:
         if item.key in ("cvrs", "pull_lists") and not followed:
             continue
-        done, words, lacking = _progress(item, datamap, followed)
-        due = calendar.at(item.milestone)
+        done, words, _lacking = _progress(item, datamap, followed)
         if done:
             continue
+        held_codes |= item.codes
+        due = calendar.at(item.milestone)
         if due is None:
-            # Nothing can be overdue without a due time: it waits, with its due time unknown.
-            held_codes |= item.codes
             waiting.append(Waiting(item.key, item.label, words, "", "due date unknown (no election calendar)"))
-        elif due > now:
-            held_codes |= item.codes
-            when = due_text(due)
-            phrase = f"expected after the roll, {when}" if item.after else (f"due at the roll, {when}" if item.milestone == ROLL else f"due {when}")
-            waiting.append(Waiting(item.key, item.label, words, due, phrase))
+            continue
+        when = due_text(due)
+        if now is not None and due <= now:
+            phrase = f"expected after the roll ({when})" if item.after else f"due {when}"
+        elif item.after:
+            phrase = f"expected after the roll, {when}"
         else:
-            extra.extend(_overdue(item, due, lacking))
+            phrase = f"due at the roll, {when}" if item.milestone == ROLL else f"due {when}"
+        waiting.append(Waiting(item.key, item.label, words, due, phrase))
     current = [p for p in items if p.code not in held_codes]
     held = [p for p in items if p.code in held_codes]
     order = {"error": 0, "warning": 1}
-    current = sorted(current + extra, key=lambda p: (order.get(p.severity, 2), p.code))
-    future = sorted(t for t in calendar.times.values() if t > now)
+    current = sorted(current, key=lambda p: (order.get(p.severity, 2), p.code))
+    future = sorted(t for t in calendar.times.values() if now is None or t > now)
     return ProblemView(
         now,
-        now_source,
+        now_source or ("every due time judged as passed" if now is None else ""),
         calendar,
         current,
         held,
@@ -544,12 +511,12 @@ def view_for(
 
 
 def view_lines(view: ProblemView, *, hints: bool = True) -> list[str]:
-    """The view as text: the "not yet expected" summary, the status lines and the problem lines."""
+    """The view as text: the "still to come" summary, the status lines and the problem lines."""
     out: list[str] = []
     if view.now is not None:
         out.append(f"as of {colorado_time(view.now, seconds=False)} ({view.now_source}; due times from {view.calendar.source})")
     if view.waiting:
-        out.append("not yet expected:")
+        out.append("still to come:")
         out.extend(f"  {w.text}" for w in view.waiting)
     for line in view.status:
         out.append(line)

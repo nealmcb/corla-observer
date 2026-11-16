@@ -37,11 +37,6 @@
       <p class="meta">Head hash <code class="hash full">{{ snap.head_hash }}</code></p>
       <p class="meta">Observers' receipts are signed with the {{ receipt_key.algorithm }} key <code class="hash full">{{ receipt_key.key_id }}</code>, published at <a href="{{ url('/receipt-key') }}">receipt-key</a> (<a href="{{ url('/receipt-key.pem') }}">PEM</a>).</p>
     </div>
-    <div class="card stat">
-      <h2>Data map</h2>
-      <p class="big">{% if snap.public_error_count %}{{ badge('error', snap.public_error_count ~ ' blocking') }}{% else %}{{ badge('ok', 'nothing blocking') }}{% endif %}</p>
-      <p class="meta">{{ snap.public_problems|length }} problem{{ 's' if snap.public_problems|length != 1 else '' }} listed below{% if snap.waiting %}; {{ snap.waiting|length }} kind{{ 's' if snap.waiting|length != 1 else '' }} of input not yet expected{% endif %}</p>
-    </div>
   </section>
 
   {% set rla_boards = snap.boards|rejectattr('targeted')|list %}
@@ -112,17 +107,12 @@
     {% endif %}
   </section>
 
-  {% if snap.waiting or snap.status_lines %}
+  {% if snap.status_lines %}
   <section>
-    <h2>Not yet expected</h2>
-    {{ waiting_list(snap) }}
+    <h2>Results</h2>
+    <ul class="waiting">{% for line in snap.status_lines %}<li class="muted">{{ line }}</li>{% endfor %}</ul>
   </section>
   {% endif %}
-
-  <section>
-    <h2>Data map problems</h2>
-    {{ problem_list(snap.public_problems) }}
-  </section>
 
   <section>
     <h2>Recent fetch activity</h2>

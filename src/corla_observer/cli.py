@@ -700,13 +700,13 @@ def map_check(
     preview: PreviewOption = False,
     as_of: AsOfOption = None,
 ) -> None:
-    """List everything wrong for a sampling run, what is not yet expected, and every change flag to investigate.
+    """List everything wrong for a sampling run, what is still to come, and every change flag to investigate.
 
-    An input not yet due by the election's calendar is listed as not yet
-    expected, not as a problem. Exits 1 if anything due or wrong blocks a
-    sampling run (flags alone do not).
+    An input not yet in is listed as still to come, never as a problem. Exits
+    1 if a sampling run is blocked now: by something wrong, or by an input
+    still to come whose due time has passed (flags alone do not).
     """
-    from corla_observer.due import view_lines
+    from corla_observer.due import EXPECTED, view_lines
 
     datamap = _load_map(workspace, log_path, preview)
     problems = datamap.check(county or ())
@@ -719,7 +719,9 @@ def map_check(
         typer.echo("\n".join(lines))
         _echo_flags(flags)
     held = {p.code for p in view.held}
-    if view.errors or any(p.severity == "error" and p.code not in held for p in problems):
+    past_due = {w.key for w in view.waiting if w.due and view.now and w.due <= view.now}
+    blocking_held = {code for item in EXPECTED if item.key in past_due for code in item.codes}
+    if view.errors or any(p.severity == "error" and (p.code not in held or p.code in blocking_held) for p in problems):
         raise typer.Exit(1)
 
 

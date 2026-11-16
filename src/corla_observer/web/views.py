@@ -272,7 +272,7 @@ class Snapshot:
     problems: list[dict[str, Any]] = field(default_factory=list)
     #: The problems the public sees: none that reports what a flag reports.
     public_problems: list[dict[str, Any]] = field(default_factory=list)
-    #: The inputs not yet expected (`corla_observer.due.Waiting`), and status lines (election night results).
+    #: The inputs still to come (`corla_observer.due.Waiting`), and status lines (election night results).
     waiting: list[dict[str, Any]] = field(default_factory=list)
     status_lines: list[str] = field(default_factory=list)
     #: The time the problems were judged at (UTC) and what it is.
@@ -330,7 +330,7 @@ class Snapshot:
     statuses: dict[str, CountyAuditStatus] = field(default_factory=dict)
     #: Where the audit is, statewide (`corla_observer.progress`), for the top of the dashboard.
     progress: list[ProgressStep] = field(default_factory=list)
-    #: Per county, what is not yet expected from it, with its due text (``cvr``, ``corla``).
+    #: Per county, what is still to come from it, with its due text (``cvr``, ``corla``).
     not_yet: dict[str, dict[str, str]] = field(default_factory=dict)
 
     @property
@@ -519,7 +519,7 @@ def _apply_progress(snap: Snapshot) -> None:
 
 
 def _apply_view(snap: Snapshot, log: EventLog, workspace: Workspace, now: str | None) -> None:
-    """Stage the problems as of the clock (`corla_observer.due`): what is due, and what is not yet expected."""
+    """Stage the problems as of the clock (`corla_observer.due`): what is wrong, and what is still to come."""
     from corla_observer.due import UPLOAD, stage, view_for
 
     datamap = snap.datamap
