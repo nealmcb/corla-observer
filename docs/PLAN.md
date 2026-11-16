@@ -269,6 +269,27 @@ These are warnings for the coordinator, never silent corrections.
   and a dash and removing blanks: `Morgan-LATBallotManifest.csv`,
   `La_Plata-Modified_CVR_Export_20261113122247.csv`. Keep the name the county gave it in the
   record (`original_name`), so the two can always be matched.
+- **TODO: flags that say exactly what they compared, and only alarm when something changed.**
+  - A file new after the roll whose bytes match a file already held before the roll (e.g. a
+    county's upload of the manifest the Audit Center posted, and CORLA imported, days earlier) is
+    a confirmation, not a change: report it as information naming the earlier file it matches,
+    not as "changed after roll".
+  - Files CORLA always publishes after the roll (the county list, the round's contest list and
+    selections) are expected then: note their arrival, without a high-severity flag.
+  - Every flag and comparison names the exact files on each side: name, where it came from, its
+    hash and time (e.g. which results file, `state-386899-detailxml.zip`, against which manifest),
+    not only "the results of 2026-11-13 16:49 MST".
+  - Results sent by `scripts/relay_results.sh` are labelled as relayed (fetched from Clarity by
+    the relay on the named machine, on behalf of the named coordinator), not "uploaded by hand";
+    the upload already records the note and source address that say so.
+  - CORLA's HASH_MISMATCH and FAILED upload rows are refusals that the county follows with a new
+    upload (often a CVR first put in the manifest slot, then imported as a CVR): show them as
+    information, or leave them out, instead of a high flag. What matters is covered elsewhere: a
+    county with no imported manifest or CVR, and which file CORLA finally imported.
+  - Replace the bare "normal" badge with words that say what it means, and give each comparison
+    its own advice: a manifest's card count against the results' ballots cast differs whenever
+    some ballots have more than one card, so its advice names the cards-per-ballot assumption
+    used and the size of difference that would be worth asking the county about.
 - **TODO: export the contests and the numbers behind the selections.** Others checking the
   selections independently start from whatever file they have, which may be out of date (the
   target list's spreadsheet, before CORLA's round-one contest list is posted). Offer a download,
