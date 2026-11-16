@@ -940,6 +940,10 @@ def verify_command(name: str, signer: tuple[str, str]) -> str:
             f"--certificate-oidc-issuer {signer[1]} {name}")  # fmt: skip
 
 
+#: The mirror's explanation of the evidence files (what they are and how to check them), linked from each published commit.
+EXPLAINER = "observerfiles/evidence-timestamping.md"
+
+
 def _web_link(remote: str, commit: str, path: str) -> str | None:
     """A link to ``path`` as of ``commit`` on GitHub, if the remote is a GitHub repository."""
     match = re.match(r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)([^/]+)/([^/]+?)(?:\.git)?/?$", remote)
@@ -977,10 +981,14 @@ def _replaced_files(repo: Path, files: Sequence[str]) -> dict[str, str]:
 def _publish_message(
     name: str, data: Mapping[str, Any], event_seq: int, *, title: str | None, ots_status: str, signer: tuple[str, str] | None,
     replaced: Mapping[str, str] | None = None, remote: str | None = None, log: Mapping[str, Any] | None = None,
+    explainer: str | None = None,
 ) -> str:  # fmt: skip
-    """The published commit's message: ``title`` (or a default headline), then what it holds and how to check it."""
+    """The published commit's message: ``title`` (or a default headline), then a link to ``explainer`` (the mirror's
+    explanation of these files) if given, then what it holds and how to check it."""
     default = f"Observer evidence for {data.get('election')}: {name} ({data.get('files')} files)"
     lines = [title or default, ""]
+    if explainer:
+        lines += [f"These files are explained at {explainer}", ""]
     if title:
         lines.append(f"{name}: {data.get('files')} files.")
     lines += [
@@ -1215,8 +1223,10 @@ def publish_evidence(
             _check_log_passes(exported, int(data["log_head_seq"]), str(data["log_head_hash"]))
         files.append(log_rel)
         published_log = {"path": log_rel, "events": head_seq, "head_hash": head_hash}
+    branch = _git(out_repo, "rev-parse", "--abbrev-ref", "HEAD", check=False).stdout.strip()
+    explainer = _web_link(remote, branch, EXPLAINER) if remote and branch and (out_repo / EXPLAINER).is_file() else None
     message = _publish_message(name, data, event.seq, title=title, ots_status=ots_status, signer=signer, replaced=replaced, remote=remote,
-                               log=published_log)  # fmt: skip
+                               log=published_log, explainer=explainer)  # fmt: skip
     earlier = data.get("commit")
     if dry_run:
         return PublishResult(name, str(data["sums_sha256"]), files, message, ots_status, None, None, [])

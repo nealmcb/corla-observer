@@ -16,7 +16,7 @@ needs_git = pytest.mark.skipif(shutil.which("git") is None, reason="needs git")
 
 
 def test_version() -> None:
-    assert __version__ == "0.1.0"
+    assert __version__ == "0.2.0"
 
 
 def _repo(tmp_path: Path) -> Path:
