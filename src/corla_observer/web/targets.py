@@ -214,6 +214,17 @@ def _added(request: Request) -> list[str]:
     return [a for a in request.query_params.getlist("add") if a.strip()][:MAX_ADDED]
 
 
+#: Practice seeds for the targeting page before the RLA seed: "DUMMY PREVIEW 1", then 2, and so on. A
+#: draw made with one records it like any entered seed, so it can't pass for the real one.
+DUMMY_SEED = "DUMMY PREVIEW"
+
+
+def next_dummy_seed(seed: str) -> str:
+    """The dummy seed after ``seed``: ``DUMMY PREVIEW 1`` unless ``seed`` is one, then the next number."""
+    found = re.fullmatch(re.escape(DUMMY_SEED) + r" (\d{1,6})", seed)
+    return f"{DUMMY_SEED} {int(found.group(1)) + 1 if found else 1}"
+
+
 def _seed_in_effect(state: WebState) -> str:
     current = seed_state(state.log.iter_events()).current
     return current.seed if current else ""
@@ -864,8 +875,13 @@ def _menu_view(state: WebState, request: Request, county: str) -> dict[str, Any]
     inputs unreadable) is shown as ``error``, and the rest of the page as usual.
     """
     view: dict[str, Any] = {"error": None, "pct": tm.pct, "line_rows": tm.line_rows}
+    given = " ".join(request.query_params.get("seed", "").split())[: tg.MAX_SEED]
+    in_effect = _seed_in_effect(state)
     try:
-        inputs = tm.gather(state.workspace, state.log, county, datamap=state.cache.get().datamap)
+        # Before the roll, a seed entered here also stands in for the RLA seed in predicting CORLA's draws.
+        inputs = tm.gather(
+            state.workspace, state.log, county, datamap=state.cache.get().datamap, practice_seed=None if in_effect else given or None
+        )
         menu = tm.build_menu(inputs)
     except Exception as exc:  # noqa: BLE001 - the rest of the page still works without the menu
         view["error"] = str(exc) or type(exc).__name__
@@ -880,14 +896,13 @@ def _menu_view(state: WebState, request: Request, county: str) -> dict[str, Any]
     allocations = {s: menu.allocate(budget, s) for s in (tm.MINIMAX, tm.LADDER)}
     chosen = allocations[strategy]
     suggested = tm.suggested_draws(menu, chosen)
-    given = " ".join(request.query_params.get("seed", "").split())[: tg.MAX_SEED]
     return view | {
         "menu": menu, "budget": budget, "typed": typed if typed.isdigit() else "", "strategy": strategy,
         "allocations": allocations, "chosen": chosen, "suggested": suggested, "suggested_total": sum(d.cards for d in suggested),
         "suggestion_text": tm.suggestion_text(menu, chosen), "updated": request.query_params.get("updated") == "1",
         "card_tags": tm.card_tags, "default_budget": tm.DEFAULT_BUDGET, "page_intro": PAGE_INTRO, "tie_note": tm.TIE_NOTE,
-        "limit": tm.limit_text(menu.limit), "style_note": tm.STYLE_NOTE, "seed": given or _seed_in_effect(state),
-        "seed_given": bool(given), "max_draw": tg.MAX_DRAW, "max_seed": tg.MAX_SEED, "max_budget": tm.MAX_BUDGET,
+        "limit": tm.limit_text(menu.limit), "style_note": tm.STYLE_NOTE, "seed": given or in_effect,
+        "seed_given": bool(given), "dummy": given.startswith(DUMMY_SEED), "rla_seed": bool(in_effect), "dummy_next": next_dummy_seed(given), "max_draw": tg.MAX_DRAW, "max_seed": tg.MAX_SEED, "max_budget": tm.MAX_BUDGET,
         "draw_size": tg.DOMAIN_DRAW_SIZE,
     }  # fmt: skip
 

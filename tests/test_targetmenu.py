@@ -819,7 +819,7 @@ def test_the_targets_page_opens_with_the_suggestion_and_draws_it_with_one_button
             in text
         )
         assert (
-            "No seed yet" in text and "Draw these 20 cards" not in text
+            "No RLA seed yet" in text and "Draw these 20 cards" not in text
         )  # this workspace has no seed yet
         assert (
             '<details id="how-this-works">' in text
@@ -1284,3 +1284,25 @@ def test_impossible_diluted_margin_gives_no_numbers() -> None:
     assert tm.km_risk(10, 22.5) == 1.0
     assert tm.draws_to(0.03, 22.5) is None
     assert tm.draws_to(0.03, 1.0) is not None
+
+
+def test_next_dummy_seed_counts_up() -> None:
+    from corla_observer.web.targets import next_dummy_seed
+
+    assert next_dummy_seed("") == "DUMMY PREVIEW 1"
+    assert next_dummy_seed("DUMMY PREVIEW 1") == "DUMMY PREVIEW 2"
+    assert next_dummy_seed("DUMMY PREVIEW 9") == "DUMMY PREVIEW 10"
+    assert next_dummy_seed("some other text") == "DUMMY PREVIEW 1"
+
+
+def test_the_targets_page_offers_dummy_seeds_before_the_rla_seed(tmp_path: Path) -> None:
+    _, root = _workspace(tmp_path)
+    app = create_app(AppConfig(workspace=root, secret=b"s" * 32, crawl=lambda ws, log: None))
+    with TestClient(app, base_url="https://testserver") as client:
+        assert login(client).status_code == 303
+        text = client.get(f"/coord/targets?county={COUNTY}").text
+        assert "No RLA seed yet" in text and "Practice with a dummy seed: DUMMY PREVIEW 1" in text
+        dummy = client.get(f"/coord/targets?county={COUNTY}&seed=DUMMY+PREVIEW+1").text
+        assert "Practice seed <code>DUMMY PREVIEW 1</code>, not the RLA seed" in dummy
+        assert "Next dummy seed: DUMMY PREVIEW 2" in dummy and "Draw these 20 cards" in dummy
+

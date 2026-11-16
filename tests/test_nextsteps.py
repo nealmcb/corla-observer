@@ -21,18 +21,23 @@ def _states(county: str, facts: Facts) -> dict[str, list[str]]:
 
 def test_nothing_yet_then_each_path_moves_on() -> None:
     assert _states("Delta", Facts()) == {
-        "Targeted sample": ["next", "later", "later", "later", "later", "later"],
+        "Targeted sample": ["next", "later", "later"],
         "RLA sample": ["next", "later", "later", "later", "later"],
     }
-    # Before the seed: the targeted path goes on, the RLA path waits for the seed.
+    # Before the seed: experiment with targeting (never done); the RLA path waits for the seed.
     before_seed = Facts(cvr=True, manifest=True, sources=True, drafts=1, observer_links=2)
     assert _states("Delta", before_seed) == {
-        "Targeted sample": ["done", "done", "done", "done", "done", "next"],
+        "Targeted sample": ["done", "done", "next"],
         "RLA sample": ["done", "next", "later", "later", "done"],
     }
     rla, targeted = next_steps("Delta (2020 demo)", before_seed)
-    assert targeted.steps[-1].path == "/coord/targets?county=Delta%20%282020%20demo%29#drafts" and "1 open draft" in targeted.steps[3].detail
+    assert targeted.steps[-1].text == "Experiment with targeting" and targeted.steps[-1].path == "/coord/targets?county=Delta%20%282020%20demo%29"
     assert "2 observer links so far" in rla.steps[-1].detail and not targeted.finished
+    # After the seed: the real targeted path.
+    after_seed = Facts(cvr=True, manifest=True, sources=True, drafts=1, observer_links=2, seed=True)
+    rla, targeted = next_steps("Delta (2020 demo)", after_seed)
+    assert [s.state for s in targeted.steps] == ["done", "done", "done", "done", "done", "next"]
+    assert targeted.steps[-1].path == "/coord/targets?county=Delta%20%282020%20demo%29#drafts" and "1 open draft" in targeted.steps[3].detail
     # Sending a list straight from the working list also finishes the draft step; an RLA extract finishes the pull-list step.
     done = Facts(cvr=True, manifest=True, sources=True, sent=1, observer_links=1, seed=True, rla_extract=True)
     assert all(p.finished for p in next_steps("Delta", done))
@@ -52,6 +57,6 @@ def test_the_home_page_shows_the_remembered_or_chosen_county(tmp_path: Path) -> 
         assert '<section id="next-steps">' in page and "Choose a county to see what to do next" in page
         page = client.get("/coord?county=Testland").text
         assert "Next steps for Testland" in page and "Targeted sample path" in page and "RLA sample path" in page
-        assert "all done" in page  # Populate drew, sent and made a link
+        assert "Experiment with targeting" in page  # no seed yet: the targeted path is practice
         assert '<a href="/coord/seed"><strong>The seed is rolled</strong></a>' in page
         assert made.observer_token

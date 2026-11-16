@@ -27,7 +27,14 @@
       {% for d in m.suggested %}<input type="hidden" name="draw" value="{{ d.key }}:{{ d.cards }}">{% endfor %}
       <button type="submit" class="target-draw-all-button">Draw these {{ m.suggested_total }} card{{ '' if m.suggested_total == 1 else 's' }}</button>
     </form>
-    {% else %}<p class="notice"><span aria-hidden="true">&#9650;</span> No seed yet: enter one under "How this works" to draw.</p>{% endif %}
+    {% else %}<p class="notice"><span aria-hidden="true">&#9650;</span> No RLA seed yet: to practice, use a dummy seed below, or enter one under "How this works".</p>{% endif %}
+    {% endif %}
+    {% if m.dummy %}<p class="notice"><span aria-hidden="true">&#9679;</span> Practice seed <code>{{ m.seed }}</code>, not the RLA seed. Draws made with it record it, so they can't pass for real ones.</p>{% endif %}
+    {% if m.dummy or not m.rla_seed %}
+    <form method="get" action="{{ url('/coord/targets') }}#suggestion-result" class="actions">
+      <input type="hidden" name="county" value="{{ county }}">{% if m.typed %}<input type="hidden" name="budget" value="{{ m.typed }}">{% endif %}<input type="hidden" name="strategy" value="{{ m.strategy }}"><input type="hidden" name="updated" value="1"><input type="hidden" name="seed" value="{{ m.dummy_next }}">
+      <button type="submit" class="secondary small">{{ 'Next dummy seed' if m.dummy else 'Practice with a dummy seed' }}: {{ m.dummy_next }}</button>
+    </form>
     {% endif %}
     <form method="get" action="{{ url('/coord/targets') }}#suggestion-result" class="actions target-budget">
       <input type="hidden" name="county" value="{{ county }}"><input type="hidden" name="updated" value="1">{% if m.seed_given %}<input type="hidden" name="seed" value="{{ m.seed }}">{% endif %}
@@ -69,7 +76,7 @@
   {% for line in menu.lines %}{% set g = line.group %}{% set n = (chosen.draws.get(g.key, 0) if chosen else 0) %}{% set rows = m.line_rows(line, menu.steps) %}
     <li id="domain-{{ g.key|replace(',', '-') }}" class="target-card">
       <p class="target-card-name"><strong>{{ line.title }}</strong> {% for t in m.card_tags(line) %}{{ badge(t.kind, t.word) }} {% endfor %}</p>
-      <p class="target-card-risk">{% if line.riskiest %}Risk now {{ m.pct(line.now) }}{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }} → {{ m.pct(line.riskiest.risk_after(n)) }}</strong>{% else %}; not in the suggestion{% endif %}{% else %}No risk to lower{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }}</strong>{% else %}; not in the suggestion{% endif %}{% endif %}</p>
+      <p class="target-card-risk">{% if line.riskiest %}Risk now {{ m.pct(line.now) }}{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }} → {{ m.pct(line.riskiest.risk_after(n)) }}</strong>{% else %}; not in the suggestion{% endif %}{% else %}{% set all_uncontested = line.members|rejectattr('uncontested')|list|length == 0 %}No risk to lower{% if all_uncontested %}: uncontested{% endif %}{% if n %}; <strong>+{{ n }} card{{ '' if n == 1 else 's' }}</strong>, to check that the CVR records {{ 'it' if line.members|length == 1 else 'them' }}{% else %}; not in the suggestion{% endif %}{% endif %}</p>
       <details class="target-card-more"><summary>More</summary>
         <p class="meta">{{ row_html(rows[0]) }}</p>
         {% for row in rows[1:] %}<p class="target-menu-row">{{ row_html(row) }}</p>{% endfor %}

@@ -692,7 +692,10 @@ def _real_sources(workspace: Workspace, log: EventLog, name: str, datamap: DataM
         first = "audit_center" if posting.obtained and pulled and posting.obtained < pulled else "pull_list"
     if pull_sha is None and not published:
         if seed is None:
-            raise ExtractError(f"no pull list from {name} and no seed: upload its pull list, or enter the seed and predict")
+            raise ExtractError(
+                f"no pull list from {name} and no seed: the RLA extract waits for the county's pull list or the seed "
+                "(a targeted list's extract is made when the list is sent, on the Targets page)"
+            )
         if prediction is None:
             raise ExtractError(
                 f"no pull list from {name}, no posting of CORLA's selections, and no prediction from the seed in effect: "

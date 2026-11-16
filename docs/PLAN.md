@@ -243,6 +243,20 @@ These are warnings for the coordinator, never silent corrections.
   Center) are set only for the 2026 general; other elections fall back to the upload deadline.
   Derive defaults from the calendar (CVRs: the upload deadline plus 4 hours; manifests and upload
   status: the roll minus 2 hours), overridable in `election.toml`.
+- **TODO: predict contest by contest after the seed.** The prediction made when the seed is
+  entered is all or nothing: one contest that can't be predicted (a county's manifest missing, say)
+  leaves every county without a prediction, and so without an RLA extract until its pull list
+  arrives. Predict each contest that can be worked out, record those, and list the others with the
+  reason, as the targeting menu does with a practice seed.
+- **TODO: evidence commitments from the coordinator page.** Today `commit-evidence` and
+  `publish-evidence` (docs/TIMESTAMPING.md) are run on the server's command line. Add a "Commit
+  evidence" button that runs `commit-evidence` in the background, shows Sigstore's link and code
+  on the page for the signer to log in, and then each step's outcome; a "Publish" button once the
+  OpenTimestamps proof is complete; and reminders on the coordinator home page at the times
+  TIMESTAMPING.md names (before the roll, when the extracts are ready, at the end of each audit
+  day, at the close). Open question: publishing pushes to the mirror repository, which today
+  needs the coordinator's forwarded SSH agent; a button would need them connected at the time, or
+  a stored credential limited to that repository.
 
 ### 5. Timestamping
 

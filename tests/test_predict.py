@@ -196,3 +196,20 @@ def test_uploaded_manifest_feeds_the_prediction(ws: Workspace, log: EventLog) ->
     enter_and_confirm(log, SEED, ACTOR, "test")
     statewide = predict(build_map(log, ws)).contests[0]
     assert statewide.counties == ["Adams", "Boulder", "Weld"] and statewide.domain_size == 165
+
+
+def test_a_practice_seed_predicts_corla_draws_before_the_rla_seed(ws: Workspace, log: EventLog) -> None:
+    from corla_observer.targetmenu import corla_draws
+
+    fetch(ws, log, election_files())
+    datamap = build_map(log, ws)
+    assert corla_draws(ws, log, datamap, "Adams")[1] == "no RLA draws known yet"
+    ids, source, notes = corla_draws(ws, log, datamap, "Adams", "DUMMY PREVIEW 1")
+    assert "practice seed DUMMY PREVIEW 1 (not the RLA seed)" in source
+    # The statewide contest's counties are only those with a manifest so far: left out, with a note.
+    assert any("1 statewide contest(s) left out" in n for n in notes)
+    local = predict(datamap, contests=["Adams County Clerk - Republican Party (Adams)"], seed="DUMMY PREVIEW 1").contests[0]
+    assert ids == [d.imprinted_id for d in local.draws_for("Adams")] and ids
+    # Once the RLA seed is entered, the practice seed is ignored.
+    enter_and_confirm(log, SEED, ACTOR, "test")
+    assert "practice seed" not in corla_draws(ws, log, build_map(log, ws), "Adams", "DUMMY PREVIEW 1")[1]
