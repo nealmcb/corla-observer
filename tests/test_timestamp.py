@@ -734,3 +734,14 @@ def test_publish_evidence_publishes_the_waiting_mirror_commits_first(ws: Workspa
     with EventLog.open(ws.root, read_only=True) as log:
         kinds = [e.kind for e in log.iter_events() if e.kind in ("mirror.updated", "evidence.published")]
     assert kinds == ["mirror.updated", "evidence.published"]
+
+
+def test_the_published_message_starts_with_the_explainer() -> None:
+    from corla_observer.timestamp import EXPLAINER, _publish_message, _web_link
+
+    link = _web_link("git@github.com:nealmcb/auditcenter.git", "main", EXPLAINER)
+    assert link == "https://github.com/nealmcb/auditcenter/blob/main/observerfiles/evidence-timestamping.md"
+    data = {"election": "2026/general", "files": 3, "log_head_seq": 1, "log_head_hash": "h", "software": "corla-observer 0.2.0"}
+    message = _publish_message("SUMS.txt", data, 7, title="2026 General, timestamp v3", ots_status="complete", signer=None, explainer=link)
+    assert message.splitlines()[:4] == ["2026 General, timestamp v3", "", f"These files are explained at {link}", ""]
+    assert "These files are explained" not in _publish_message("SUMS.txt", data, 7, title=None, ots_status="complete", signer=None)
