@@ -1,9 +1,10 @@
 """What a coordinator might do next for a county, along two paths: the targeted sample and the RLA sample.
 
 Shown on the coordinator home page (docs/PLAN.md, feedback item 1). Before the seed is rolled a
-coordinator can already explore the **targeted sample** path: upload the county's redacted CVR
-and manifest, draw from patterns of votes (docs/TARGETING.md), make a draft or a list, make
-observer links, and send a list to the county. The **RLA sample** path waits for the seed: then
+coordinator uploads the county's redacted CVR and manifest and experiments with the **targeted
+sample** (the targeting menu with a dummy seed, docs/TARGETING.md); once the seed is entered, the
+targeted path is the real one: draw, make a draft or a list, make observer links, and send a list
+to the county. The **RLA sample** path waits for the seed: then
 the county's pull list (or CORLA's posted selections, or the prediction) gives the RLA extract
 observers follow. Both paths may be followed at once.
 
@@ -82,12 +83,26 @@ def next_steps(county: str, facts: Facts) -> list[Path]:
         "one per observer and board; a link shows every list the county has",
     )  # fmt: skip
     cvr = Step("Upload the county's redacted CVR", facts.cvr, "/coord/upload", "the county's published cast vote record")
+    manifest = Step("Upload the ballot manifest", facts.manifest, "/coord/upload", "gives each ballot's storage location for the pull list")
+    # Before the real seed, the targeting menu can't yet count CORLA's sample: experiment with a dummy seed.
+    practice = Path(
+        "Targeted sample",
+        "Ballots chosen by the targeting menu or by imprinted ID. Before the roll, experiment; the real lists follow the seed.",
+        [
+            cvr,
+            manifest,
+            Step(
+                "Experiment with targeting", False, f"/coord/targets{q}",
+                "try the suggestion and its draws with a dummy seed (DUMMY PREVIEW 1, 2, ...); the steps to send lists follow once the real seed is entered",
+            ),  # fmt: skip
+        ],
+    )
     targeted = Path(
         "Targeted sample",
         "Ballots chosen by patterns of votes or by imprinted ID: possible before the seed.",
         [
             cvr,
-            Step("Upload the ballot manifest", facts.manifest, "/coord/upload", "gives each ballot's storage location for the pull list"),
+            manifest,
             Step("Draw from a pattern of votes, or enter imprinted IDs", facts.sources, f"/coord/targets{q}", "each draw or entry joins the working list"),
             Step(
                 "Make a draft, to print and check before deciding", facts.drafts > 0 or facts.sent > 0, f"/coord/targets{q}#list",
@@ -115,6 +130,8 @@ def next_steps(county: str, facts: Facts) -> list[Path]:
             Step(links.text, links.done, links.path, links.detail),
         ],
     )
+    if not facts.seed:
+        targeted = practice
     for p in (rla, targeted):
         _mark(p.steps)
     return [rla, targeted]
