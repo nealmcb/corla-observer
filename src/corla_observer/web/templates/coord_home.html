@@ -9,7 +9,7 @@
 <section class="actions">
   <a class="button" href="{{ url('/coord/upload') }}">Upload files</a>
   <a class="button secondary" href="{{ url('/coord/flags') }}">Flags: {{ snap.open_flags|length }} open{% if snap.high_flags %}, {{ snap.high_flags }} high{% endif %}</a>
-  <a class="button secondary" href="{{ url('/coord/map') }}">Data map: {{ snap.problems|length }} problem{{ 's' if snap.problems|length != 1 else '' }}{% if snap.error_count %}, {{ snap.error_count }} blocking{% endif %}</a>
+  <a class="button secondary" href="{{ url('/coord/map') }}">Data map</a>
   <a class="button secondary" href="{{ url('/coord/estimates') }}">Estimates</a>
   <a class="button secondary" href="{{ url('/coord/schedule') }}">Schedule</a>
 </section>
@@ -129,13 +129,6 @@
 </section>
 {% endif %}
 
-{% if snap.waiting %}
-<section>
-  <h2>Not yet expected</h2>
-  <ul class="waiting">{% for w in snap.waiting %}<li>{{ w.text }}</li>{% endfor %}</ul>
-  <p class="meta">As of {{ snap.as_of|local }} ({{ snap.as_of_source }}); these become problems only once due. <a href="{{ url('/coord/map') }}">The data map</a> lists the problems.</p>
-</section>
-{% endif %}
 
 <section>
   <h2>Counties</h2>

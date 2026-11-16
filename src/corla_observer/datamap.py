@@ -3187,9 +3187,9 @@ def describe(
     then left out (`corla_observer.flags.unflagged_problems`).
 
     ``view`` (`corla_observer.due.view_for`) judges the problems as of a
-    moment: inputs not yet due are summed up as "not yet expected" instead
-    of listed as problems. Without it, every problem is listed. Either way,
-    a problem many counties share is one line (`corla_observer.due.group_problems`).
+    moment: missing inputs are summed up as "still to come" instead
+    of listed as problems. A problem many counties share is one line
+    (`corla_observer.due.group_problems`).
     """
     out: list[str] = []
     w = out.append

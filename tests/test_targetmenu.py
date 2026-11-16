@@ -1235,3 +1235,52 @@ def test_the_suggestion_in_words_and_the_cards_tags(tmp_path: Path) -> None:
         0
     ]
     assert len(tm.card_tags(council)) <= tm.CARD_TAGS
+
+
+# ---------------------------------------------------------------------------
+# Local or regional, before CORLA's contest list by county is in
+
+
+def test_scope_from_the_states_results_by_county(tmp_path: Path) -> None:
+    """Without CORLA's list by county, a contest the state's results report in several counties is
+    regional, one they report in a single county is local, and the name decides only when the
+    results don't say. A different wording of the same name is matched by its words."""
+    votes = _votes(tmp_path)
+    inputs = _inputs(
+        votes,
+        corla={},
+        result_counties={"measure 1": 64, "mayor": 1, "district fire": 3},
+    )
+    f = _facts(tm.build_menu(inputs))
+    assert not f[MEASURE].local
+    assert f[MEASURE].scope_source == "the state's results (reported in 64 counties)"
+    assert f[MAYOR].local
+    assert f[MAYOR].scope_source == "the state's results (reported in 1 county)"
+    assert not f[FIRE].local  # "Fire District" matched by its words
+    assert f[COUNCIL].local and "assumed by name" in f[COUNCIL].scope_source
+
+
+def test_margin_larger_than_the_cards_is_not_used(tmp_path: Path) -> None:
+    """A statewide margin taken for a contest thought local (more votes than the county's cards)
+    must not reach Kaplan-Markov: the menu still builds, the margin is set aside with a note."""
+    votes = _votes(tmp_path)
+    inputs = _inputs(
+        votes,
+        corla={},
+        results={
+            "mayor": ({"Al Adams": 700000, "Bob Baker": 10}, "the state's results")
+        },
+    )
+    menu = tm.build_menu(inputs)
+    mayor = _facts(menu)[MAYOR]
+    assert mayor.local and mayor.margin is None
+    assert mayor.margin_source == "not usable (the state's results)"
+    assert any("can't be a contest local to the county" in n for n in inputs.notes)
+
+
+def test_impossible_diluted_margin_gives_no_numbers() -> None:
+    """A diluted margin above 1 (more votes than cards) means the inputs are wrong: no risk is
+    claimed, and no number of draws is offered, instead of a math domain error."""
+    assert tm.km_risk(10, 22.5) == 1.0
+    assert tm.draws_to(0.03, 22.5) is None
+    assert tm.draws_to(0.03, 1.0) is not None

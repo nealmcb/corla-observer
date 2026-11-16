@@ -182,12 +182,13 @@ def km_risk(
     """Kaplan-Markov risk of a ballot-level comparison audit after ``n`` draws, capped at 1.
 
     ``(1 - m/(2g))^n (1 - 1/(2g))^-o1 (1 - 1/g)^-o2 (1 + 1/(2g))^-u1 (1 + 1/g)^-u2``, with
-    ``m`` the diluted margin and ``g`` gamma; 1 for a margin of zero or less.
+    ``m`` the diluted margin and ``g`` gamma; 1 for a margin of zero or less, or above 1 (more
+    votes than cards: the inputs are wrong, and no risk can be claimed).
 
     >>> round(km_risk(10, 0.1), 6)
     0.610686
     """
-    if diluted_margin <= 0:
+    if diluted_margin <= 0 or diluted_margin > 1:
         return 1.0
     return min(1.0, _km_raw(n, diluted_margin, o1, o2, u1, u2, gamma))
 
@@ -204,9 +205,10 @@ def draws_to(
 ) -> int | None:
     """Fewest extra draws k with ``km_risk(n0 + k, ...) <= target``, assuming they show no discrepancy.
 
-    None when no number of draws gets there (a margin of zero or less).
+    None when no number of draws gets there (a margin of zero or less), or when the diluted
+    margin is above 1 (more votes than cards: the inputs are wrong).
     """
-    if diluted_margin <= 0 or target <= 0:
+    if diluted_margin <= 0 or diluted_margin > 1 or target <= 0:
         return None
     if km_risk(n0, diluted_margin, o1, o2, u1, u2, gamma) <= target:
         return 0
@@ -466,6 +468,9 @@ class MenuInputs:
     counties_known: bool = False
     #: Per `contest_key`: the votes per choice from the results, and their source.
     results: dict[str, tuple[dict[str, int], str]] = field(default_factory=dict)
+    #: Per `menu_key`: in how many counties the state's results report the contest (empty without
+    #: the state's results by county). Decides local or regional until CORLA's list by county is in.
+    result_counties: dict[str, int] = field(default_factory=dict)
     #: CORLA's draws on this county's cards: imprinted IDs, a card drawn twice listed twice.
     draws: list[str] = field(default_factory=list)
     draws_source: str = "no RLA draws known yet"
@@ -825,14 +830,31 @@ def contest_facts(inputs: MenuInputs) -> list[ContestFacts]:
         inputs.corla,
         inputs.county,
     )
+    # The state's results may word a contest differently ("Colorado Supreme Court Justice - Hood"
+    # for the CVR's "Justice of the Colorado Supreme Court - Hood"): match by words as a fallback,
+    # when the words pick out one contest.
+    by_words: dict[frozenset[str], list[int]] = {}
+    for result_key, count in inputs.result_counties.items():
+        by_words.setdefault(_words(result_key), []).append(count)
     facts = []
     for index, cv in sorted(votes.contests.items()):
         key = menu_key(cv.name)
         ckey = matched.get(key, key)
         corla = inputs.corla.get(ckey)
+        in_counties = inputs.result_counties.get(key) or inputs.result_counties.get(
+            ckey
+        )
+        if not in_counties and len(by_words.get(_words(key), [])) == 1:
+            in_counties = by_words[_words(key)][0]
         if inputs.counties_known and corla is not None and corla.counties is not None:
             scope = LOCAL if corla.counties == 1 else REGIONAL
             scope_source = "CORLA's contest list by county"
+        elif in_counties:
+            scope = LOCAL if in_counties == 1 else REGIONAL
+            scope_source = (
+                f"the state's results (reported in {in_counties} "
+                f"count{'y' if in_counties == 1 else 'ies'})"
+            )
         elif inputs.counties_known:
             scope = REGIONAL if _is_regional_by_name(cv.name) else LOCAL
             scope_source = "assumed by name (not in CORLA's contest list by county)"
@@ -865,6 +887,13 @@ def contest_facts(inputs: MenuInputs) -> list[ContestFacts]:
         )  # fmt: skip
         if ckey != key and corla is not None:
             fact.corla_name = corla.name
+        if fact.local and fact.margin and fact.domain_cards and fact.diluted_margin > 1:
+            inputs.notes.append(
+                f"{cv.name}: its margin of {fact.margin:,} votes ({fact.margin_source}) is more "
+                f"than its {fact.domain_cards:,} cards in the county, so it can't be a contest "
+                "local to the county; its risk is not computed."
+            )
+            fact.margin, fact.margin_source = None, f"not usable ({fact.margin_source})"
         official = Discrepancies()
         for row in drawn_rows:
             if not cv.carry >> row & 1:
@@ -2065,15 +2094,20 @@ def observed_comparisons(
 
 def _results(
     workspace: Workspace, log: EventLog, county: str
-) -> dict[str, tuple[dict[str, int], str]]:
-    """Votes per choice per contest from the results in hand: the state's (the whole contest, every county), else the county's own file."""
+) -> tuple[dict[str, tuple[dict[str, int], str]], dict[str, int]]:
+    """Votes per choice per contest from the results in hand: the state's (the whole contest, every county), else the county's own file.
+
+    Also, per contest, in how many counties the state's results report it (when they are by county),
+    which tells a contest local to the county from one spanning several (`MenuInputs.result_counties`).
+    """
     from corla_observer.enr import load_results
 
     found: dict[str, tuple[dict[str, int], str]] = {}
+    counties: dict[str, int] = {}
     try:
         loaded = load_results(workspace, log)
     except Exception:  # noqa: BLE001 - results that can't be read: as if none
-        return found
+        return found, counties
     state: Results | None = loaded["state"][0] if "state" in loaded else None
     own = next(
         (
@@ -2092,7 +2126,11 @@ def _results(
         for contest in results.contests:
             if contest.totals:
                 found[menu_key(contest.name)] = (dict(contest.totals), label)
-    return found
+    if state is not None and state.areas_are_counties:
+        for contest in state.contests:
+            if contest.by_area:
+                counties[menu_key(contest.name)] = len(contest.by_area)
+    return found, counties
 
 
 def remaining_budget(
@@ -2152,7 +2190,7 @@ def gather(
                 float(str(specs[0])),
                 "the target contest list",
             )
-        inputs.results = _results(workspace, log, county)
+        inputs.results, inputs.result_counties = _results(workspace, log, county)
         posted_list = posted_draws(datamap, workspace, county, inputs.corla)
         if posted_list is not None:
             inputs.draws, inputs.draws_source = posted_list

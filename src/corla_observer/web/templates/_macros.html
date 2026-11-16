@@ -88,7 +88,7 @@
     {% endif %}
     {% set waiting = row.missing|reject('equalto', 'audit_boards')|list %}
     <dt>Not yet provided to us</dt>
-    <dd>{% if waiting and not_yet.cvr %}<span class="muted">{{ waiting|map('missing_label')|join(', ') }}, not yet expected (due {{ not_yet.cvr }})</span>{% elif waiting %}{{ badge('missing', waiting|map('missing_label')|join(', ')) }}{% else %}nothing{% endif %}{% if not row.manifest and not row.map_manifest %} <span class="muted">(a manifest from the county is optional)</span>{% endif %}</dd>
+    <dd>{% if waiting %}<span class="muted">{{ waiting|map('missing_label')|join(', ') }}: still to come{% if not_yet.cvr %} (due {{ not_yet.cvr }}){% endif %}</span>{% else %}nothing{% endif %}{% if not row.manifest and not row.map_manifest %} <span class="muted">(a manifest from the county is optional)</span>{% endif %}</dd>
   </dl>
 </article>
 {%- endmacro %}
@@ -144,16 +144,16 @@
 {% endif %}
 {%- endmacro %}
 
-{# The inputs not yet expected, each with its count and due time; status lines after them. #}
+{# The inputs still to come, each with its count and due time; status lines after them. #}
 {% macro waiting_list(snap) -%}
 {% if snap.waiting or snap.status_lines %}
 <ul class="waiting">
   {% for w in snap.waiting %}<li><strong>{{ w.label }}:</strong> {{ w.status }}, <span class="meta">{{ w.when }}</span></li>{% endfor %}
   {% for line in snap.status_lines %}<li class="muted">{{ line }}</li>{% endfor %}
 </ul>
-{% if snap.as_of %}<p class="meta">As of {{ snap.as_of|local }} ({{ snap.as_of_source }}). Something missing becomes a problem only once it is due; anything present but wrong is a problem at any time.</p>{% endif %}
+{% if snap.as_of %}<p class="meta">As of {{ snap.as_of|local }} ({{ snap.as_of_source }}). An input still to come is not a problem; a file that is in but wrong is.</p>{% endif %}
 {% else %}
-<p class="muted">Nothing is still to come before its due time.</p>
+<p class="muted">Nothing is still to come.</p>
 {% endif %}
 {%- endmacro %}
 
