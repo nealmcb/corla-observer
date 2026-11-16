@@ -1,6 +1,6 @@
 [project]
 name = "corla-observer"
-version = "0.1.0"
+version = "0.2.0"
 description = "Support for independent public observation of Colorado's risk-limiting audits"
 readme = "README.md"
 license = "Apache-2.0"
