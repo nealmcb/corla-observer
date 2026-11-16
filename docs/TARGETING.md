@@ -9,6 +9,19 @@ county one tidy pull list in its own pull order. This document is the requiremen
 the coordinator page is `/coord/targets` (`corla_observer.web.targets`), the library is
 `corla_observer.targets`, and the lists observers follow are in `corla_observer.pulllists`.
 
+## Terms
+
+- **Style:** a card's full set of contests, statewide, county and district alike, as the CVR records
+  it (anonymize_cvr's sense of the word). Styles divide the cards: each card has exactly one. A
+  county's `BallotType` label can divide one set of contests further.
+- **Contest group:** local contests carried by exactly the same cards, such as a town's mayor and
+  trustee races (the code's `line.group`). Each local contest is in exactly one group; most groups
+  have one contest.
+- **Domain:** the cards of a contest group, which a domain draw is made from; a draw counts for
+  every contest in its group. A domain is the union of every style that includes its group, and
+  domains overlap: a card is in the domain of each group it carries. (CORLA's domain for a contest
+  is the same idea across counties: every card carrying it, statewide for a statewide contest.)
+
 ## The coordinator page
 
 `/coord/targets`, for a county with a redacted CVR, is laid out for a phone first, and reads from
