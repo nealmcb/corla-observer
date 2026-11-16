@@ -290,6 +290,12 @@ These are warnings for the coordinator, never silent corrections.
     its own advice: a manifest's card count against the results' ballots cast differs whenever
     some ballots have more than one card, so its advice names the cards-per-ballot assumption
     used and the size of difference that would be worth asking the county about.
+- **TODO: an actor for each way of acting, not only each person.** Events record a coordinator
+  (`coordinator:neal`) whether the person acted on a web page, ran a command themselves, or a
+  scheduled job ran on their behalf (the results relay's cron job). Give the command line and
+  each scheduled job an actor of its own, still naming the responsible coordinator (e.g.
+  `relay:yl for coordinator:neal`), and show it wherever the site says who did something, so "by
+  hand" is only said of what a person did by hand.
 - **TODO: export the contests and the numbers behind the selections.** Others checking the
   selections independently start from whatever file they have, which may be out of date (the
   target list's spreadsheet, before CORLA's round-one contest list is posted). Offer a download,
