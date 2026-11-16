@@ -262,6 +262,17 @@ These are warnings for the coordinator, never silent corrections.
   store. Add a "Download" link beside each received CVR, manifest and pull list, for logged-in
   coordinators only, serving the stored bytes under the name they were uploaded with, so a
   coordinator can check the site's copy against what the county sent, or recover a lost copy.
+- **TODO: a naming scheme for uploaded county files.** Counties name their files as their software
+  does, so the names say little and clash across counties (`LAT Ballot Manifest.csv`,
+  `CVR_Export_20261113104631-redacted.csv`). Name each uploaded file, where it is stored and
+  published (`observerfiles/uploads/...`) and in extracts and messages, by leading with the county
+  and a dash and removing blanks: `Morgan-LATBallotManifest.csv`,
+  `La_Plata-Modified_CVR_Export_20261113122247.csv`. Keep the name the county gave it in the
+  record (`original_name`), so the two can always be matched.
+- **TODO: use the targeting terms consistently.** docs/TARGETING.md defines **style**, **contest
+  group** and **domain** (its "Terms"). Bring the rest of the docs, the targeting page and the
+  code's names into line with them where they differ, and check that CORLA's own documents use
+  "domain" the same way.
 
 ### 5. Timestamping
 
