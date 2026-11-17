@@ -269,6 +269,39 @@ These are warnings for the coordinator, never silent corrections.
   and a dash and removing blanks: `Morgan-LATBallotManifest.csv`,
   `La_Plata-Modified_CVR_Export_20261113122247.csv`. Keep the name the county gave it in the
   record (`original_name`), so the two can always be matched.
+- **TODO: an assistant that explains the site's data and helps use it.** During the 2026 general's
+  first audit day, the coordinator relied on a general AI assistant with access to the site to
+  answer questions as they came up: finish-time estimates from observers' entry times, what a
+  dashboard count meant, what observers' notes said against the CVR, how CORLA's posted counts and
+  selections compared with predictions, contrasting the targeting strategies for a county, and
+  checking a district's legal boundaries. Offer a chat assistant on the coordinator pages, with
+  read-only access to the event log, data map, extracts and published commitments (never to
+  secrets or observer links), that answers such questions with its reasoning and the records it
+  used, and records each question and answer as an event. It must say when it is unsure, and it
+  never takes actions: it can draft a targeted list or a message, but a coordinator accepts it.
+- **TODO: a targeting suggestion spends the whole budget asked for.** Ladder spends draws only where
+  they bring a domain under its next tolerance, so it can leave some unspent: for Weld on the 2026
+  general's first audit day it used 19 of a budget of 20, every domain left needing more than one
+  more card to cross a tolerance. When the coordinator asks for N cards, the suggestion should draw
+  N: give what ladder leaves to the domain with the highest risk, as minimax would, and say so.
+- **TODO: joining in the middle of a board's sequence.** An observer arriving after the reading has
+  begun (on the 2026 general's first audit day, from a phone, at 3:04 PM with Weld past ballot 100)
+  can only step forward ballot by ballot. Offer: a box to go straight to a ballot by its number in
+  the list ("12 of 149") or its imprinted ID; a line saying where the board is, taken from the
+  other observers' latest first readings on the same board and list ("the board is on ballot 112,
+  as of 3:04 PM"), with a button to go there, and an option to keep following it as it advances.
+  And let any client (the page, the extension, the command-line client) show a QR code of where it
+  is (the list and ballot number, never the observer's own link or token), which another
+  observer's device scans to go to the same ballot. Ballots skipped this way stay "not observed"
+  (never a match or a mismatch), and the observer's record says where they joined.
+- **TODO: record targeting looked at, not only targeting accepted.** Opening a county's targeting
+  page, computing a menu or previewing draws (with a dummy seed or the real one) leaves no event:
+  on the 2026 general's first audit day Weld's page was opened twice on the live site and La
+  Plata's twice on the practice site, visible only as page loads in the server log, with no record
+  of who looked or what they computed. Record each as an event (who, which county, the inputs and
+  seed used, the contests and counts shown, a hash of the result), show them on the county's page
+  and the dashboard ("targeting previewed 2 times, nothing accepted"), so observers can see what
+  was considered before a list was accepted, not only the list that was.
 - **TODO: say "BLANK", not "NO VOTE".** Printouts, the text extract, the observer page and the
   command-line client show a contest left unmarked as "NO VOTE" (and "no vote"), which is easy to
   hear or read as a "No" choice, and on the 2026 general's first audit day Weld's audit board said
