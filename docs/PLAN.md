@@ -279,6 +279,11 @@ These are warnings for the coordinator, never silent corrections.
   secrets or observer links), that answers such questions with its reasoning and the records it
   used, and records each question and answer as an event. It must say when it is unsure, and it
   never takes actions: it can draft a targeted list or a message, but a coordinator accepts it.
+- **TODO: a targeting suggestion spends the whole budget asked for.** Ladder spends draws only where
+  they bring a domain under its next tolerance, so it can leave some unspent: for Weld on the 2026
+  general's first audit day it used 19 of a budget of 20, every domain left needing more than one
+  more card to cross a tolerance. When the coordinator asks for N cards, the suggestion should draw
+  N: give what ladder leaves to the domain with the highest risk, as minimax would, and say so.
 - **TODO: record targeting looked at, not only targeting accepted.** Opening a county's targeting
   page, computing a menu or previewing draws (with a dummy seed or the real one) leaves no event:
   on the 2026 general's first audit day Weld's page was opened twice on the live site and La
