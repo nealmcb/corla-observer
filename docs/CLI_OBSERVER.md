@@ -43,33 +43,51 @@ The client shows the notice the page shows before the first ballot: keep the scr
 the audit board. Enter starts. It then signs the choice of entry mode (`entry_mode`, `two_tap`) and
 the acknowledgement of the notice (`acknowledged`), as the page does.
 
-Each ballot is shown in pull order: "Ballot n of N", the imprinted ID in large type, and the
-expected votes.
+Each ballot is shown in pull order: "Ballot n of N" and its position in the extract, the imprinted
+ID on a line of its own, and the expected votes, laid out as in the text printout: each contest
+right-aligned to the board's longest, so that the colons line up, then the choice. The names are
+the ones the page shows, shortened by the server for a screen.
 
 - **Enter** after the first board member reads the ballot signs a `first_reading`.
 - **Enter** again after the second reading signs an `entry` with `match` true, and the next ballot
   is shown.
-- **Text, then Enter**, at either point, signs an `entry` with `match` false and the text as the
-  note (at most 500 characters, control characters removed).
+- **Text, then Enter**, at either point, is a mismatch with the text as the note (at most 500
+  characters, control characters removed). The client asks to confirm it: Enter signs an `entry`
+  with `match` false, anything else goes back to the ballot with nothing recorded. So a stray key
+  can't record a mismatch.
 
-Commands start with `:`:
+Commands start with `/`, which needs no shift key (`:` also works). So a note can't start with
+either.
 
-- `:edit N` goes to ballot N. A new entry for a ballot already entered has `edit` true.
-- `:check` reads the commitments again and checks the log now.
-- `:report` prints a statement of every alarm so far, to send to the coordinator.
-- `:ack` acknowledges the alarms so far.
-- `:status` shows how many ballots are entered and entries queued, receipts checked, and alarms.
-- `:save` writes `record.json` now.
-- `:quit`, or the end of input, ends the session.
+- `?`, `/?`, `/h` or `help` shows how to enter, the commands and the status. Typed at a ballot, it
+  is never taken as a note.
+- `/e N` or `/edit N` goes to ballot N. A new entry for a ballot already entered has `edit` true.
+- `/c` copies the ballot shown, laid out as the text printout with `__` to mark, to the clipboard
+  and to `copy.txt` in the client's folder, for marking it in an editor instead; `/c all` copies
+  every ballot on the board. The clipboard is set with the OSC 52 escape sequence, which most
+  terminals accept, also over SSH (inside tmux, with `set-clipboard on`); `copy.txt` is there
+  when it isn't.
+- `/ref` or `/refresh` shows the ballot again, clean.
+- `/check` reads the commitments again and checks the log now.
+- `/report` prints a statement of every alarm so far, to send to the coordinator.
+- `/ack` acknowledges the alarms so far.
+- `/s` or `/status` shows how many ballots are entered and entries queued, receipts checked, and
+  alarms.
+- `/save` writes `record.json` now; it is written after every entry and every answer from the
+  server anyway.
+- `/q` or `/quit`, or the end of input, ends the session.
 
 At the end it sends what is queued, checks the log once more, writes `record.json`, and prints the
 `check-record` command for it. The exit status is 0, 1 if the record holds an alarm, and 2 if it
 could not start.
 
 Each entry is signed, chained to the one before and written to disk before it is sent. When the
-server can't be reached, entries are kept and queued, and sent, oldest first, when it can be.
-Entries still queued at the end are sent at the next run with the same folder. The server must be
-reachable to start, since the ballots come from it.
+server can't be reached, entries are kept and queued, and sent, oldest first, when it can be. An
+answer of 500 or more (such as 502, often from a proxy in front of the server, so the request may
+never have arrived) is treated the same way: the client says once that the entries are not sent yet
+and will be sent again, and once more when they are. Entries still queued at the end are sent at
+the next run with the same folder. The server must be reachable to start, since the ballots come
+from it.
 
 If the server refuses entries with the code `unknown_device` (it has no registration for this
 device, as after a server is restored from a backup), the client sends the same signed registration
@@ -122,7 +140,10 @@ verified earlier. It checks:
 versioned SHA256SUMS files ([TIMESTAMPING.md](TIMESTAMPING.md)), timestamped and signed apart from
 the server. The client reads every SHA256SUMS file in the folder and checks:
 
-- that one of them lists the extract shown (a `derived/extract-*.json` line with its hash);
+- that every commitment made at or after the extract was built (whose `event-log-head` is at or
+  after the extract's `extract.built` event) lists the extract shown (a `derived/extract-*.json`
+  line with its hash). An extract built after the latest commitment is not committed yet: the
+  client says so, and the record notes it;
 - that the receipt key is the one they list: it reads `derived/receipt-key.json` where the latest
   SUMS file listing it says (its paths are relative to the election's folder, the file's `base:`
   line), checks the file's SHA-256 against the listed hash, and compares its content, the
@@ -141,13 +162,13 @@ commitments read and each anchor, with whether the log agreed with it, under
 Any failure is an **ALARM**: printed at once, with a short statement for the observer to send to
 the coordinator and the other observers (not to the server). The statement gives what was found,
 the position and hash in question, the server's address, the link's county and board (not the
-link itself), the device ID, the client's SHA-256 and the time. Until the observer types `:ack`,
-every prompt repeats how many alarms are unacknowledged and the latest one. `:report` prints the
+link itself), the device ID, the client's SHA-256 and the time. Until the observer types `/ack`,
+every prompt repeats how many alarms are unacknowledged and the latest one. `/report` prints the
 statements of all alarms so far.
 
 An alarm means the server's answers disagree with what the device did, with what it said before,
 or with the published commitments. Keep the folder, send the statement, and keep observing on
-paper. Alarms stay in `record.jsonl` and in the record (`client_checks`) after `:ack`, and the
+paper. Alarms stay in `record.jsonl` and in the record (`client_checks`) after `/ack`, and the
 exit status stays 1.
 
 ## Checking the record afterwards

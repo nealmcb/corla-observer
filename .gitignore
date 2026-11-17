@@ -7,3 +7,6 @@ dist/
 *.egg-info/
 /workspace/
 neal_ignore/
+
+# The command-line observer client's default folders (scripts/corla-observe.py): they hold a device key
+corla-observe-*/

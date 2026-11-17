@@ -10,6 +10,7 @@ ways, and forged receipts, raise its alarms.
 
 from __future__ import annotations
 
+import email.message
 import hashlib
 import importlib.util
 import json
@@ -18,6 +19,7 @@ import subprocess
 import sys
 import threading
 import time
+import urllib.error
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import ModuleType
@@ -130,21 +132,25 @@ def test_observing_offline_and_on_and_the_record_checks(live: Live, tmp_path: Pa
         "",  # I understand, start
         "", "",  # ballot 1: first reading, confirmed match
         "", "",  # ballot 2
-        "heard Bob for US Senator",  # ballot 3: a note
+        "heard Bob for US Senator", "",  # ballot 3: a note, confirmed
         offline,
         "", "",  # ballot 4, queued
-        "  heard “No” on 2\x07 ",  # ballot 5, queued; the control character and spaces are removed before signing
-        ":edit 1", "heard Yes on the last contest after all",  # an edit, queued
-        ":status",
+        "  heard “No” on 2\x07 ", "",  # ballot 5, queued; the control character and spaces are removed before signing
+        "/edit 1", "heard Yes on the last contest after all", "",  # an edit, queued
+        ":status",  # ":" still works
         online,
         "", "",  # ballot 6: sends everything
-        ":check",
-        ":quit",
+        "/check",
+        "/q",
     ])  # fmt: skip
     cli.run(observer, read, shown.append, background=False)
     assert observer.flush() and observer.check_log()
     assert not observer.alarms, observer.alarms
-    assert first["id"] in shown[1] and "Ballot 1 of" in shown[1] and "██" in shown[1]
+    assert "Ballot 1 of" in shown[1] and f"\nImprinted ID: {first['id']}\n" in shown[1]
+    # The expected votes laid out as the text printout lays them out: the colons line up.
+    votes = [line for line in shown[1].splitlines() if " : " in line]
+    assert len(votes) >= len(first["votes"]) and len({line.index(" : ") for line in votes}) == 1
+    assert votes[0].endswith(f"{first['votes'][0][0]} : {first['votes'][0][3][0]}")
     assert any("can't be reached: 4 entries queued" in s for s in shown) and any("Log checked" in s for s in shown)
 
     path = observer.save()
@@ -191,7 +197,7 @@ def test_observing_offline_and_on_and_the_record_checks(live: Live, tmp_path: Pa
 def session(live: Live, folder: Path) -> Any:
     """A short session: registration, the start, a match and a note, all receipted and checked."""
     observer = started(live, folder, [])
-    cli.run(observer, scripted(["", "", "", "heard Bob"]), lambda text: None, background=False)
+    cli.run(observer, scripted(["", "", "", "heard Bob", ""]), lambda text: None, background=False)
     assert observer.flush() and observer.check_log() and not observer.alarms, observer.alarms
     return observer
 
@@ -321,7 +327,7 @@ def test_the_script_runs_alone(live: Live, tmp_path: Path) -> None:
     key = tmp_path / "receipt-key.json"
     key.write_text(json.dumps(live.signer.public_info()))
     command = [sys.executable, "-I", str(SCRIPT), live.link, "--dir", str(folder), "--server-key", str(key)]
-    done = subprocess.run(command, input="\n\n\n\nheard Ann\n:status\n:quit\n", capture_output=True, text=True, timeout=120, check=False, cwd=tmp_path)
+    done = subprocess.run(command, input="\n\n\n\nheard Ann\n\n/s\n/q\n", capture_output=True, text=True, timeout=120, check=False, cwd=tmp_path)
     assert done.returncode == 0, done.stdout + done.stderr
     assert "ALARM" not in done.stdout and "Record: " in done.stdout and "corla-observer check-record" in done.stdout
     checks(folder / "record.json", folder / "events.jsonl", live.signer)
@@ -384,7 +390,7 @@ def test_alarms_are_repeated_until_acknowledged_and_reported(live: Live, tmp_pat
         assert part in statement, part
     assert live.token not in statement
     shown: list[str] = []
-    cli.run(observer, scripted(["", ":status", ":report", ":ack", ":status", ":quit"]), shown.append, background=False)
+    cli.run(observer, scripted(["", "/s", "/report", "/ack", "/status", "/quit"]), shown.append, background=False)
     banners = [i for i, s in enumerate(shown) if s.startswith("*** 1 ALARM(S) not acknowledged")]
     acked = next(i for i, s in enumerate(shown) if "acknowledged. They stay" in s)
     assert banners and max(banners) < acked
@@ -423,9 +429,9 @@ def test_published_commitments(live: Live, tmp_path: Path) -> None:
     (honest / f"{name}.ots").write_text("not read")
     observer = started(live, tmp_path / "a", said, honest)
     assert not observer.alarms, texts(observer)
-    assert any("extract shown is in the published commitments" in s for s in said) and any("receipt key is the one" in s for s in said)
+    assert f"The extract shown: listed in {name}." in said and any("receipt key is the one" in s for s in said)
     summary = observer.record()["client_checks"]["commitments"]
-    assert summary["extract_in"] == name and summary["receipt_key"] == "listed"
+    assert summary["extract_in"] == [name] and summary["extract"] == f"listed in {name}" and summary["receipt_key"] == "listed"
     assert summary["anchors"] == [{"seq": head[0], "hash": head[1], "file": name, "verified": True}]
 
     # The earlier layout: no base line, paths relative to the SUMS file's own folder.
@@ -438,12 +444,20 @@ def test_published_commitments(live: Live, tmp_path: Path) -> None:
     early = commitments(tmp_path / "early", "SHA256SUMS.txt", head, listed)
     assert not started(live, tmp_path / "c", said, early).alarms and any("list no receipt key yet" in s for s in said)
 
+    # An extract built after the latest commitment: not committed yet, said plainly, not an alarm.
+    said = []
+    before = commitments(tmp_path / "before", name, (1, probe.log_hashes[0]), [listed[1], key_line], key)
+    observer = started(live, tmp_path / "e", said, before)
+    assert not observer.alarms, texts(observer)
+    status = observer.record()["client_checks"]["commitments"]["extract"]
+    assert status.startswith(f"built in event {observer.extract_at}, after the latest commitment") and f"The extract shown: {status}." in said
+
     # No commitments given: said plainly.
     said = []
     assert not started(live, tmp_path / "d", said).alarms and any("No --commitments given" in s for s in said)
 
     cases = {
-        "no extract": (head, [listed[1], key_line], key, "the extract shown is not in the published commitments"),
+        "no extract": (head, [listed[1], key_line], key, "is not in the commitment SHA256SUMS-v2-20261116T180000Z.txt, made later"),
         "other key": (head, [*listed, other_line], other, "receipt key is not the one in the published commitments"),
         "key file not as listed": (head, [*listed, key_line], other, "derived/receipt-key.json in the commitments is not the file"),
         "false anchor": ((head[0] - 1, "2" * 64), [*listed, key_line], key, "but the log has"),
@@ -453,3 +467,50 @@ def test_published_commitments(live: Live, tmp_path: Path) -> None:
         folder = commitments(tmp_path / f"case{n}", "SHA256SUMS-v2-20261116T180000Z.txt", anchor, lines, committed_key)
         found = " | ".join(texts(started(live, tmp_path / f"observer{n}", [], folder)))
         assert expected in found, (case, found)
+
+
+def test_a_proxy_error_is_said_once_and_the_entries_are_sent_later(live: Live, tmp_path: Path) -> None:
+    """A 502 from a proxy in front of the server: not an alarm; said once, and once more when the entries are sent."""
+    said: list[str] = []
+    observer = started(live, tmp_path / "observer", said)
+    real, failures = observer.http, [3]
+
+    def http(path: str, body: Any = None) -> bytes:
+        if path.endswith("/entries") and failures[0]:
+            failures[0] -= 1
+            raise urllib.error.HTTPError(live.url + path, 502, "Bad Gateway", email.message.Message(), None)
+        result: bytes = real(path, body)
+        return result
+
+    observer.http = http
+    for _ in range(3):
+        assert not observer.flush()
+    assert observer.flush() and not observer.pending() and not observer.alarms, texts(observer)
+    assert [s for s in said if s.startswith("Not sent yet")] == [
+        "Not sent yet (502 from the server or a proxy in front of it): your entries are kept and will be sent again."
+    ]
+    assert sum("Sent: the entries kept" in s for s in said) == 1
+
+
+def test_help_copy_and_a_confirmed_mismatch(live: Live, tmp_path: Path) -> None:
+    """"?" and "/h" show the help and never record anything; "/c" copies the ballot with "__" to mark; a typed note
+    is recorded as a mismatch only once confirmed."""
+    observer = started(live, tmp_path / "help", [])
+    shown: list[str] = []
+    copied: list[str] = []
+    record = observer.folder / "record.json"
+
+    def saved_entries() -> None:  # record.json is saved after each entry, without /save
+        assert len([e for e in json.loads(record.read_text())["entries"] if e["payload"]["type"] == "entry"]) == 1
+
+    script: list[str | Callable[[], None]] = ["", "?", "help", "/h", "/c", "x", "n", "", "", saved_entries, "/ref", "heard Bob", "", "/q"]
+    cli.run(observer, scripted(script), shown.append, background=False, copy=copied.append)
+    entries = [i["payload"] for i in observer.items if i["payload"]["type"] == "entry"]
+    assert [e["content"]["match"] for e in entries] == [True, False] and entries[1]["content"]["note"] == "heard Bob"
+    assert sum("/? or /h (this help" in text for text in shown) == 3 and "Not recorded." in shown
+    assert sum(text.startswith("\n---- Ballot 2 of") for text in shown) == 2  # shown, then again at /ref
+    first = observer.ballots[0]
+    assert len(copied) == 1 and f"ImprintedId {first['id']} " in copied[0]
+    assert copied[0] == (observer.folder / "copy.txt").read_text(encoding="utf-8")
+    marks = [line for line in copied[0].splitlines() if " __ " in line]
+    assert marks and len({line.index(" __ ") for line in marks}) == 1

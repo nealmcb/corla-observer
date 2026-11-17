@@ -18,35 +18,40 @@ speaks the server's observer protocol unchanged:
 - **Two taps.** Once the notice is acknowledged it signs ``entry_mode``
   (``two_tap``) and ``acknowledged``, as the page does. Then, ballot by
   ballot in pull order, Enter at the first reading signs a ``first_reading``,
-  Enter again an ``entry`` with ``match`` true, and text typed instead an
-  ``entry`` with ``match`` false and that note. ``:edit N`` goes back to
-  ballot N; a new entry for a ballot already entered has ``edit`` true.
+  Enter again an ``entry`` with ``match`` true, and text typed instead,
+  once confirmed, an ``entry`` with ``match`` false and that note.
+  ``/e N`` goes back to ballot N; a new entry for a ballot already entered
+  has ``edit`` true. ``/c`` copies the ballot, with ``__`` to mark, to the
+  clipboard (OSC 52) and to ``copy.txt``, for marking in an editor.
 - **Signing and keeping.** Each payload is canonical JSON (docs/EVENT_LOG.md),
   chained by ``device_seq`` and ``prev_payload_sha256``, signed as Web Crypto
   signs (``r || s``, 64 bytes, base64), and appended to ``record.jsonl``,
   synced to disk, before it is sent. What can't be sent stays queued and is
-  sent again, oldest first, until it is answered. If the server answers
+  sent again, oldest first, until it is answered (an answer of 500 or more,
+  often from a proxy, counts as not sent). If the server answers
   ``unknown_device`` (it has no registration for the device), it sends the
   same registration again and then those entries, once in a session, as the
   page does; any other refusal is final, with an ALARM.
 - **Receipts.** Each is checked as it arrives: the Ed25519 signature under the
   pinned key, the payload's hash and event kind, and that its log positions
   agree with every earlier receipt. Any failure is an ALARM.
-- **The log.** At the start, every few minutes, at ``:check`` and at the end,
+- **The log.** At the start, every few minutes, at ``/check`` and at the end,
   it fetches the log's new lines (``/head``, then ``/observe/TOKEN/log``),
   verifies their hash chain as the verifier in docs/EVENT_LOG.md does, keeps
   them in ``events.jsonl``, and checks that every receipted entry is in the
   log where its receipt says, as the device signed it, and that no event
   under this device's ID is one it did not sign. Any failure is an ALARM.
 - **The published commitments** (``--commitments``, a GitHub folder or a
-  local one, never the server): that their SHA256SUMS files list the extract
-  shown and the receipt key (``derived/receipt-key.json``, read and checked
-  against its listed hash), and that the log agrees with each one's
-  ``event-log-head``. Any failure is an ALARM.
+  local one, never the server): that every SHA256SUMS file made after the
+  extract was built lists it (an extract built after the latest one is noted
+  as not committed yet), that they list the receipt key
+  (``derived/receipt-key.json``, read and checked against its listed hash),
+  and that the log agrees with each one's ``event-log-head``. Any failure is
+  an ALARM.
 - **Alarms.** Each is printed with a statement to send the coordinator and the
-  other observers (``:report`` prints them all), and shown at every prompt
-  until ``:ack``. They stay in the record.
-- **The record.** At the end and at ``:save`` it writes ``record.json`` in the
+  other observers (``/report`` prints them all), and shown at every prompt
+  until ``/ack``. They stay in the record.
+- **The record.** After every entry and every answer from the server it writes ``record.json`` in the
   ``corla-observer-record`` format, for ``corla-observer check-record``.
 
 It deliberately leaves out contest-by-contest entry, switching pull lists,
@@ -68,8 +73,9 @@ tested with Python 3.12.11 and cryptography 50.0.2. Installed apart::
     python3 -m venv observe-env && observe-env/bin/pip install cryptography==50.0.2
     observe-env/bin/python -I corla-observe.py 'https://HOST/PREFIX/observe/TOKEN'
 
-Commands: ``:edit N``, ``:check``, ``:report``, ``:ack``, ``:status``, ``:save``,
-``:quit`` (or end of input). Exit status 0; 1 if the record holds an ALARM; 2 if it could not
+Commands start with ``/`` (``:`` also works): ``?`` or ``/h`` (help; never taken as a note),
+``/e N``, ``/c`` [all], ``/ref``, ``/check``, ``/report``, ``/ack``, ``/s``, ``/save``, ``/q`` (or end of
+input). Exit status 0; 1 if the record holds an ALARM; 2 if it could not
 start. See docs/CLI_OBSERVER.md.
 """
 
@@ -289,7 +295,7 @@ class Observer:
         self.items: list[dict[str, Any]] = []  # in device_seq order: payload, signature, payload_sha256, receipt, refused
         self.by_sha: dict[str, dict[str, Any]] = {}
         self.alarms: list[dict[str, str]] = []  # each: text, where (the position and hash in question), time
-        self.acked = 0  # how many of the alarms the observer has acknowledged (:ack)
+        self.acked = 0  # how many of the alarms the observer has acknowledged (/ack)
         self.committed: dict[str, Any] | None = None  # what the published commitments say, once read
         self.sessions: list[dict[str, Any]] = []
         self.stated: dict[int, tuple[str, str]] = {}  # log position -> (hash, which receipt said so)
@@ -301,6 +307,7 @@ class Observer:
         self.receipts_ok = 0
         self.retry_delay = 2.0
         self.reachable = True  # whether the last attempt to send reached the server
+        self.outage = False  # sending has failed with a 5xx answer since the last success (said once)
         self.registered_again = False  # the registration was sent again after the server forgot the device
         self.retried = False  # ... in this session (once only)
         self.lock = threading.RLock()  # the record and the checks
@@ -486,7 +493,12 @@ class Observer:
                     result = json.loads(self.http(f"/observe/{self.token}/entries", body))
                 except urllib.error.HTTPError as exc:
                     self.reachable = False
-                    self.say(f"The server answered {exc.code}" + (": the link was revoked or replaced; ask your coordinator" if exc.code == 404 else ""))
+                    if exc.code >= 500:  # often a proxy in front of the server: the request may never have arrived
+                        if not self.outage:
+                            self.say(f"Not sent yet ({exc.code} from the server or a proxy in front of it): your entries are kept and will be sent again.")
+                        self.outage = True
+                    else:
+                        self.say(f"The server answered {exc.code}" + (": the link was revoked or replaced; ask your coordinator" if exc.code == 404 else ""))
                     self.retry_delay = min(self.retry_delay * 2, 30.0)
                     return False
                 except (OSError, http.client.HTTPException, ValueError):
@@ -494,7 +506,12 @@ class Observer:
                     self.retry_delay = min(self.retry_delay * 2, 30.0)
                     return False
                 self.reachable, self.retry_delay = True, 2.0
-                if not self.answer(batch, result):
+                if self.outage:
+                    self.say("Sent: the entries kept while the server answered with errors have reached it.")
+                    self.outage = False
+                settled = self.answer(batch, result)
+                self.save()
+                if not settled:
                     self.alarm(f"the server answered {len(batch)} entries with neither a receipt nor a reason")
                     return False
             return True
@@ -625,7 +642,7 @@ class Observer:
         except (OSError, http.client.HTTPException, ValueError, KeyError, TypeError) as exc:
             self.say(f"The published commitments could not be read ({exc}): they are not checked this time.")
             return
-        extract_in: str | None = None
+        listed_in: list[str] = []  # the SUMS files that list the extract shown
         key: tuple[str, str, str] | None = None  # the latest SUMS file listing the key, the hash, the key file's path
         anchors: list[dict[str, Any]] = []
         for name, text in files:
@@ -635,20 +652,34 @@ class Observer:
                     base = line.removeprefix("# base: ").strip()
                 if head := SUMS_HEAD.match(line):
                     anchors.append({"seq": int(head[1]), "hash": head[2], "file": name})
-                if (listed := SUMS_EXTRACT.match(line)) and listed[1] == self.extract:
-                    extract_in = extract_in or name
+                if (listed := SUMS_EXTRACT.match(line)) and listed[1] == self.extract and name not in listed_in:
+                    listed_in.append(name)
                 if listed := SUMS_KEY.match(line):
                     key = (name, listed[1], posixpath.normpath(posixpath.join(base, listed[2])))
         with self.lock:
-            self.committed = {"source": self.commitments, "files": names, "extract_in": extract_in, "anchors": anchors}
+            self.committed = {"source": self.commitments, "files": names, "extract_in": listed_in, "extract": None, "anchors": anchors}
             for anchor in anchors:
                 self.anchor(anchor["seq"], anchor["hash"], f"commitment {anchor['file']}")
-            if extract_in:
-                self.say(f"The extract shown is in the published commitments ({extract_in}).")
-            else:
-                self.alarm(f"the extract shown is not in the published commitments ({len(files)} SUMS files read); it may not be committed yet",
-                           f"extract {self.extract}")
             self.committed["receipt_key"] = self.check_committed_key(key)
+
+    def check_committed_extract(self) -> None:
+        """Once the log shows when the extract was built: every commitment made at or after that event must list it."""
+        if self.committed is None or self.extract_at is None:
+            return
+        later = [a for a in self.committed["anchors"] if a["seq"] >= self.extract_at]
+        missing = [a for a in later if a["file"] not in self.committed["extract_in"]]
+        if missing:
+            status = f"not listed in {missing[0]['file']}, made at event {missing[0]['seq']}, after it was built"
+            self.alarm(f"the extract shown, built in event {self.extract_at}, is not in the commitment {missing[0]['file']}, "
+                       f"made later (at event {missing[0]['seq']})", f"extract {self.extract}; {missing[0]['file']}, event-log-head {missing[0]['seq']}")  # fmt: skip
+        elif self.committed["extract_in"]:
+            status = f"listed in {', '.join(self.committed['extract_in'])}"
+        else:
+            status = f"built in event {self.extract_at}, after the latest commitment: not committed yet"
+        if status != self.committed["extract"]:
+            self.committed["extract"] = status
+            if not missing:
+                self.say(f"The extract shown: {status}.")
 
     def check_committed_key(self, key: tuple[str, str, str] | None) -> str:
         """The committed receipt key (derived/receipt-key.json: the canonical JSON of what /receipt-key serves), against the server's."""
@@ -799,6 +830,7 @@ class Observer:
             self.alarm(f"the receipt key {self.key_id[:16]}... is not published in the log, though it signed receipts", f"receipt key {self.key_id}")
         if self.extract_at is None:
             self.alarm(f"the extract shown ({self.extract[:16]}...) is not recorded in the log as built for {self.county}", f"extract {self.extract}")
+        self.check_committed_extract()
         return len(self.alarms) == before
 
     # -- the record --
@@ -823,10 +855,13 @@ class Observer:
             }  # fmt: skip
 
     def save(self) -> Path:
+        """Write record.json from what is held, replacing it whole (a crash leaves the old one, never half a file).
+        Done after every entry and every answer from the server, so it is always current."""
         path = self.folder / "record.json"
-        temporary = path.with_suffix(".json.tmp")
-        temporary.write_text(json.dumps(self.record(), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
-        os.replace(temporary, path)
+        with self.lock:
+            temporary = path.with_suffix(".json.tmp")
+            temporary.write_text(json.dumps(self.record(), indent=1, ensure_ascii=False) + "\n", encoding="utf-8")
+            os.replace(temporary, path)
         return path
 
     def status(self) -> str:
@@ -841,35 +876,52 @@ class Observer:
 # ---------------------------------------------------------------------------
 # The terminal
 
-#: A 3x5 font for imprinted IDs, row by row.
-FONT = {c: bits for c, bits in zip("0123456789-", (
-    "111101101101111", "010110010010111", "111001111100111", "111001111001111", "101101111001001", "111100111001111",
-    "111100111101111", "111001001001001", "111101111101111", "111101111001111", "000000111000000"), strict=True)}  # fmt: skip
-
-
-def large(text: str) -> str:
-    """The imprinted ID in large type, or spaced out if it has a character the font lacks."""
-    if not text or any(c not in FONT for c in text):
-        return "    " + " ".join(text)
-    rows = ["  ".join("".join("██" if FONT[c][r * 3 + x] == "1" else "  " for x in range(3)) for c in text) for r in range(5)]
-    return "\n".join("    " + row for row in rows)
-
-
-def show(observer: Observer, ballot: dict[str, Any], write: Callable[[str], None]) -> None:
-    lines = [f"\n---- Ballot {ballot['n']} of {len(observer.ballots)} ({observer.county}, board {observer.board}, position {ballot['position']}) ----",
-             large(str(ballot["id"])), f"    {ballot['id']}"]  # fmt: skip
-    if str(ballot["position"]) in observer.done:
-        lines.append("    (already entered: a new entry changes it)")
+def ballot_lines(observer: Observer, ballot: dict[str, Any], sep: str) -> list[str]:
+    """The expected votes as the text printout lays them out (corla_observer.extract.render_text): each contest
+    right-aligned to the board's longest, so the separators line up, then the choice, its continuation lines under
+    it. The names are the server's, shortened for a screen as on the page."""
+    width = max((len(vote[0]) for b in observer.ballots for vote in b["votes"]), default=0)
+    lines = []
     if ballot.get("redacted"):
         lines.append("    Redacted in the county's CVR: no expected votes.")
     elif ballot.get("missing"):
         lines.append("    Not in the county's CVR: no expected votes.")
-    lines += [f"  {vote[0]}: {vote[1]}" for vote in ballot["votes"]]
-    write("\n".join(lines))
+    for vote in ballot["votes"]:
+        values = vote[3] if len(vote) > 3 and vote[3] else [vote[1]]
+        lines.append(f"{vote[0]:>{width}} {sep} {values[0]}")
+        lines += [f"{'':>{width}} {' ' * len(sep)} {value}" for value in values[1:]]
+    return lines
 
 
-def run(observer: Observer, read: Callable[[str], str], write: Callable[[str], None], *, background: bool = True, check_every: float = 300) -> None:
-    """The two-tap loop: Enter, Enter for a match; text for a note; ``:`` commands. Sends in the background, or at once."""
+def show(observer: Observer, ballot: dict[str, Any], write: Callable[[str], None]) -> None:
+    """A ballot: its place, its imprinted ID, and the expected votes, the colons lined up."""
+    lines = [f"\n---- Ballot {ballot['n']} of {len(observer.ballots)} ({observer.county}, board {observer.board}, position {ballot['position']}) ----",
+             f"Imprinted ID: {ballot['id']}"]  # fmt: skip
+    if str(ballot["position"]) in observer.done:
+        lines.append("    (already entered: a new entry changes it)")
+    write("\n".join(lines + ballot_lines(observer, ballot, ":")))
+
+
+def for_editor(observer: Observer, ballots: list[dict[str, Any]]) -> str:
+    """Ballots as the text printout gives them, with "__" to mark in an editor, as observers did in July 2026."""
+    blocks = []
+    for ballot in ballots:
+        head = f" ImprintedId {ballot['id']} (ballot {ballot['n']} of {len(observer.ballots)}, {observer.county} board {observer.board}) "
+        blocks.append("\n".join([head.center(80, "-")] + ballot_lines(observer, ballot, "__")))
+    return "\n\n".join(blocks) + "\n"
+
+
+def to_clipboard(text: str) -> None:
+    """Put text on the terminal's clipboard with the OSC 52 escape sequence, which most terminals (and tmux with
+    set-clipboard on) accept, also over SSH. Nothing is run and nothing is installed."""
+    sys.stdout.write("\x1b]52;c;" + base64.b64encode(text.encode("utf-8")).decode("ascii") + "\a")
+    sys.stdout.flush()
+
+
+def run(observer: Observer, read: Callable[[str], str], write: Callable[[str], None], *, background: bool = True,
+        check_every: float = 300, copy: Callable[[str], None] = to_clipboard) -> None:
+    """The two-tap loop: Enter, Enter for a match; text, confirmed, for a note; ``/`` commands. Sends in the background,
+    or at once."""
     wake, stop = threading.Event(), threading.Event()
 
     def sender() -> None:
@@ -903,27 +955,39 @@ def run(observer: Observer, read: Callable[[str], str], write: Callable[[str], N
         show(observer, ballot, write)
     while True:
         if ballot is None:
-            write(f"\nAll {len(observer.ballots)} ballots have an entry. :edit N changes one; :quit ends.")
+            write(f"\nAll {len(observer.ballots)} ballots have an entry. /edit N changes one; /quit ends.")
         if unacked := observer.alarms[observer.acked :]:
             write(f"*** {len(unacked)} ALARM(S) not acknowledged. Latest: {unacked[-1]['text']}\n"
-                  "*** :report prints a statement to send your coordinator and the other observers; :ack acknowledges.")  # fmt: skip
-        prompt = ":command > " if ballot is None else "Enter = confirmed match, or type what you heard > " if armed else "Enter = first reading, or type what you heard > "
+                  "*** /report prints a statement to send your coordinator and the other observers; /ack acknowledges.")  # fmt: skip
+        prompt = "/command > " if ballot is None else "Enter = confirmed match, or type what you heard > " if armed else "Enter = first reading, or type what you heard > "
         try:
             line = read(prompt).strip()
         except (EOFError, KeyboardInterrupt):
             break
         elapsed = min(86_400_000, max(0, round((time.monotonic() - shown_at) * 1000)))
-        if line.startswith(":"):
+        if line in ("?", "help"):  # never a note: "?" or "help" typed at a ballot would otherwise record a mismatch
+            line = "/help"
+        if line[:1] in ("/", ":"):  # "/" needs no shift key; ":" is still accepted
             command, _, arg = line[1:].strip().partition(" ")
             if command in ("q", "quit"):
                 break
-            elif command == "edit" and arg.strip().isdigit():
+            elif command in ("e", "edit") and arg.strip().isdigit():
                 found = next((b for b in observer.ballots if b["n"] == int(arg)), None)
                 if found is None:
                     write(f"No ballot {arg} on this board.")
                     continue
                 ballot, armed, shown_at = found, False, time.monotonic()
                 show(observer, ballot, write)
+            elif command in ("c", "copy"):
+                chosen = observer.ballots if arg.strip() == "all" or ballot is None else [ballot]
+                text = for_editor(observer, chosen)
+                path = observer.folder / "copy.txt"
+                path.write_text(text, encoding="utf-8")
+                copy(text)
+                write(f"Copied {len(chosen)} ballot(s) to the clipboard, with __ to mark, and wrote them to {path}")
+            elif command in ("ref", "refresh"):
+                if ballot is not None:
+                    show(observer, ballot, write)
             elif command == "check":
                 observer.read_commitments()
                 write("Log checked: consistent with this record." if observer.check_log() else "Log check: see above.")
@@ -932,12 +996,20 @@ def run(observer: Observer, read: Callable[[str], str], write: Callable[[str], N
                 write(f"{observer.acked} alarm(s) acknowledged. They stay in the record.")
             elif command == "report":
                 write("\n\n".join(observer.statement(a) for a in observer.alarms) or "No alarms.")
-            elif command == "status":
+            elif command in ("s", "status"):
                 write(observer.status())
             elif command == "save":
                 write(f"Saved {observer.save()}")
             else:
-                write("Commands: :edit N (go to ballot N), :check (check the log now), :report, :ack, :status, :save, :quit")
+                write("At a ballot: Enter at the first reading, Enter again when it matches, or type what you heard\n"
+                      "(a mismatch, with that note, recorded once you confirm it).\n"
+                      "Commands: /? or /h (this help, with the status), /e N (go to ballot N), /c (copy this ballot,\n"
+                      "with __ to mark, to the clipboard and copy.txt; /c all: every ballot), /check (check the log now),\n"
+                      "/ref (show this ballot again), /report, /ack, /s (status), /save (record.json is saved after every entry anyway),\n"
+                      "/q (quit)")
+                write(observer.status())
+                if ballot is not None:
+                    show(observer, ballot, write)
             continue
         if ballot is None:
             continue
@@ -945,10 +1017,20 @@ def run(observer: Observer, read: Callable[[str], str], write: Callable[[str], N
             observer.sign_next("first_reading", ballot, {"elapsed_ms": elapsed})
             armed = True
         else:
+            if line:
+                try:
+                    answer = read(f'Record a MISMATCH for ballot {ballot["n"]} ({ballot["id"]}), note "{line}"? Enter = yes, anything else = back > ')
+                except (EOFError, KeyboardInterrupt):
+                    break
+                if answer.strip():
+                    write("Not recorded.")
+                    show(observer, ballot, write)
+                    continue
             observer.enter(ballot, not line, line, elapsed)
             ballot, armed, shown_at = observer.next_ballot(), False, time.monotonic()
             if ballot:
                 show(observer, ballot, write)
+        observer.save()
         send()
         if not observer.reachable and (queued := len(observer.pending())):
             write(f"    (the server can't be reached: {queued} entries queued, to be sent when it can)")
