@@ -269,6 +269,13 @@ These are warnings for the coordinator, never silent corrections.
   and a dash and removing blanks: `Morgan-LATBallotManifest.csv`,
   `La_Plata-Modified_CVR_Export_20261113122247.csv`. Keep the name the county gave it in the
   record (`original_name`), so the two can always be matched.
+- **TODO: the dashboard's "with notes" says what it counts.** It counts a ballot as "with notes"
+  when an observer in contest-by-contest entry left contests unrecorded, as well as when one typed
+  a note. On the 2026 general's first audit day it showed Morgan "2 with notes" where no observer
+  had typed anything: two ballots had contests left unrecorded, one of them the targeted contest.
+  Count these apart ("2 with contests not recorded", naming the observer and, when it is, the
+  targeted contest) from ballots with typed notes, and show a ballot's unrecorded contests on its
+  line, so a coordinator can tell an observer at once to record the contest that matters.
 - **TODO: flags that say exactly what they compared, and only alarm when something changed.**
   - A file new after the roll whose bytes match a file already held before the roll (e.g. a
     county's upload of the manifest the Audit Center posted, and CORLA imported, days earlier) is
