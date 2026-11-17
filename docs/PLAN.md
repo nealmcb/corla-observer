@@ -284,6 +284,16 @@ These are warnings for the coordinator, never silent corrections.
   general's first audit day it used 19 of a budget of 20, every domain left needing more than one
   more card to cross a tolerance. When the coordinator asks for N cards, the suggestion should draw
   N: give what ladder leaves to the domain with the highest risk, as minimax would, and say so.
+- **TODO: joining in the middle of a board's sequence.** An observer arriving after the reading has
+  begun (on the 2026 general's first audit day, from a phone, at 3:04 PM with Weld past ballot 100)
+  can only step forward ballot by ballot. Offer: a box to go straight to a ballot by its number in
+  the list ("12 of 149") or its imprinted ID; a line saying where the board is, taken from the
+  other observers' latest first readings on the same board and list ("the board is on ballot 112,
+  as of 3:04 PM"), with a button to go there, and an option to keep following it as it advances.
+  And let any client (the page, the extension, the command-line client) show a QR code of where it
+  is (the list and ballot number, never the observer's own link or token), which another
+  observer's device scans to go to the same ballot. Ballots skipped this way stay "not observed"
+  (never a match or a mismatch), and the observer's record says where they joined.
 - **TODO: record targeting looked at, not only targeting accepted.** Opening a county's targeting
   page, computing a menu or previewing draws (with a dummy seed or the real one) leaves no event:
   on the 2026 general's first audit day Weld's page was opened twice on the live site and La
