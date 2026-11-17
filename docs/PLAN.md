@@ -269,6 +269,16 @@ These are warnings for the coordinator, never silent corrections.
   and a dash and removing blanks: `Morgan-LATBallotManifest.csv`,
   `La_Plata-Modified_CVR_Export_20261113122247.csv`. Keep the name the county gave it in the
   record (`original_name`), so the two can always be matched.
+- **TODO: an assistant that explains the site's data and helps use it.** During the 2026 general's
+  first audit day, the coordinator relied on a general AI assistant with access to the site to
+  answer questions as they came up: finish-time estimates from observers' entry times, what a
+  dashboard count meant, what observers' notes said against the CVR, how CORLA's posted counts and
+  selections compared with predictions, contrasting the targeting strategies for a county, and
+  checking a district's legal boundaries. Offer a chat assistant on the coordinator pages, with
+  read-only access to the event log, data map, extracts and published commitments (never to
+  secrets or observer links), that answers such questions with its reasoning and the records it
+  used, and records each question and answer as an event. It must say when it is unsure, and it
+  never takes actions: it can draft a targeted list or a message, but a coordinator accepts it.
 - **TODO: record targeting looked at, not only targeting accepted.** Opening a county's targeting
   page, computing a menu or previewing draws (with a dummy seed or the real one) leaves no event:
   on the 2026 general's first audit day Weld's page was opened twice on the live site and La
