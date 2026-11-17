@@ -269,6 +269,14 @@ These are warnings for the coordinator, never silent corrections.
   and a dash and removing blanks: `Morgan-LATBallotManifest.csv`,
   `La_Plata-Modified_CVR_Export_20261113122247.csv`. Keep the name the county gave it in the
   record (`original_name`), so the two can always be matched.
+- **TODO: record targeting looked at, not only targeting accepted.** Opening a county's targeting
+  page, computing a menu or previewing draws (with a dummy seed or the real one) leaves no event:
+  on the 2026 general's first audit day Weld's page was opened twice on the live site and La
+  Plata's twice on the practice site, visible only as page loads in the server log, with no record
+  of who looked or what they computed. Record each as an event (who, which county, the inputs and
+  seed used, the contests and counts shown, a hash of the result), show them on the county's page
+  and the dashboard ("targeting previewed 2 times, nothing accepted"), so observers can see what
+  was considered before a list was accepted, not only the list that was.
 - **TODO: say "BLANK", not "NO VOTE".** Printouts, the text extract, the observer page and the
   command-line client show a contest left unmarked as "NO VOTE" (and "no vote"), which is easy to
   hear or read as a "No" choice, and on the 2026 general's first audit day Weld's audit board said
