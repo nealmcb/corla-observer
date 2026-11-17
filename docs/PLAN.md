@@ -296,6 +296,14 @@ These are warnings for the coordinator, never silent corrections.
   each scheduled job an actor of its own, still naming the responsible coordinator (e.g.
   `relay:yl for coordinator:neal`), and show it wherever the site says who did something, so "by
   hand" is only said of what a person did by hand.
+- **TODO: observer clients check the expected votes against the extract itself.** The observer
+  page, the extension and `scripts/corla-observe.py` show each ballot's expected votes from the
+  server's `data.json`, and check only that its `extract_sha256` is an extract the log records as
+  built (the extension: and one the published commitments list). A server could show other votes
+  under a genuine extract's hash, and an observer's "match" would then mean nothing. Have the
+  client fetch the extract file itself, check its SHA-256 against `extract_sha256` and the
+  commitments, and show the expected votes, imprinted IDs and pull order from that file, raising
+  an alarm wherever `data.json` differs from it.
 - **TODO: export the contests and the numbers behind the selections.** Others checking the
   selections independently start from whatever file they have, which may be out of date (the
   target list's spreadsheet, before CORLA's round-one contest list is posted). Offer a download,
