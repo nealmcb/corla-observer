@@ -269,6 +269,12 @@ These are warnings for the coordinator, never silent corrections.
   and a dash and removing blanks: `Morgan-LATBallotManifest.csv`,
   `La_Plata-Modified_CVR_Export_20261113122247.csv`. Keep the name the county gave it in the
   record (`original_name`), so the two can always be matched.
+- **TODO: say "BLANK", not "NO VOTE".** Printouts, the text extract, the observer page and the
+  command-line client show a contest left unmarked as "NO VOTE" (and "no vote"), which is easy to
+  hear or read as a "No" choice, and on the 2026 general's first audit day Weld's audit board said
+  "blank" for these. Show "BLANK" instead, everywhere a ballot's expected votes are shown and in
+  what observers enter, for new extracts only (a new page format, as for the ballot style), so
+  extracts already built and committed still render, and verify, exactly as before.
 - **TODO: the dashboard's "with notes" says what it counts.** It counts a ballot as "with notes"
   when an observer in contest-by-contest entry left contests unrecorded, as well as when one typed
   a note. On the 2026 general's first audit day it showed Morgan "2 with notes" where no observer
