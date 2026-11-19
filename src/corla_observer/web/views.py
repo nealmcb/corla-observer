@@ -9,7 +9,10 @@ Each county's status (`corla_observer.county_status`: CORLA's imports of
 its manifest and CVR, what has arrived here, its round or stage, and
 observation progress) is in ``statuses`` for every Colorado county, and on
 each `CountyRow`; ``active_counties`` are the ones taking part in
-observation, which the public dashboard lists.
+observation, which the public dashboard lists. ``round_results`` is what
+CORLA's posted contest lists and comparisons say, round by round
+(`corla_observer.round_results`), with the differing rows of the counties
+taking part in observation, for cards their redacted CVR shows.
 
 A snapshot holds, for a redacted CVR, only its redaction verdict and counts
 (rows, ballots, styles, groups, rare groups), never its contents. The
@@ -53,6 +56,7 @@ from corla_observer.flags import (
 )
 from corla_observer.practice import OBSERVER_KINDS, BoardProgress, ObserverStats, practice_stats
 from corla_observer.progress import ProgressStep, audit_progress
+from corla_observer.round_results import RoundResults, round_results
 from corla_observer.pulllists import LIST_KINDS, RLA, all_lists
 from corla_observer.pulllists import load as load_list
 from corla_observer.uploads import CountyStatus
@@ -332,6 +336,8 @@ class Snapshot:
     progress: list[ProgressStep] = field(default_factory=list)
     #: Per county, what is still to come from it, with its due text (``cvr``, ``corla``).
     not_yet: dict[str, dict[str, str]] = field(default_factory=dict)
+    #: What CORLA's posted results say, round by round (`corla_observer.round_results`).
+    round_results: RoundResults = field(default_factory=RoundResults)
 
     @property
     def active_counties(self) -> list[CountyRow]:
@@ -499,9 +505,29 @@ def build_snapshot(
     else:
         _build_map(snap, log, workspace, flag_checker)
     _apply_statuses(snap, statuses, links)
+    _apply_round_results(snap, workspace)
     _apply_view(snap, log, workspace, now)
     _apply_progress(snap)
     return snap
+
+
+def redacted_cvrs(snap: Snapshot) -> dict[str, str | None]:
+    """Each county taking part in observation, with its redacted CVR's SHA-256 if it passed the redaction check."""
+    return {
+        row.county: str(row.cvr["sha256"]) if row.cvr and row.cvr.get("verdict") == "PASS" else None
+        for row in snap.counties
+        if row.status is not None and row.status.participating
+    }
+
+
+def _apply_round_results(snap: Snapshot, workspace: Workspace) -> None:
+    """CORLA's results, round by round (`corla_observer.round_results`); each file read is kept, so this is cheap when nothing changed."""
+    if snap.datamap is None:
+        return
+    try:
+        snap.round_results = round_results(snap.datamap, workspace, redacted_cvrs(snap))
+    except Exception as exc:  # show the rest of the dashboard regardless
+        snap.errors.append(f"CORLA's results could not be read: {type(exc).__name__}: {exc}"[:500])
 
 
 def _apply_progress(snap: Snapshot) -> None:
@@ -568,7 +594,11 @@ def _build_map(snap: Snapshot, log: EventLog, workspace: Workspace, flag_checker
         snap.corla = corla_uploads(datamap, workspace)
     except Exception as exc:
         snap.errors.append(f"CORLA's upload status could not be read: {type(exc).__name__}: {exc}"[:500])
-    snap.rounds = audit_rounds(datamap)
+    try:
+        snap.rounds = audit_rounds(datamap, workspace)
+    except Exception as exc:
+        snap.errors.append(f"CORLA's contest lists could not be read: {type(exc).__name__}: {exc}"[:500])
+        snap.rounds = audit_rounds(datamap)
 
 
 def _apply_statuses(snap: Snapshot, ours: dict[str, CountyStatus], links: dict[str, int]) -> None:

@@ -102,7 +102,7 @@
 
 <section>
   <h2>Comparing observers</h2>
-  <p class="meta">Each board's ballots where an observer recorded a difference, or where observers disagree. Contest-by-contest entries come first: they name the contest, so they are more precise than a two-tap note. A <strong>conflict</strong> is a two-tap note on a ballot where a contest-by-contest observer confirmed every contest, or a two-tap match on one where they found a difference.</p>
+  <p class="meta">Each board's ballots where an observer recorded a difference, or where observers disagree. Contest-by-contest entries come first: they name the contest, so they are more precise than a two-tap note. A <strong>conflict</strong> is a two-tap note on a ballot where a contest-by-contest observer confirmed every contest, or a two-tap match on one where they found a difference. <a href="{{ url('/coord/corla') }}">Observers and CORLA</a> compares each observer's entries with CORLA's posted results, card by card.</p>
   {% for county, board, items, total, list_label in compared %}
     <h3>{{ county }}, board {{ board }}{% if list_label %}: {{ badge('warning', 'targeted (not RLA)') }} {{ list_label }}{% endif %}</h3>
     {% if items %}
