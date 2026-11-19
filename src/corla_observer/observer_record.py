@@ -23,7 +23,12 @@ log. It reports:
 - **entries in the log under this observer and device that the device did
   not make:** events without a signature that verifies with the device's
   key. Events the device did sign that the record lacks (a record
-  downloaded before them) are noted, not counted as problems.
+  downloaded before them) are noted, not counted as problems;
+- **withheld entries** (`corla_observer.withhold`), counted apart from
+  problems: in a published copy, an entry whose payload is replaced by a
+  withheld marker and the log's lines holding it. The device's chain is
+  checked through the kept ``payload_sha256``; the device signature can't
+  be, but the receipt is, and its event must be the withheld line, by hash.
 """
 
 from __future__ import annotations
@@ -78,6 +83,9 @@ class RecordReport:
     server_key: str
     anchors_checked: int = 0
     findings: list[Finding] = field(default_factory=list)
+    #: Entries of the record whose payload is withheld, and lines of the log withheld (`corla_observer.withhold`).
+    withheld_entries: int = 0
+    withheld_events: int = 0
     #: The record's entries per pull list (`corla_observer.pulllists`), by the extract each refers to: "RLA sample" or
     #: "Targeted: NAME", as the log's ``extract.built`` events name them, each with its extracts' short hashes.
     lists: dict[str, int] = field(default_factory=dict)
@@ -85,6 +93,10 @@ class RecordReport:
     @property
     def problems(self) -> list[Finding]:
         return [f for f in self.findings if f.severity == "problem"]
+
+    @property
+    def withheld(self) -> list[Finding]:
+        return [f for f in self.findings if f.severity == "withheld"]
 
     @property
     def ok(self) -> bool:
@@ -103,7 +115,10 @@ class RecordReport:
                 "head_seq": self.log.head_seq,
                 "head_hash": self.log.head_hash,
                 "errors": list(self.log.errors),
+                "withheld": list(self.log.withheld),
             },
+            "withheld_entries": self.withheld_entries,
+            "withheld_events": self.withheld_events,
             "server_key": self.server_key,
             "anchors_checked": self.anchors_checked,
             "lists": dict(self.lists),
@@ -192,9 +207,16 @@ def _entry_fields(payload: Mapping[str, Any], content: Mapping[str, Any]) -> dic
     return {}
 
 
+def _is_withheld(obj: object) -> bool:
+    """Whether a payload, event or event's data is a withheld marker or line (`corla_observer.withhold`)."""
+    return isinstance(obj, Mapping) and obj.get("withheld") is True
+
+
 def _describe(payload: Mapping[str, Any]) -> str:
     kind = payload.get("type")
     seq = payload.get("device_seq")
+    if _is_withheld(payload):
+        return f"entry {seq} (withheld: {payload.get('reason')})"
     if kind == "device_registration":
         return f"entry {seq} (the device's registration)"
     content = payload.get("content") or {}
@@ -231,7 +253,7 @@ def check_record(
     anchors: Sequence[tuple[int, str]] = (),
 ) -> RecordReport:
     """Check a device-held record against an event log; see the module documentation."""
-    log_report = verify_jsonl(events_path)
+    log_report = verify_jsonl(events_path, allow_withheld=True)
     events = _read_events(events_path, log_report.event_count)
     by_seq = {int(e["seq"]): e for e in events}
     entries = [e for e in record.get("entries", []) if isinstance(e, Mapping)]
@@ -245,8 +267,21 @@ def check_record(
     def note(kind: str, message: str, seq: int | None = None) -> None:
         findings.append(Finding("note", kind, message, seq))
 
+    def withheld(kind: str, message: str, seq: int | None = None) -> None:
+        findings.append(Finding("withheld", kind, message, seq))
+
     if not log_report.ok:
         problem("log_broken", f"the log's chain is broken: {log_report.errors[0]}; only the {log_report.event_count} events before it are used")
+    for seq in log_report.withheld:
+        e = by_seq[seq]
+        withheld("withheld_event", f"event {seq} ({e['kind']}, {e['actor']}) is withheld: {e['data'].get('reason')}")
+    if log_report.withheld_unpinned:
+        listed = ", ".join(str(s) for s in log_report.withheld_unpinned)
+        note(
+            "withheld_unpinned",
+            f"withheld event(s) {listed}: no later line whose hash can be recomputed covers the stated hash, "
+            "so only a receipt or anchor naming the event pins it",
+        )
 
     # -- the server key --------------------------------------------------
     logged_keys: dict[str, bytes] = {}
@@ -270,6 +305,13 @@ def check_record(
         if not isinstance(payload, Mapping):
             problem("record_corrupt", "an entry of the record has no payload")
             continue
+        if _is_withheld(payload):
+            kept = entry.get("payload_sha256")
+            if not isinstance(kept, str) or len(kept) != 64 or not isinstance(payload.get("device_seq"), int):
+                problem("record_corrupt", "a withheld entry lacks its payload's hash or its device sequence number")
+                continue
+            payloads.append((payload, kept, entry))
+            continue
         try:
             sha = payload_sha256(payload)
         except PayloadError:
@@ -290,9 +332,24 @@ def check_record(
         observer = observer or str(registration[0].get("observer"))
 
     prev, expected_seq = ZERO_HASH, 0
+    withheld_entries = 0
     for payload, sha, entry in payloads:
         seq = payload.get("device_seq")
         seq_int = seq if isinstance(seq, int) else None
+        if _is_withheld(payload):
+            # The payload's own link back (its prev_payload_sha256) is inside the withheld text; the next
+            # entry's link to this one, through the kept hash, is checked below as usual.
+            withheld_entries += 1
+            withheld(
+                "withheld_entry",
+                f"{_describe(payload)}: its payload is withheld, so its device signature and content can't be checked; "
+                "its kept hash continues the device's chain",
+                seq_int,
+            )
+            if seq != expected_seq:
+                problem("device_chain", f"the device's chain skips from sequence number {expected_seq - 1} to {seq}", seq_int)
+            prev, expected_seq = sha, (seq_int if seq_int is not None else expected_seq) + 1
+            continue
         if payload.get("device_id") != device or payload.get("observer") != observer:
             problem("record_corrupt", f"{_describe(payload)} names another observer or device", seq_int)
         if public_key is not None and not verify_device_signature(public_key, payload, entry.get("signature")):
@@ -304,7 +361,7 @@ def check_record(
         prev, expected_seq = sha, (seq_int if seq_int is not None else expected_seq) + 1
 
     # -- the log's events under this observer and device -------------------
-    logged = [e for e in events if e["kind"] in SIGNED_KINDS and e["actor"] == observer and e["device_id"] == device]
+    logged = [e for e in events if e["kind"] in SIGNED_KINDS and e["actor"] == observer and e.get("device_id") == device]
     rejected = [e for e in events if e["kind"] == "observation.rejected" and e["actor"] == observer]
     logged_by_sha: dict[str, dict[str, Any]] = {}
     logged_by_seq: dict[int, list[dict[str, Any]]] = {}
@@ -334,6 +391,22 @@ def check_record(
                 problem("missing", f"{_describe(payload)}: not in the log, although the device holds a receipt for it", seq_int)
             else:
                 problem("missing", f"{_describe(payload)}: not in the log, and the device holds no receipt (perhaps never sent)", seq_int)
+        elif _is_withheld(payload) or _is_withheld(event):
+            # A withheld entry, or one the log withholds: only what both sides still show can be compared.
+            # The withheld line's payload_sha256 is the publisher's statement; the receipt, checked below, ties
+            # the payload's hash to the line's hash.
+            if not _is_withheld(payload):
+                changed = []
+                if (event["county"], event["board"]) != (payload.get("county"), payload.get("board")):
+                    changed.append("county or board")
+                if event["client_time"] != payload.get("client_time"):
+                    changed.append("client_time")
+                if changed:
+                    problem("differs", f"{_describe(payload)}: withheld event {event['seq']} differs from the signed entry in {', '.join(changed)}", seq_int)
+            elif not _is_withheld(event):
+                held = event["data"].get("payload")
+                if not isinstance(held, Mapping) or payload_sha256(held) != sha:
+                    problem("differs", f"{_describe(payload)}: event {event['seq']} holds a payload with another hash", seq_int)
         else:
             if event.get("signature") != entry.get("signature") and public_key is not None and not verify_device_signature(
                 public_key, event["data"].get("payload", {}), event.get("signature")
@@ -353,6 +426,8 @@ def check_record(
 
         receipt = entry.get("receipt")
         if not isinstance(receipt, Mapping):
+            if _is_withheld(payload):
+                note("withheld_entry", f"{_describe(payload)}: withheld and without a receipt, so only the log's own statement of its hash ties it to the log", seq_int)
             continue
         receipts += 1
         body = receipt.get("receipt")
@@ -371,6 +446,8 @@ def check_record(
             at = by_seq.get(event_seq)
             if at is not None and at["hash"] == event_hash and at["data"].get("payload_sha256") != sha:
                 problem("receipt_not_in_log", f"{_describe(payload)}: receipt {code}'s event {event_seq} does not hold this entry", seq_int)
+        elif _is_withheld(payload):
+            problem("receipt_invalid", f"{_describe(payload)}: its receipt names no event, so nothing ties the withheld entry to the log", seq_int)
         head_seq, head_hash = body.get("head_seq"), body.get("head_hash")
         if isinstance(head_seq, int) and isinstance(head_hash, str):
             receipt_anchors.append((head_seq, head_hash, f"receipt {code}'s chain head"))
@@ -385,6 +462,9 @@ def check_record(
     for e in logged:
         sha_value = e["data"].get("payload_sha256")
         if isinstance(sha_value, str) and sha_value in record_hashes:
+            continue
+        if _is_withheld(e):
+            problem("not_by_device", f"withheld event {e['seq']} ({e['kind']}) is under this observer and device but not in the record, so nothing shows the device signed it")
             continue
         payload = e["data"].get("payload")
         made = (
@@ -425,6 +505,8 @@ def check_record(
         server_key=key_source,
         anchors_checked=checked,
         findings=findings,
+        withheld_entries=withheld_entries,
+        withheld_events=len(log_report.withheld),
         lists=_lists(events, [p for p, _, _ in payloads]),
     )
 
@@ -459,11 +541,19 @@ def render_report(report: RecordReport) -> str:
         f"Server key: {report.server_key}",
         f"Anchors: {report.anchors_checked} checked (receipts' events and chain heads, and any given)",
     ]
+    if report.withheld_entries or report.withheld_events:
+        lines.append(
+            f"Withheld: {report.withheld_entries} entries of the record and {report.withheld_events} lines of the log "
+            "(their text replaced by a marker; chains and receipts still checked)"
+        )
     if report.lists:
         lines.append("Entries by pull list: " + "; ".join(f"{label}: {n}" for label, n in report.lists.items()))
+    labels = {"problem": "PROBLEM", "withheld": "withheld"}
     for f in report.findings:
-        lines.append(f"{'PROBLEM' if f.severity == 'problem' else 'note'} [{f.kind}] {f.message}")
-    if report.ok:
+        lines.append(f"{labels.get(f.severity, 'note')} [{f.kind}] {f.message}")
+    if report.ok and (report.withheld_entries or report.withheld_events):
+        lines.append("OK: apart from the withheld entries, every entry in the record is in the log as signed, and no entry under this device is unsigned by it.")
+    elif report.ok:
         lines.append("OK: every entry in the record is in the log as signed, and no entry under this device is unsigned by it.")
     else:
         lines.append(f"{len(report.problems)} problem(s) found.")

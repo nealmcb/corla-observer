@@ -204,6 +204,43 @@ It reports:
 
 It exits 0 when it finds no problem, 1 when it finds any, and 2 when the files can't be read.
 
+## Publishing a record with entries withheld
+
+An observer may publish their record, and a copy of the log, with some entries' text withheld, such
+as a reading of a ballot whose CVR row is redacted:
+
+```
+corla-observer record withhold RECORD.json EVENTS.jsonl --imprinted-id ID [--imprinted-id ...] \
+    [--device-seq N ...] --reason TEXT --out DIR
+```
+
+writes `DIR/record.json` and `DIR/events.jsonl` and nothing else. In the record, each chosen entry's
+`payload` becomes
+
+```json
+{"withheld": true, "reason": "...", "device_seq": 291}
+```
+
+and its `payload_sha256`, `signature` and `receipt` are kept, so the next entry's
+`prev_payload_sha256` still links to it. In the log, each event holding the entry becomes a withheld
+line ([EVENT_LOG.md](EVENT_LOG.md#withheld-lines-in-a-published-copy)). The command also warns of any
+other line that still contains a withheld entry's imprinted ID. The device's registration can't be
+withheld.
+
+With `--withhold-other-observers REASON`, every event of the log by another observer (an actor
+starting `observer:` other than the record's own) becomes a withheld line too, with that reason and
+no payload hash. This publishes one observer's evidence without the others' entries. A withheld line
+keeps its actor, so the other observers' names stay visible.
+
+`check-record` on the copy checks everything else: the log's chain across the withheld lines, the
+device's chain through each kept hash, and each withheld entry's receipt, whose signature covers the
+payload's hash and the event's `seq` and hash, and whose event must be the withheld line, by hash. A
+withheld entry's device signature and content can't be checked. The report counts the withheld
+entries and log lines apart from problems.
+
+The kept hashes are of the withheld text. Someone who guessed that text exactly, every character of
+a note and the times to the millisecond, could confirm the guess against them.
+
 ## Limits
 
 - **The page's code comes from the server.** The JavaScript that makes the key, signs and keeps the record is served by the same server that receives the entries, so a server that altered it could have the page sign something other than what the observer entered, or send the private key's signatures elsewhere. The scripts are published in this repository, versioned, and served with subresource integrity hashes, which the page shows in the downloaded record (`page`); anyone can compare those hashes with the published files to check what code an observer ran. An observer who wants more independence can work on paper, or on paper and a screen together.

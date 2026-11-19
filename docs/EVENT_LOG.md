@@ -178,6 +178,36 @@ Both are detected by comparing with a chain head (a `seq` and `hash`) recorded s
 
 Verification also says nothing about whether an event's content is true. That is what the device signatures, the observers' own device-held records and paper, and the committed inputs are for.
 
+### Withheld lines in a published copy
+
+A published copy of the log may have some lines *withheld*: an event whose `data` holds text that
+must not be published (such as votes an observer read from a ballot whose CVR row is redacted) is
+replaced by a line that keeps its place in the chain but not its content. `corla-observer record
+withhold` writes such a copy ([RECEIPTS.md](RECEIPTS.md#publishing-a-record-with-entries-withheld)).
+A withheld line is canonical JSON (keys sorted, no whitespace, `hash` in its sorted place, not last)
+with exactly these fields: `seq`, `server_time`, `client_time`, `actor`, `kind`, `county`, `board`,
+`device_id`, `v`, `prev_hash` and `hash` as in the original event, `"withheld": true`, and `data`
+replaced by a marker:
+
+```json
+{"withheld": true, "reason": "...", "payload_sha256": "...", "device_seq": 291}
+```
+
+`payload_sha256` and `device_seq` are those of the observer's entry the event held. `session_id`,
+`file_sha256` and `signature` are dropped.
+
+A verifier can't recompute a withheld line's hash, so it takes the stated one. It checks that the
+line has exactly those fields, is canonical, continues `seq`, and carries the previous line's hash as
+`prev_hash`; and that the next line carries the stated hash as its `prev_hash`. Since the next
+line's own hash is recomputed, the stated hash is pinned by it, and through it by every later chain
+head: no later event can be changed, and whoever holds the original line can show that it hashes to
+that value. What can't be checked is the withheld line's own content, including its `prev_hash`.
+Where two withheld lines are adjacent, the first one's hash is pinned only by the second's stated
+`prev_hash`, so only a receipt or anchor naming that event pins it; the checker notes such lines.
+
+The verifier above refuses withheld lines, as does `corla-observer log verify` unless given
+`--allow-withheld`; `corla-observer check-record` accepts them and counts them apart from problems.
+
 ## Worked example
 
 These two events form a complete log. The first records a county file's arrival, and the second an observer's entry with a note containing non-ASCII characters.
