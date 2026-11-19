@@ -5,7 +5,8 @@ Built only from the Audit Center files the crawler fetched, as the data map
 (``contests_list``: ``round1/contest.csv``, ``round2/contest.csv``, ...), its
 CVR-to-audit-board comparisons (``cvr_comparison``:
 ``round1/contestComparison.csv``, ...) and its contest-to-county file
-(``contest_ids_by_county``: ``contestsByCounty.csv``). A file a county
+(``contest_ids_by_county``: ``contestsByCounty.csv``) and its results reports
+(``roundN/resultsReport.xlsx``). A file a county
 uploaded is never used here.
 
 **A round's contest list** describes the audit when that round begins: the
@@ -40,13 +41,43 @@ county is placed in a round by it. In the 2026 general every targeted
 contest is listed for exactly one county (or for every county, statewide)
 and agrees with its prefix.
 
+**A round's results report** (`results_reports`: ``roundN/resultsReport.xlsx``)
+describes the audit at the end of that round, so it holds what no contest
+list does once the last round is over: CORLA posts no contest list after
+it. Its "Summary" sheet (a title row, then a header row: ``Contest``,
+``targeted``, ``Winner``, ``Risk Limit met?``, ``Risk measurement %``,
+``Audit Risk Limit %``, ``diluted margin %``, ``disc +2`` to ``disc -2``,
+``gamma``, ``audited sample count``, ...) has one row per contest, targeted
+or not; `read_results_report` reads it with the standard-library reader of
+`corla_observer.classify` and keeps every row. A workbook is taken for a
+results report by that header, not its name; the classifier calls it an
+``audit_activity_report`` (its per-contest sheets look like one), or
+``unknown``. Its round is the one its URL names; one without is not used.
+Of several for one round, the one fetched last is used. In the 2026 general
+the round 1 and round 2 reports both list all 71 targeted contests (round 2's
+with Jackson County Assessor and Montezuma County Commissioner District 1
+met, at a measured risk of 2.0% and 2.4% against the 3.0% limit). A
+contest a later report leaves out keeps its last appearance
+(`final_statuses`), so a report listing only the contests audited in its
+round reads the same. Only reports of the latest contest list's round or
+later are used for the final status (`later_reports`): an earlier one says
+no more than the lists.
+
 **Where the audit stands** (`RoundResults.standings`): for each round's
-list, how many targeted contests met the risk limit and how many continue.
+list, how many targeted contests met the risk limit and how many continue;
+then, after the latest round with a results report (if it is of the latest
+list's round or later), each targeted contest at its last appearance, the
+audit called complete only when every one met the risk limit (a targeted
+contest of the latest list that no report shows counts as that list says).
 **What continues, and why** (`RoundResults.continuing`): each targeted
 contest still ``in_progress`` in the latest list, with its counties, the
 cards audited, the discrepancies counted (overstatements and understatements
 of one or two votes, in words), and how ``estimated_samples_to_audit``
-changed from the previous round's list. Nothing about CORLA's internals is
+changed from the previous round's list. A contest a later results report
+says met the risk limit is not there but in ``RoundResults.finished_later``,
+with the same explanation of why it went on and a sentence on how it
+finished (`finished_text`: the measured risk against the limit, the cards
+audited and the discrepancies). Nothing about CORLA's internals is
 inferred: only what the files hold is shown, with their names.
 
 **What CORLA's comparison shows** (`RoundResults.comparisons`): for each
@@ -82,10 +113,10 @@ import re
 import threading
 from collections import Counter
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, replace
 from typing import Any, TypeVar
 
-from corla_observer.classify import COLORADO_COUNTIES, Classification, canonical_county
+from corla_observer.classify import COLORADO_COUNTIES, Classification, XlsxError, XlsxReader, canonical_county, normalize_header
 from corla_observer.cvr import CvrFormatError, CvrReader
 from corla_observer.datamap import TARGETED_REASONS, DataMap, MapEntry, column, role_column, round_of, table_rows
 from corla_observer.drawn import ComparisonRow, read_comparison
@@ -330,7 +361,7 @@ def read_contest_list(
     if round_number is None:
         if not contests or any(c.audited for c in contests):
             return None
-        round_number, round_source = 1, "no card audited yet in it (audited_sample_count all zero)"
+        round_number, round_source = 1, "it shows no card audited (audited_sample_count all zero)"
     return ContestList(round_number, ref, round_source, tuple(contests))
 
 
@@ -362,6 +393,167 @@ def contest_lists(datamap: DataMap, workspace: Workspace) -> tuple[ContestList, 
 
 def _listed_key(datamap: DataMap) -> tuple[tuple[str, str], ...]:
     return tuple((e.ref, e.sha256) for e in datamap.used("contest_ids_by_county") if _fetched(e, datamap))
+
+
+# ---------------------------------------------------------------------------
+# Results reports
+
+
+@dataclass(frozen=True)
+class ReportedContest:
+    """One contest as a round's results report (its "Summary" sheet) shows it at the end of the round."""
+
+    name: str
+    targeted: bool
+    winner: str
+    #: "Risk Limit met?": True for "Yes", False for "No", None if neither.
+    met: bool | None
+    #: "Risk measurement %" and "Audit Risk Limit %", as written in the file ("2.0", "3.0").
+    risk: str
+    limit: str
+    audited: int | None = None
+    two_over: int = 0
+    one_over: int = 0
+    zero: int = 0
+    one_under: int = 0
+    two_under: int = 0
+
+
+@dataclass(frozen=True)
+class ResultsReport:
+    """One round's results report (``roundN/resultsReport.xlsx``): the contests at the end of that round."""
+
+    round: int
+    ref: str
+    contests: tuple[ReportedContest, ...]
+
+    def contest(self, name: str) -> ReportedContest | None:
+        return next((c for c in self.contests if c.name == name), None)
+
+
+#: The sheet of a results report read here, and the header cells that mark it (as `normalize_header` gives them).
+RESULTS_SHEET = "Summary"
+_RESULTS_MARKERS = ("contest", "risklimitmet")
+#: Rows of the Summary sheet searched for its header.
+_RESULTS_HEADER_ROWS = 20
+#: The kinds a results report can be classified as: CORLA's per-contest sheets in it look like an
+#: activity report's rows, and a report without them is not recognised at all.
+RESULTS_REPORT_KINDS = frozenset({"audit_activity_report", "unknown"})
+
+
+_DISC_RE = re.compile(r"^\s*disc\s*([+-]?)\s*(\d)\s*$", re.IGNORECASE)
+
+
+def _results_header_key(cell: str) -> str:
+    """A Summary header cell for lookup: as `normalize_header` gives it, but "disc +1" and "disc -1" kept apart."""
+    disc = _DISC_RE.match(cell)
+    if disc:
+        return f"disc{disc.group(1) or '+'}{disc.group(2)}" if disc.group(2) != "0" else "disc0"
+    return normalize_header(cell)
+
+
+def read_results_report(data: bytes, *, ref: str, round_number: int) -> ResultsReport | None:
+    """A results report's Summary sheet, every contest in it (targeted or not); None if the bytes are not one.
+
+    A workbook is a results report if it has a sheet named "Summary" with a header row holding
+    "Contest" and "Risk Limit met?" in its first rows (a state audit report's Summary has neither).
+    """
+    try:
+        reader = XlsxReader(data)
+        sheet = next((s for s in reader.sheet_names if normalize_header(s) == normalize_header(RESULTS_SHEET)), None)
+        if sheet is None:
+            return None
+        rows = reader.rows(sheet)
+        index: dict[str, int] = {}
+        for _, row in zip(range(_RESULTS_HEADER_ROWS), rows, strict=False):
+            keys = [_results_header_key(c) for c in row]
+            if all(m in keys for m in _RESULTS_MARKERS):
+                for i, key in enumerate(keys):
+                    index.setdefault(key, i)
+                break
+        if not index:
+            return None
+        found = []
+        for row in rows:
+
+            def cell(key: str, row: list[str] = row) -> str:
+                i = index.get(key)
+                return row[i].strip() if i is not None and i < len(row) else ""
+
+            def n(key: str) -> int:
+                return _int(cell(key)) or 0
+
+            name = cell("contest")
+            if not name:
+                continue
+            met = cell("risklimitmet").lower()
+            found.append(
+                ReportedContest(
+                    name=name, targeted=cell("targeted").lower() == "yes", winner=cell("winner"),
+                    met=True if met == "yes" else False if met == "no" else None,
+                    risk=cell("riskmeasurement"), limit=cell("auditrisklimit"), audited=_int(cell("auditedsamplecount")),
+                    two_over=n("disc+2"), one_over=n("disc+1"), zero=n("disc0"), one_under=n("disc-1"), two_under=n("disc-2"),
+                )
+            )  # fmt: skip
+    except XlsxError:
+        return None
+    return ResultsReport(round_number, ref, tuple(found))
+
+
+def results_reports(datamap: DataMap, workspace: Workspace) -> tuple[ResultsReport, ...]:
+    """The fetched results reports of the data map's election whose URL names a round, one per round (the latest fetched), in round order."""
+    entries = sorted(
+        (e for e in datamap.entries if e.kind in RESULTS_REPORT_KINDS and not e.ignored and _fetched(e, datamap)
+         and e.evidence.get("format") == "xlsx" and round_of(e.ref) is not None),
+        key=lambda e: (e.seq or 0, e.ref),
+    )  # fmt: skip
+    by_round: dict[int, ResultsReport] = {}
+    for entry in entries:
+        number = round_of(entry.ref)
+        assert number is not None
+
+        def build(entry: MapEntry = entry, number: int = number) -> ResultsReport | None:
+            data = _bytes(workspace, entry.sha256)
+            if data is None:
+                return None
+            return read_results_report(data, ref=_short(entry.ref), round_number=number)
+
+        found = _cached(("report", entry.ref, entry.sha256), build)
+        if found is not None:
+            by_round[found.round] = found  # entries in fetch order: the latest wins
+    return tuple(by_round[r] for r in sorted(by_round))
+
+
+@dataclass(frozen=True)
+class FinalStatus:
+    """A targeted contest's status at its last appearance in a results report."""
+
+    round: int
+    ref: str
+    contest: ReportedContest
+
+
+def final_statuses(reports: Sequence[ResultsReport]) -> dict[str, FinalStatus]:
+    """Each targeted contest's last appearance in the results reports, by name: a contest a later report leaves out keeps it."""
+    found: dict[str, FinalStatus] = {}
+    for report in reports:
+        for contest in report.contests:
+            if contest.targeted:
+                found[contest.name] = FinalStatus(report.round, report.ref, contest)
+    return found
+
+
+def later_reports(reports: Sequence[ResultsReport], lists: Sequence[ContestList]) -> tuple[ResultsReport, ...]:
+    """The results reports that say more than the contest lists: those of the latest list's round or later (all, without lists)."""
+    if not lists:
+        return tuple(reports)
+    return tuple(r for r in reports if r.round >= lists[-1].round)
+
+
+def met_since(name: str, reports: Sequence[ResultsReport], lists: Sequence[ContestList]) -> FinalStatus | None:
+    """A targeted contest's final status if a results report later than the contest lists says it met the risk limit."""
+    final = final_statuses(later_reports(reports, lists)).get(name)
+    return final if final is not None and final.contest.met else None
 
 
 # ---------------------------------------------------------------------------
@@ -484,6 +676,8 @@ class Standing:
     met: int
     continuing: int
     other: dict[str, int] = field(default_factory=dict)
+    #: Every targeted contest met the risk limit (a results report's standing only).
+    complete: bool = False
 
 
 @dataclass(frozen=True)
@@ -497,6 +691,8 @@ class Continuing:
     audited_text: str
     discrepancies: list[str]
     estimate_text: str
+    #: For a contest that met the risk limit by a later results report: how, in a sentence (`finished_text`).
+    finished_text: str = ""
 
 
 @dataclass(frozen=True)
@@ -523,6 +719,9 @@ class CountyCards:
     #: Cards with a difference not listed: not shown as a ballot in the county's redacted CVR.
     withheld: int = 0
     note: str = ""
+    #: Audited cards not in the county's redacted CVR (redacted to protect voters' privacy): their IDs
+    #: only, so the dashboard can say they were audited but not checked here; nothing of their contents.
+    redacted: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -544,12 +743,14 @@ class RoundResults:
 
     standings: list[Standing] = field(default_factory=list)
     continuing: list[Continuing] = field(default_factory=list)
+    #: Contests the latest contest list has in progress that a later results report says met the risk limit.
+    finished_later: list[Continuing] = field(default_factory=list)
     comparisons: list[RoundComparison] = field(default_factory=list)
     overstatement_note: str = OVERSTATEMENT_NOTE
 
     @property
     def empty(self) -> bool:
-        return not (self.standings or self.comparisons)
+        return not (self.standings or self.comparisons or self.finished_later)
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -570,8 +771,8 @@ def standing(listing: ContestList) -> Standing:
     if listing.unaudited:
         statewide = sum(1 for c in contests if c.statewide)
         text = (
-            f"Round {r} ({listing.ref}): {total} targeted contests to audit ({statewide} statewide, {total - statewide} county-wide), "
-            "no card audited yet."
+            f"Round {r} began ({listing.ref}) with {total} targeted contests to audit "
+            f"({statewide} statewide, {total - statewide} county-wide)."
         )
     else:
         when = f"After round {r - 1}" if r > 1 else f"In round {r}"
@@ -582,6 +783,61 @@ def standing(listing: ContestList) -> Standing:
         parts += [f"{n} {words}" for words, n in other.items()]
         text = f"{when} ({listing.ref}): " + "; ".join(parts) + "."
     return Standing(r, listing.ref, text, total, met, going, other)
+
+
+def report_standing(report: ResultsReport, reports: Sequence[ResultsReport], lists: Sequence[ContestList]) -> Standing:
+    """Where the audit stands after ``report``'s round: each targeted contest at its last appearance in ``reports`` up to it."""
+    finals = final_statuses([r for r in reports if r.round <= report.round])
+    met_by: dict[str, bool] = {name: bool(f.contest.met) for name, f in finals.items()}
+    # A targeted contest no report shows (a report that lists only the contests audited in its round, the
+    # earlier reports not fetched) counts as met if the latest contest list says so, else as not met.
+    for c in lists[-1].contests if lists else ():
+        met_by.setdefault(c.name, c.status == RISK_LIMIT_ACHIEVED)
+    total = len(met_by)
+    met = sum(met_by.values())
+    not_met = [name for name, ok in met_by.items() if not ok]
+    when = f"After round {report.round} ({report.ref})"
+    if total and not not_met:
+        every = "the 1 targeted contest" if total == 1 else f"all {total} targeted contests"
+        return Standing(report.round, report.ref, f"{when}: {every} met the risk limit; the audit is complete.", total, met, 0, complete=True)
+    named = "; ".join(f"{name} ({_county_of(name, lists)})" for name in not_met)
+    verb = "has" if len(not_met) == 1 else "have"
+    text = f"{when}: {met} of {total} targeted contests met the risk limit; {len(not_met)} {verb} not: {named}."
+    return Standing(report.round, report.ref, text, total, met, len(not_met))
+
+
+def _county_of(name: str, lists: Sequence[ContestList]) -> str:
+    for listing in reversed(lists):
+        found = listing.contest(name)
+        if found is not None:
+            return found.county_text
+    return "county not known"
+
+
+def _discrepancy_words(c: ReportedContest | ContestStatus) -> str:
+    """The discrepancies in a few words: "one one-vote overstatement", "no overstatement or understatement"."""
+    parts = []
+    for n, kind in ((c.two_over, "two-vote overstatement"), (c.one_over, "one-vote overstatement"),
+                    (c.one_under, "one-vote understatement"), (c.two_under, "two-vote understatement")):  # fmt: skip
+        if n:
+            parts.append(f"{number_words(n)} {kind}{'' if n == 1 else 's'}")
+    if not parts:
+        return "no overstatement or understatement"
+    return parts[0] if len(parts) == 1 else f"{', '.join(parts[:-1])} and {parts[-1]}"
+
+
+def _percent(text: str) -> str:
+    return f"{text}%" if text else "not given"
+
+
+def finished_text(final: FinalStatus) -> str:
+    """How a contest met the risk limit, by its results report, in words to follow its name ("met the risk limit in round 2 (...): ...")."""
+    c = final.contest
+    audited = f"{_plural(c.audited, 'card')} audited" if c.audited is not None else "cards audited not given"
+    return (
+        f"met the risk limit in round {final.round} ({final.ref}): measured risk {_percent(c.risk)} against the "
+        f"{_percent(c.limit)} limit, {audited}, {_discrepancy_words(c)}."
+    )
 
 
 def discrepancy_lines(contest: ContestStatus) -> list[str]:
@@ -687,6 +943,8 @@ def compare_counties(
                         entry.rows.append(
                             DifferingRow(card, row.contest, choices_text(row.cvr), choices_text(row.board), _targeted_text(row.contest, county, lists), row.comment)
                         )
+                if visible is not None:
+                    entry.redacted = sorted((card for card in cards if card_key(card) not in visible), key=_card_order)
                 if differing and not entry.rows and not entry.withheld:
                     entry.note = "listed for an earlier round's file"
                 if entry.withheld and not entry.note:
@@ -715,17 +973,26 @@ def round_results(datamap: DataMap, workspace: Workspace, redacted_cvrs: Mapping
 
 
 #: The kinds of file the results are read from: the same files give the same results, so they are kept by these files' hashes.
-_RESULT_KINDS = frozenset({"contests_list", "cvr_comparison", "contest_ids_by_county"})
+_RESULT_KINDS = frozenset({"contests_list", "cvr_comparison", "contest_ids_by_county"}) | RESULTS_REPORT_KINDS
 
 
 def _round_results(datamap: DataMap, workspace: Workspace, redacted_cvrs: Mapping[str, str | None]) -> RoundResults:
     lists = contest_lists(datamap, workspace)
     results = RoundResults()
     results.standings = [standing(listing) for listing in lists]
+    reports = results_reports(datamap, workspace)
+    newer = later_reports(reports, lists)
+    if newer:
+        results.standings.append(report_standing(newer[-1], reports, lists))
     if lists:
         latest = lists[-1]
         previous = next((x for x in reversed(lists[:-1]) if x.round == latest.round - 1), None)
-        results.continuing = continuing(latest, previous)
+        for item in continuing(latest, previous):
+            final = met_since(item.name, reports, lists)
+            if final is None:
+                results.continuing.append(item)
+            else:
+                results.finished_later.append(replace(item, finished_text=finished_text(final)))
     files = comparison_files(datamap, workspace)
     shown: dict[str, frozenset[str] | None] = {}
     for county, sha in redacted_cvrs.items():

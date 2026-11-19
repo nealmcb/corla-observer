@@ -15,7 +15,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from synthetic import Ballot, ballots, election_files, make_cvr
+from synthetic import Ballot, ballots, election_files, make_cvr, make_xlsx
 
 from corla_observer import round_results as rr
 from corla_observer.county_status import audit_rounds, corla_uploads, county_statuses, stage
@@ -218,7 +218,7 @@ def test_standings_continuing_contests_and_estimates(ws: Workspace, log: EventLo
     fetch(ws, log, election_files() | FILES)
     results = round_results(build_map(log, ws), ws, {})
     first, second = (s.text for s in results.standings)
-    assert first == "Round 1 (RLA/2026/general/files/round1/contest.csv): 4 targeted contests to audit (1 statewide, 3 county-wide), no card audited yet."
+    assert first == "Round 1 began (RLA/2026/general/files/round1/contest.csv) with 4 targeted contests to audit (1 statewide, 3 county-wide)."
     assert second == (
         "After round 1 (RLA/2026/general/files/round2/contest.csv): 3 of 4 targeted contests met the risk limit; "
         "1 continues in round 2: Jackson County Assessor (Jackson)."
@@ -254,6 +254,8 @@ def test_comparison_counts_and_the_privacy_rule(ws: Workspace, log: EventLog, tm
     assert (row.cvr_choice, row.board_choice) == ("John Hickenlooper", "John Hickenlooper and Ryan Apelbaum (two choices)")
     # 101-1-99 is not in Weld's redacted CVR: counted, never listed.
     assert weld.withheld == 1 and "protect voters' privacy" in weld.note
+    # It is named, by ID only, as audited but not in the redacted CVR.
+    assert weld.redacted == ["101-1-99"] and morgan.redacted == []
     # Morgan takes part but has no redacted CVR that passed: nothing listed.
     assert morgan.listed and morgan.rows == [] and morgan.withheld == 1 and "no redacted CVR" in morgan.note
     # Jackson does not take part in observation: counts only.
@@ -280,7 +282,123 @@ def test_the_public_dashboard_shows_the_results(workspace: Path, make_client: Fa
     page = client.get("/").text
     assert "CORLA's results, round by round" in page and "What continues, and why" in page
     assert "Jackson County Assessor" in page and "John Hickenlooper and Ryan Apelbaum (two choices)" in page
-    assert "101-1-99" not in page and "101-1-4" not in page
+    # A card not in the redacted CVR is named by ID in the note on such cards, and nowhere else.
+    assert "101-1-4" not in page and page.count("101-1-99") == 1
+    assert "not in the county's redacted CVR, which leaves out ballots to protect voters' privacy, so not checked here and not shown: <code>101-1-99</code>" in page
     data = client.get("/dashboard.json").json()["round_results"]
     assert data["continuing"][0]["name"] == "Jackson County Assessor"
     assert client.get("/dashboard.json").json()["progress"][-1]["detail"].startswith("Round 2: 1 county (Jackson)")
+
+
+# ---------------------------------------------------------------------------
+# Results reports: the status at the end of a round
+
+SUMMARY_HEADER = [
+    "Contest", "targeted", "Winner", "Risk Limit met?", "Risk measurement %", "Audit Risk Limit %", "diluted margin %",
+    "disc +2", "disc +1", "disc 0", "disc -1", "disc -2", "gamma", "audited sample count", "ballot count", "min margin",
+]  # fmt: skip
+
+
+def summary_row(name: str, met: str, risk: str, audited: int, one_over: int = 0, targeted: str = "Yes", one_under: int = 0) -> list[str]:
+    return [name, targeted, "A", met, risk, "3.0", "20.0", "0", str(one_over), str(audited - one_over - one_under), str(one_under), "0",
+            "1.03905000", str(audited), "100", "20"]  # fmt: skip
+
+
+def results_report(rows: Sequence[Sequence[str]]) -> bytes:
+    """A resultsReport.xlsx shaped as CORLA's: "Contests to Sheets", "Summary" (a title row, then the header), a per-contest sheet."""
+    return make_xlsx({
+        "Contests to Sheets": [["Contests to Sheets", "No Data"], ["Contest Name", "Sheet Name"], ["Jackson County Assessor", "Jackson County Assessor"]],
+        "Summary": [["Summary", "No Data"], SUMMARY_HEADER, *rows],
+        "Jackson County Assessor": [["imprinted id", "record type", "audit board", "discrepancy", "county"], ["102-8-9", "uploaded", "1", "1", "Jackson"]],
+    })  # fmt: skip
+
+
+ALL_MET_ROUND2 = results_report([
+    summary_row("United States Senator", "Yes", "1.0", 25),
+    summary_row("Weld County Council - At-Large", "Yes", "2.1", 14),
+    summary_row("Morgan - Proposition 137 (STATUTORY)", "Yes", "2.5", 16),
+    summary_row("Jackson County Assessor", "Yes", "2.0", 39, one_over=1),
+    summary_row("Town of Nowhere Question 1", "No", "40.0", 3, targeted="No"),
+])  # fmt: skip
+
+
+def test_a_results_report_is_read_with_its_discrepancies_apart() -> None:
+    report = rr.read_results_report(
+        results_report([summary_row("Jackson County Assessor", "Yes", "2.0", 39, one_over=1, one_under=2)]), ref="r", round_number=2
+    )
+    assert report is not None
+    (jackson,) = report.contests
+    assert (jackson.targeted, jackson.met, jackson.risk, jackson.limit, jackson.audited) == (True, True, "2.0", "3.0", 39)
+    # "disc +1" and "disc -1" are told apart.
+    assert (jackson.one_over, jackson.one_under, jackson.two_over, jackson.zero) == (1, 2, 0, 36)
+    # A state audit report's Summary, or no workbook at all, is not a results report.
+    assert rr.read_results_report(make_xlsx({"Summary": [["Audit Random Seed", "123"]]}), ref="r", round_number=2) is None
+    assert rr.read_results_report(b"not a workbook", ref="r", round_number=2) is None
+
+
+def test_a_contest_finishing_in_round_two_and_the_final_standing(ws: Workspace, log: EventLog) -> None:
+    fetch(ws, log, election_files() | FILES | {"files/round2/resultsReport.xlsx": ALL_MET_ROUND2})
+    results = round_results(build_map(log, ws), ws, {})
+    texts = [s.text for s in results.standings]
+    assert len(texts) == 3 and texts[1].startswith("After round 1 (RLA/2026/general/files/round2/contest.csv): 3 of 4")
+    assert texts[2] == "After round 2 (RLA/2026/general/files/round2/resultsReport.xlsx): all 4 targeted contests met the risk limit; the audit is complete."
+    assert results.standings[2].complete
+    assert results.continuing == []
+    (jackson,) = results.finished_later
+    assert f"{jackson.name} ({jackson.counties}): {jackson.finished_text}" == (
+        "Jackson County Assessor (Jackson): met the risk limit in round 2 (RLA/2026/general/files/round2/resultsReport.xlsx): "
+        "measured risk 2.0% against the 3.0% limit, 39 cards audited, one one-vote overstatement."
+    )
+    # Why it went to round 2 is kept.
+    assert jackson.round == 2 and jackson.estimate_text.startswith("CORLA's estimate of the cards it needs (estimated_samples_to_audit) rose from 32")
+
+
+def test_a_contest_not_yet_met_and_one_a_later_report_leaves_out(ws: Workspace, log: EventLog) -> None:
+    # Round 1's report shows every targeted contest; round 2's only the one audited in round 2, not yet met.
+    round1 = results_report([
+        summary_row("United States Senator", "Yes", "1.0", 25), summary_row("Weld County Council - At-Large", "Yes", "2.1", 14),
+        summary_row("Morgan - Proposition 137 (STATUTORY)", "Yes", "2.5", 16), summary_row("Jackson County Assessor", "No", "4.0", 33, one_over=1),
+    ])  # fmt: skip
+    round2 = results_report([summary_row("Jackson County Assessor", "No", "3.5", 39, one_over=2)])
+    fetch(ws, log, election_files() | FILES | {"files/round1/resultsReport.xlsx": round1, "files/round2/resultsReport.xlsx": round2})
+    results = round_results(build_map(log, ws), ws, {})
+    # Round 1's report says no more than round 2's contest list: no line of its own.
+    assert [s.ref for s in results.standings][-1] == "RLA/2026/general/files/round2/resultsReport.xlsx" and len(results.standings) == 3
+    assert results.standings[-1].text == (
+        "After round 2 (RLA/2026/general/files/round2/resultsReport.xlsx): 3 of 4 targeted contests met the risk limit; "
+        "1 has not: Jackson County Assessor (Jackson)."
+    )
+    assert [c.name for c in results.continuing] == ["Jackson County Assessor"] and results.finished_later == []
+    rounds = audit_rounds(build_map(log, ws), ws)
+    assert stage("Jackson", rounds, seed_source="s", round_start=None).label == "Round 2"
+    # The other counties' contests met the limit in round 1's report and stay met, though round 2's leaves them out.
+    weld = stage("Weld", rounds, seed_source="s", round_start=None)
+    assert weld.finished and weld.complete
+
+
+def test_the_stage_and_the_summary_once_every_contest_met_the_limit(ws: Workspace, log: EventLog) -> None:
+    fetch(ws, log, election_files(files_uploadStatus_csv=UPLOAD_STATUS) | FILES | {"files/round2/resultsReport.xlsx": ALL_MET_ROUND2})
+    datamap = build_map(log, ws)
+    rounds = audit_rounds(datamap, ws)
+    assert [r.round for r in rounds.results_reports] == [2]
+    jackson = stage("Jackson", rounds, seed_source="s", round_start=None)
+    assert jackson.label == "Round 2 finished: its targeted contests met the risk limit" and jackson.round == 2
+    assert jackson.finished and jackson.complete and "round2/resultsReport.xlsx" in jackson.source
+    assert stage("Weld", rounds, seed_source="s", round_start=None).label == "Round 1 finished: its targeted contests met the risk limit"
+    statuses = county_statuses(status(log), corla_uploads(datamap, ws), rounds, seed_source="s")
+    covered = {c: s for c, s in statuses.items() if c in ("Adams", "Jackson", "Morgan", "Weld")}
+    steps = audit_progress(contests_posted=True, corla=corla_uploads(datamap, ws), seed=True, selections=True, statuses=covered)
+    assert steps[-1].detail == "All counties finished: every targeted contest met the risk limit" and steps[-1].state == "done"
+
+
+def test_the_public_dashboard_shows_a_contest_finished_in_a_later_round(workspace: Path, make_client: Factory) -> None:  # noqa: F811
+    rr.clear_cache()
+    store = Workspace.open(workspace)
+    with EventLog.open(store.root) as log:
+        fetch(store, log, election_files() | FILES | {"files/round2/resultsReport.xlsx": ALL_MET_ROUND2})
+    client: TestClient = make_client(counties=("Weld",))
+    page = client.get("/").text
+    assert "the audit is complete." in page and "Finished in a later round" in page and "No targeted contest continues." in page
+    assert "Jackson County Assessor (Jackson): met the risk limit in round 2" in page and "Why it went to round 2" in page
+    data = client.get("/dashboard.json").json()
+    assert data["round_results"]["continuing"] == [] and data["round_results"]["finished_later"][0]["name"] == "Jackson County Assessor"
