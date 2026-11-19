@@ -17,7 +17,9 @@ Each stage is named by the event that completes it, so that only a ``done`` mark
    contest lists say which counties have a targeted contest still in progress, the counties in
    each round are named and the rest counted as finished ("Round 2: 2 counties (Jackson,
    Montezuma); the other counties finished in round 1"), and the stage is done when every county
-   has finished. Before that, a floor and a high marker: the round every county has reached and
+   has finished. Once a results report says every targeted contest covering each county met the
+   risk limit (`corla_observer.county_status.Stage.complete`), the line reads "All counties
+   finished: every targeted contest met the risk limit". Before that, a floor and a high marker: the round every county has reached and
    the furthest any has, never marked done.
 
 Each stage is ``done``, ``current`` (the first not done) or ``later``; a stage not done whose
@@ -114,7 +116,9 @@ def audit_progress(
     rounds = [s.round or 0 for s in in_corla]
     low, high = (min(rounds), max(rounds)) if rounds else (0, 0)
     finished = [s for s in in_corla if s.finished]
-    if finished:
+    if in_corla and all(s.finished and s.complete for s in in_corla):
+        round_text = "All counties finished: every targeted contest met the risk limit"
+    elif finished:
         round_text = _rounds_named(in_corla)
     elif high == 0:
         round_text = "no county has started a round"

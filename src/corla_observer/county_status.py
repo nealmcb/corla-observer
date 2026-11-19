@@ -24,7 +24,13 @@ if a targeted contest covering it (one of its own, or a statewide one) is
 otherwise its last round is finished (``finished``): the latest earlier round
 whose list had such a contest in progress, said with what became of its
 targeted contests ("Round 1 finished: its targeted contests met the risk
-limit"). A county's own files for a later round still put it in that round.
+limit"). A contest in progress in that list that a later results report
+(`corla_observer.round_results.met_since`) says met the risk limit no longer
+keeps the county in the round: if all of them did, the county's round is
+finished ("Round 2 finished: its targeted contests met the risk limit"), and
+``complete`` says every targeted contest covering it met the limit by a
+results report of the latest list's round or later (`Stage.complete`;
+never without one). A county's own files for a later round still put it in that round.
 Without contest lists, or for a county none of whose targeted contests they
 list, the round comes, as before, from
 the audit center files in the data map that name a round, by their
@@ -62,7 +68,15 @@ from corla_observer.datamap import DataMap, MapEntry, Sourced, column, role_colu
 from corla_observer.events import Event
 from corla_observer.localtime import colorado_wall_time
 from corla_observer.practice import BoardProgress
-from corla_observer.round_results import RISK_LIMIT_ACHIEVED, ContestList, contest_lists
+from corla_observer.round_results import (
+    RISK_LIMIT_ACHIEVED,
+    ContestList,
+    ResultsReport,
+    contest_lists,
+    later_reports,
+    met_since,
+    results_reports,
+)
 from corla_observer.sampling import county_key
 from corla_observer.uploads import CountyStatus
 from corla_observer.workspace import ObjectNotFoundError, Workspace
@@ -190,6 +204,8 @@ class Rounds:
     by_county: Mapping[str, tuple[int, str]] = field(default_factory=dict)
     #: CORLA's contest lists, one per round in round order (`corla_observer.round_results.contest_lists`).
     contest_lists: tuple[ContestList, ...] = ()
+    #: CORLA's results reports, one per round in round order (`corla_observer.round_results.results_reports`).
+    results_reports: tuple[ResultsReport, ...] = ()
 
 
 def audit_rounds(datamap: DataMap, workspace: Workspace | None = None) -> Rounds:
@@ -217,6 +233,7 @@ def audit_rounds(datamap: DataMap, workspace: Workspace | None = None) -> Rounds
         election_ref=best[1] if best else None,
         by_county=by_county,
         contest_lists=contest_lists(datamap, workspace) if workspace is not None else (),
+        results_reports=results_reports(datamap, workspace) if workspace is not None else (),
     )
 
 
@@ -233,6 +250,8 @@ class Stage:
     round: int | None = None
     #: The county's last round is finished: no targeted contest covering it is in progress in the latest contest list.
     finished: bool = False
+    #: Every targeted contest covering the county met the risk limit, by a results report later than the contest lists.
+    complete: bool = False
 
 
 def _names(names: Sequence[str], most: int = 3) -> str:
@@ -240,8 +259,8 @@ def _names(names: Sequence[str], most: int = 3) -> str:
     return ", ".join(shown) + (f" and {len(names) - most} more" if len(names) > most else "")
 
 
-def contest_list_stage(county: str, lists: Sequence[ContestList]) -> Stage | None:
-    """A county's stage from CORLA's contest lists, or None if none lists a targeted contest covering it."""
+def contest_list_stage(county: str, lists: Sequence[ContestList], reports: Sequence[ResultsReport] = ()) -> Stage | None:
+    """A county's stage from CORLA's contest lists and results reports, or None if no list has a targeted contest covering it."""
     if not lists:
         return None
     latest = lists[-1]
@@ -250,6 +269,21 @@ def contest_list_stage(county: str, lists: Sequence[ContestList]) -> Stage | Non
         return None
     number, ref = latest.round, latest.ref
     going = [c.name for c in mine if c.in_progress]
+    since = {name: met_since(name, reports, lists) for name in going}
+    complete = bool(later_reports(reports, lists)) and all(
+        c.status == RISK_LIMIT_ACHIEVED or since.get(c.name) is not None for c in mine
+    )
+    if going and all(since.values()):
+        finals = [f for f in since.values() if f is not None]
+        last = max(f.round for f in finals)
+        refs = ", ".join(sorted({f.ref for f in finals}))
+        outcome = "its targeted contests met the risk limit" if len(mine) > 1 else "its targeted contest met the risk limit"
+        if not complete:
+            outcome = "its targeted contests: " + "; ".join(
+                f"{c.name}, {'met the risk limit' if since.get(c.name) else c.status_text}" for c in mine
+            )
+        source = f"CORLA's results report ({refs}): {_names(going)} met the risk limit, in progress in its round {number} contest list ({ref})"
+        return Stage(f"Round {last} finished: {outcome}", source, last, True, complete)
     if going:
         return Stage(f"Round {number}", f"in progress in CORLA's round {number} contest list ({ref}): {_names(going)}", number)
     if all(c.status == RISK_LIMIT_ACHIEVED for c in mine):
@@ -260,8 +294,8 @@ def contest_list_stage(county: str, lists: Sequence[ContestList]) -> Stage | Non
     last = max(took_part) if took_part else number - 1
     source = f"CORLA's round {number} contest list ({ref}): no targeted contest of the county in progress"
     if last < 1:
-        return Stage(f"No targeted contest in progress: {outcome}", source, None, True)
-    return Stage(f"Round {last} finished: {outcome}", source, last, True)
+        return Stage(f"No targeted contest in progress: {outcome}", source, None, True, complete)
+    return Stage(f"Round {last} finished: {outcome}", source, last, True, complete)
 
 
 def stage(
@@ -273,7 +307,7 @@ def stage(
     if own is not None and (not lists or own[0] > lists[-1].round):
         number, ref = own
         return Stage(f"Round {number}", f"CORLA's round {number} files for the county ({ref})", number)
-    from_lists = contest_list_stage(county, lists)
+    from_lists = contest_list_stage(county, lists, rounds.results_reports)
     if from_lists is not None:
         return from_lists
     if own is not None:
@@ -359,6 +393,8 @@ class CountyAuditStatus:
     note: str | None = None
     #: The county's last round is finished (`Stage.finished`).
     finished: bool = False
+    #: Every targeted contest covering it met the risk limit, by a later results report (`Stage.complete`).
+    complete: bool = False
 
 
 def _corla_phrase(manifest: CorlaUpload | None, cvr: CorlaUpload | None) -> str:
@@ -453,6 +489,7 @@ def county_status(
         in_corla=in_corla,
         note=NOT_IN_CORLA.get(county),
         finished=bool(where and where.finished),
+        complete=bool(where and where.complete),
     )
 
 
