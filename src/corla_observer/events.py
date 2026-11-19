@@ -30,7 +30,11 @@ append) recovers it into the database. Any other disagreement between the
 two is an error and needs a person to look at it.
 
 `verify_jsonl` checks a JSONL file alone, with nothing from this package but
-the canonical serialization, for third parties.
+the canonical serialization, for third parties. Given ``allow_withheld``, it
+also accepts a published copy in which some lines are *withheld* (their
+``data`` replaced by a marker; see `corla_observer.withhold` and
+docs/EVENT_LOG.md): it can't recompute such a line's hash, so it takes the
+stated one and checks the links on both sides of it.
 
 Standard library only.
 """
@@ -89,6 +93,14 @@ MAX_EVENT_BYTES = 64 * 1024
 
 DB_FILENAME = "events.sqlite3"
 JSONL_FILENAME = "events.jsonl"
+
+#: The fields of a withheld line in a published copy of the log: an event's
+#: fields less ``session_id``, ``file_sha256`` and ``signature``, with ``data``
+#: replaced by a marker (``{"withheld": true, "reason": ..., ...}``) and
+#: ``"withheld": true`` added. Never written by `EventLog`; see docs/EVENT_LOG.md.
+WITHHELD_FIELDS = frozenset(
+    {"seq", "server_time", "client_time", "actor", "kind", "county", "board", "device_id", "data", "v", "prev_hash", "hash", "withheld"}
+)
 
 _HASH_RE = re.compile(r"^[0-9a-f]{64}$")
 _TIME_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
@@ -457,13 +469,34 @@ class VerificationReport:
     #: The seq (where known) and 1-based JSONL line number of the first problem.
     first_bad_seq: int | None = None
     first_bad_line: int | None = None
+    #: The seqs of withheld lines accepted (only with ``allow_withheld``).
+    withheld: tuple[int, ...] = ()
+    #: Withheld lines whose stated hash no later line with a hash that can be recomputed covers: one followed by
+    #: another withheld line, or the last line. Only an anchor or receipt naming that event pins its hash.
+    withheld_unpinned: tuple[int, ...] = ()
 
     @property
     def ok(self) -> bool:
         return not self.errors
 
 
-def verify_jsonl(path: Path | str) -> VerificationReport:
+def _withheld_line_error(obj: Mapping[str, Any], raw: bytes) -> str | None:
+    """What is wrong with a withheld line's form (not its links), or None."""
+    if set(obj) != WITHHELD_FIELDS:
+        return f"withheld line's fields are {sorted(obj)}, expected {sorted(WITHHELD_FIELDS)}"
+    if raw != canonical_json(obj):
+        return "withheld line is not in canonical form"
+    data = obj["data"]
+    if not isinstance(data, dict) or data.get("withheld") is not True or not isinstance(data.get("reason"), str):
+        return "withheld line's data is not a withheld marker"
+    if not isinstance(obj["kind"], str) or not _KIND_RE.match(obj["kind"]):
+        return "withheld line's kind is malformed"
+    if not isinstance(obj["actor"], str) or not _ACTOR_RE.match(obj["actor"]):
+        return "withheld line's actor is malformed"
+    return None
+
+
+def verify_jsonl(path: Path | str, *, allow_withheld: bool = False) -> VerificationReport:
     """Check a JSONL event log on its own, stopping at the first broken link.
 
     Needs nothing but the file: no database and nothing from this package
@@ -473,12 +506,23 @@ def verify_jsonl(path: Path | str) -> VerificationReport:
     canonical serialization of the other fields, that the line itself is in
     canonical form, that ``seq`` counts up from 1, and that ``prev_hash`` is
     the previous event's ``hash`` (64 zeros for the first).
+
+    With ``allow_withheld``, a line with ``"withheld": true`` (docs/EVENT_LOG.md)
+    is accepted in place of an event if it has exactly the withheld fields, is
+    canonical JSON, counts ``seq`` and carries the previous line's hash as
+    ``prev_hash``. Its own ``hash`` can't be recomputed, so the stated one is
+    taken; the next line must carry it as ``prev_hash``, and that line's hash
+    (recomputed) covers it. Withheld lines are listed in the report, not
+    counted as problems; without ``allow_withheld`` the first one is a problem.
     """
     expected_keys = set(FIELDS)
     prev_hash = GENESIS_PREV_HASH
     count = 0
     line_number = 0
     seq: int | None = None
+    withheld: list[int] = []
+    unpinned: list[int] = []
+    run: list[int] = []
 
     def fail(message: str) -> VerificationReport:
         return VerificationReport(
@@ -488,6 +532,8 @@ def verify_jsonl(path: Path | str) -> VerificationReport:
             errors=(f"line {line_number}: {message}",),
             first_bad_seq=seq,
             first_bad_line=line_number,
+            withheld=tuple(withheld),
+            withheld_unpinned=tuple(unpinned + run),
         )
 
     with open(path, "rb") as f:
@@ -507,13 +553,30 @@ def verify_jsonl(path: Path | str) -> VerificationReport:
                     f"unsupported format version v={obj['v']!r}; this verifier knows only "
                     f"version {FORMAT_VERSION}"
                 )
-            if set(obj) != expected_keys:
+            if "withheld" in obj and not allow_withheld:
+                return fail("the line is withheld (its data replaced by a marker), so its hash can't be checked")
+            if "withheld" in obj:
+                if obj["withheld"] is not True:
+                    return fail("withheld is not true")
+                if (problem := _withheld_line_error(obj, raw[:-1])) is not None:
+                    return fail(problem)
+            elif set(obj) != expected_keys:
                 return fail(f"fields are {sorted(obj)}, expected {sorted(expected_keys)}")
             if isinstance(obj["seq"], int) and not isinstance(obj["seq"], bool):
                 seq = obj["seq"]
             claimed = obj["hash"]
             if not isinstance(claimed, str) or not _HASH_RE.match(claimed):
                 return fail("hash is not 64 lowercase hex digits")
+            if "withheld" in obj:
+                if obj["seq"] != count + 1:
+                    return fail(f"seq is {obj['seq']!r}, expected {count + 1}")
+                if obj["prev_hash"] != prev_hash:
+                    return fail(f"withheld line's prev_hash does not match the hash of event {count}")
+                count += 1
+                prev_hash = claimed
+                withheld.append(count)
+                run.append(count)
+                continue
             body = {k: v for k, v in obj.items() if k != "hash"}
             hash_input = canonical_json(body)
             if raw[:-1] != _jsonl_line(hash_input, claimed):
@@ -523,10 +586,20 @@ def verify_jsonl(path: Path | str) -> VerificationReport:
             if obj["seq"] != count + 1:
                 return fail(f"seq is {obj['seq']!r}, expected {count + 1}")
             if obj["prev_hash"] != prev_hash:
+                if run:
+                    return fail(f"prev_hash does not match the stated hash of withheld event {count}")
                 return fail(f"prev_hash does not match the hash of event {count}")
             count += 1
             prev_hash = claimed
-    return VerificationReport(event_count=count, head_seq=count, head_hash=prev_hash)
+            unpinned.extend(run[:-1])
+            run.clear()
+    return VerificationReport(
+        event_count=count,
+        head_seq=count,
+        head_hash=prev_hash,
+        withheld=tuple(withheld),
+        withheld_unpinned=tuple(unpinned + run),
+    )
 
 
 # ---------------------------------------------------------------------------

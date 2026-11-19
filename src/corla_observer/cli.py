@@ -160,13 +160,22 @@ def log_verify(
             show_default=False,
         ),
     ],
+    allow_withheld: Annotated[
+        bool,
+        typer.Option(
+            "--allow-withheld",
+            help="Accept withheld lines in a published JSONL copy (docs/EVENT_LOG.md), checking the links around them.",
+        ),
+    ] = False,
 ) -> None:
     """Recompute every hash and link; with a database, also cross-check it against its JSONL.
 
     Exits 0 if the log is intact and 1 at the first problem.
     """
     if path.suffix == ".jsonl" and path.is_file():
-        report = verify_jsonl(path)
+        report = verify_jsonl(path, allow_withheld=allow_withheld)
+        if report.withheld:
+            typer.echo(f"withheld: {len(report.withheld)} lines ({', '.join(str(s) for s in report.withheld)}); their hashes are as stated")
     else:
         with _open_read_only(path) as log:
             report = log.verify()
@@ -1435,6 +1444,55 @@ def check_record_command(
         raise typer.Exit(2) from None
     typer.echo(json.dumps(report.to_dict(), indent=1) if as_json else render_report(report))
     raise typer.Exit(0 if report.ok else 1)
+
+
+record_app = typer.Typer(help="An observer's device-held record: publishing it (docs/RECEIPTS.md).", no_args_is_help=True)
+app.add_typer(record_app, name="record")
+
+
+@record_app.command("withhold")
+def record_withhold(
+    record: Annotated[Path, typer.Argument(help="The record downloaded from the observer page (JSON).", show_default=False)],
+    events: Annotated[Path, typer.Argument(help="The event log, events.jsonl.", show_default=False)],
+    reason: Annotated[str, typer.Option("--reason", help="Why the entries are withheld; written into each marker.", show_default=False)],
+    out: Annotated[Path, typer.Option("--out", help="Directory to write the public record.json and events.jsonl into.", show_default=False)],
+    imprinted_id: Annotated[
+        list[str] | None,
+        typer.Option("--imprinted-id", help="Withhold the entries for this ballot's imprinted ID (repeatable).", show_default=False),
+    ] = None,
+    device_seq: Annotated[
+        list[int] | None,
+        typer.Option("--device-seq", help="Withhold the entry with this device sequence number (repeatable).", show_default=False),
+    ] = None,
+    others_reason: Annotated[
+        str | None,
+        typer.Option(
+            "--withhold-other-observers",
+            help="Also withhold every other observer's events from the log, with this reason (their names stay on the lines).",
+            show_default=False,
+        ),
+    ] = None,
+) -> None:
+    """Write a public copy of a record and the log with chosen entries' text withheld (corla_observer.withhold).
+
+    Each chosen entry keeps its hash, signature and receipt, and each log line holding it keeps its seq,
+    hashes, kind, actor and times, so check-record still verifies the chains across them. Nothing else
+    is copied. Exits 2 if the files can't be read or nothing matches.
+    """
+    from corla_observer.observer_record import RecordError
+    from corla_observer.withhold import WithholdError, withhold_files
+
+    try:
+        result = withhold_files(record, events, out, reason=reason, imprinted_ids=imprinted_id or (), device_seqs=device_seq or (), others_reason=others_reason)
+    except (OSError, RecordError, WithholdError, ValueError) as exc:
+        typer.echo(f"error: {exc}", err=True)
+        raise typer.Exit(2) from None
+    for w in result.entries:
+        typer.echo(f"withheld entry {w.device_seq} ({w.kind}, {w.imprinted_id}), payload {w.payload_sha256}")
+    typer.echo(f"withheld log lines: {', '.join(str(s) for s in result.events) or 'none'}")
+    for seq in result.mentions:
+        typer.echo(f"warning: event {seq}, not withheld, still contains a withheld entry's imprinted ID", err=True)
+    typer.echo(f"wrote {result.record_path} and {result.events_path}")
 
 
 # ---------------------------------------------------------------------------
