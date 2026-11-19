@@ -301,6 +301,8 @@ class ContestFinding:
     contest: str
     expected: str
     text: str
+    #: What was heard instead, as typed, in the final reading (second, else first); "" for any other outcome.
+    heard: str = ""
 
 
 @dataclass
@@ -357,7 +359,8 @@ def compare_board(events: Iterable[Event], county: str, board: str) -> list[Ball
                 final = r.final
                 assert final is not None
                 text = f"first reading {r.readings[1].text()}, second {r.readings[2].text()}" if r.differs else final.text()
-                comparison.contests.append(ContestFinding(actor, r.contest, r.expected, text))
+                heard = final.heard if final.outcome == "heard_instead" else ""
+                comparison.contests.append(ContestFinding(actor, r.contest, r.expected, text, heard))
             unresolved = len(rows.unresolved())
             if unresolved and not findings:
                 comparison.unresolved_by.append((actor, unresolved))

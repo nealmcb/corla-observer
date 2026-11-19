@@ -27,6 +27,7 @@ from corla_observer.extract import (
     block_lines,
     board_pages,
     build_extract,
+    expected_votes,
     extract_sha256,
     grouped,
     latest_extract,
@@ -778,3 +779,21 @@ def test_no_draws_in_a_county_says_why_and_what_to_do(tmp_path: Path) -> None:
         record_prediction(ws, log, predict(build_map(log, ws), counties=["Adams"]), ACTOR)
         with pytest.raises(ExtractError, match=r"none of its contests \(.+\) drew a ballot there.*same election's"):
             build_extract(ws, log, "Morgan")
+
+
+def test_a_ranked_choice_contest_is_never_an_overvote(tmp_path: Path) -> None:
+    """Dominion's ranked-choice header: several marks are a ranking, joined as they are; a plurality contest's are an overvote."""
+    lines = [
+        '"2026 Synthetic General","5.17.17.1",,,,,,,,',
+        ',,,,,,"Mayor (Number of positions=1, Number of ranks=2)","Mayor (Number of positions=1, Number of ranks=2)",'
+        '"County Clerk (Vote For=1)","County Clerk (Vote For=1)"',
+        ",,,,,,Ann(1),Bob(2),Cy,Di",
+        "CvrNumber,TabulatorNum,BatchId,RecordId,ImprintedId,BallotType,,,,",
+        '1,101,1,1,="101-1-1",BT1,1,1,1,1',
+    ]
+    path = tmp_path / "cvr.csv"
+    path.write_bytes(("\r\n".join(lines) + "\r\n").encode())
+    found, _ = expected_votes(path, ["101-1-1"])
+    votes = dict(found["101-1-1"].votes)
+    assert votes["Mayor (Number of positions=1, Number of ranks=2)"] == "Ann(1) + Bob(2)"
+    assert votes["County Clerk"] == "overvote: Cy + Di"  # the guard, for a CVR that marks an overvote

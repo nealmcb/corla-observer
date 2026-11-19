@@ -88,13 +88,41 @@ differs from the CVR's. Choices are compared as sets: the same choices in
 another order are no difference. For a county taking part in observation,
 the differing rows themselves are listed: card, contest, CVR choice, audit
 board's choice and whether the contest is targeted, a row already listed for
-an earlier round's file not repeated. **Privacy:** a row is listed only for a
-card that appears, with its votes, as a single ballot in the county's
-redacted CVR that we hold and that passed the redaction check
-(`redacted_card_ids`: a row the county redacted, aggregated or marked is
-not such a card). A card that cannot be found there is not listed, since its
-ballot was left out to protect voters' privacy; nor is any card when the
-redacted CVR cannot be read. Only differing rows are listed, never a whole
+an earlier round's file not repeated. "Targeted" is said only of a card in
+that contest's own sample, which the contest's sheet in a results report
+lists (its draws, by county and imprinted ID, as the report's "Contests to
+Sheets" sheet names the sheet: CORLA shortens sheet names); a card of the
+contest's county drawn only for other contests is "targeted contest, card
+drawn for another contest", and without such a sheet (none fetched, or none
+of the comparison file's round or later) only "targeted contest" is said.
+
+**Overvotes, as CORLA compares them** (`corla_board_reading`): audit boards
+enter every marked choice, even more than the contest allows. When the
+board's choices number more than the contest's Vote For (``winners_allowed``
+in the contest lists, opportunistic contests included, `contest_vote_for`;
+taken as 1 for a contest in no list), CORLA treats its reading as no vote
+before comparing, as a Dominion CVR records a plurality overvote (all zeros).
+So a row with no vote in the CVR and an overvote read by the board is no
+discrepancy: it is counted and listed apart ("overvotes read by the board
+where the CVR has no vote"), not as a difference. A row with a choice in the
+CVR and an overvote read by the board stays a difference, said to be one
+(`BOARD_OVERVOTE_NOTE`). A ranked-choice contest (`is_ranked`: "Number of
+ranks=" in its name, or choices carrying a rank, "Name(1)") is compared as
+CORLA reports it (in order: a ranking in another order differs), never
+called an overvote, and its differing rows are listed apart (`RANKED_NOTE`),
+not as differences. A contest some row of which has more choices in the CVR
+than its Vote For is taken as ranked-choice too, since a Dominion CVR records a
+plurality overvote as no vote: in the 2026 general, CORLA lists "City of
+Boulder Mayoral Candidates" (a ranked-choice contest) with winners_allowed 1
+and its choices in rank order without ranks.
+
+**Privacy:** a row is listed only for a card that appears, with its votes,
+as a single ballot in the county's redacted CVR that we hold and that passed
+the redaction check (`redacted_card_ids`: a row the county redacted,
+aggregated or marked is not such a card). A card that cannot be found there
+is not listed, since its ballot was left out to protect voters' privacy; nor
+is any card when the redacted CVR cannot be read. Only differing rows (and
+the overvote and ranked-choice rows listed apart) are listed, never a whole
 ballot. CORLA writes choices as CSV-quoted lists (``"Yes/For"``,
 ``"John Hickenlooper","Ryan Apelbaum"``); `choices_text` renders them
 ("Yes/For"; "John Hickenlooper and Ryan Apelbaum (two choices)"; none is
@@ -137,6 +165,13 @@ STATUS_WORDS = {
 
 #: Counties in CORLA's audit, for a statewide contest the contest-to-county file does not list (San Juan counts by hand).
 CORLA_COUNTIES = tuple(c for c in COLORADO_COUNTIES if c != "San Juan")
+
+#: Said of the rows where the audit board read an overvote and the CVR has no vote.
+VOTER_OVERVOTE_NOTE = (
+    "overvotes read by the board where the CVR has no vote (a voter's overvote, entered as marked; CORLA counts no discrepancy)"
+)
+#: Said of the rows of a ranked-choice contest whose two sides differ.
+RANKED_NOTE = "ranked-choice contest: compared as CORLA reports it, ranks not interpreted here"
 
 #: Shown with the contests that continue.
 OVERSTATEMENT_NOTE = (
@@ -197,6 +232,39 @@ def choices_text(choices: Sequence[str]) -> str:
 def choices_differ(cvr: Sequence[str], board: Sequence[str]) -> bool:
     """Whether the audit board's reading differs from the CVR's: compared as sets, so order does not count."""
     return set(cvr) != set(board)
+
+
+#: A ranked-choice contest's name in a Dominion CVR header: "... (Number of positions=1, Number of ranks=5)".
+RANKED_CONTEST_RE = re.compile(r"\(\s*Number of positions\s*=\s*\d+\s*,\s*Number of ranks\s*=\s*\d+\s*\)", re.IGNORECASE)
+#: A ranked choice as Dominion and CORLA write it: the name and its rank in parentheses ("Ann Lee(1)", "Ann Lee (2)").
+_RANKED_CHOICE_RE = re.compile(r"\(\s*\d+\s*\)\s*$")
+
+
+def is_ranked(contest: str, *choices: Sequence[str]) -> bool:
+    """Whether a contest is ranked-choice: its name says so (`RANKED_CONTEST_RE`) or some choice carries a rank ("Name(1)").
+
+    Ranks are not interpreted anywhere here; this only keeps the plurality overvote rule
+    (`corla_board_reading`) away from a ballot that ranks several candidates.
+    """
+    return bool(RANKED_CONTEST_RE.search(contest)) or any(_RANKED_CHOICE_RE.search(c) for group in choices for c in group)
+
+
+def is_overvote(choices: Sequence[str], vote_for: int, *, ranked: bool = False) -> bool:
+    """More distinct choices than the contest's Vote For (never in a ranked-choice contest)."""
+    return not ranked and len(set(choices)) > max(vote_for, 1)
+
+
+def corla_board_reading(board: Sequence[str], vote_for: int, *, ranked: bool = False) -> tuple[str, ...]:
+    """The audit board's reading as CORLA compares it: an overvote is no vote.
+
+    Audit boards enter every marked choice, even more than the contest allows. CORLA
+    (``ComparisonAudit.computeAuditedBallotDiscrepancy``) keeps the board's choices only
+    if they number no more than the contest's winners allowed (its Vote For); otherwise
+    it compares no choice, the way a Dominion CVR records a plurality overvote (all
+    zeros, so no vote). Only the board's side is treated so; a ranked-choice contest's
+    reading is kept as it is.
+    """
+    return () if is_overvote(board, vote_for, ranked=ranked) else tuple(board)
 
 
 # ---------------------------------------------------------------------------
@@ -426,6 +494,9 @@ class ResultsReport:
     round: int
     ref: str
     contests: tuple[ReportedContest, ...]
+    #: Each targeted contest's own sample, from its sheet: (county, `card_key` of the imprinted ID) of every draw,
+    #: by contest name (only contests the "Contests to Sheets" sheet names a readable sheet for).
+    draws: dict[str, frozenset[tuple[str, str]]] = field(default_factory=dict)
 
     def contest(self, name: str) -> ReportedContest | None:
         return next((c for c in self.contests if c.name == name), None)
@@ -495,9 +566,57 @@ def read_results_report(data: bytes, *, ref: str, round_number: int) -> ResultsR
                     two_over=n("disc+2"), one_over=n("disc+1"), zero=n("disc0"), one_under=n("disc-1"), two_under=n("disc-2"),
                 )
             )  # fmt: skip
+        draws = _report_draws(reader)
     except XlsxError:
         return None
-    return ResultsReport(round_number, ref, tuple(found))
+    return ResultsReport(round_number, ref, tuple(found), draws)
+
+
+_SHEET_FORBIDDEN_RE = re.compile(r"[\\/?*:\[\]]")
+#: The sheet of a results report naming each contest's sheet (CORLA shortens and mangles sheet names: "Atrney General").
+SHEETS_SHEET = "Contests to Sheets"
+
+
+def _report_draws(reader: XlsxReader) -> dict[str, frozenset[tuple[str, str]]]:
+    """Each contest's draws from its sheet, as the "Contests to Sheets" sheet maps contests to sheets; empty without it.
+
+    A contest's sheet has a title row, then a header row with ``county`` and ``imprinted id``,
+    then one row per draw (of every round so far), then "End of worksheet".
+    """
+    names = {normalize_header(n): n for n in reader.sheet_names}
+    map_sheet = names.get(normalize_header(SHEETS_SHEET))
+    if map_sheet is None:
+        return {}
+    sheets = set(reader.sheet_names)
+    sheet_of: dict[str, str] = {}
+    for row in reader.rows(map_sheet):
+        if len(row) < 2 or not row[0].strip() or normalize_header(row[0]) == "contestname":
+            continue
+        # The map can give a name Excel does not allow ("Governor / Lieutenant Governor"): the sheet has the
+        # characters Excel forbids in a sheet name as spaces ("Governor   Lieutenant Governor").
+        named = row[1].strip()
+        for candidate in (named, _SHEET_FORBIDDEN_RE.sub(" ", named)[:31]):
+            if candidate in sheets:
+                sheet_of[row[0].strip()] = candidate
+                break
+    draws: dict[str, frozenset[tuple[str, str]]] = {}
+    for contest, sheet in sheet_of.items():
+        county_i = id_i = None
+        found: set[tuple[str, str]] = set()
+        for row in reader.rows(sheet):
+            if county_i is None or id_i is None:
+                keys = [normalize_header(c) for c in row]
+                if "county" in keys and "imprintedid" in keys:
+                    county_i, id_i = keys.index("county"), keys.index("imprintedid")
+                continue
+            if max(county_i, id_i) >= len(row):
+                continue
+            county, imprinted = canonical_county(row[county_i]), row[id_i].strip()
+            if county and imprinted:
+                found.add((county, card_key(imprinted)))
+        if county_i is not None:
+            draws[contest] = frozenset(found)
+    return draws
 
 
 def results_reports(datamap: DataMap, workspace: Workspace) -> tuple[ResultsReport, ...]:
@@ -560,18 +679,54 @@ def met_since(name: str, reports: Sequence[ResultsReport], lists: Sequence[Conte
 # CORLA's comparison
 
 
+#: How a comparison row's two sides compare (`CardRow.kind`).
+SAME = "same"
+DIFFERS = "differs"
+#: The audit board read an overvote where the CVR has no vote: a voter's overvote, entered as marked; no discrepancy.
+VOTER_OVERVOTE = "voter_overvote"
+#: The audit board read an overvote where the CVR has a choice: CORLA compares no vote with the CVR's choice, a difference.
+BOARD_OVERVOTE = "board_overvote"
+#: A ranked-choice contest whose two sides differ as CORLA reports them: listed apart, ranks not interpreted.
+RANKED = "ranked"
+
+
 @dataclass(frozen=True)
 class CardRow:
-    """One contest on one audited card, from CORLA's comparison, with the choices parsed."""
+    """One contest on one audited card, from CORLA's comparison, with the choices parsed.
+
+    ``vote_for`` is the contest's Vote For (CORLA's ``winners_allowed``; 1 when not known, see
+    `contest_vote_for`) and ``ranked`` whether it is a ranked-choice contest (as `read_comparison_file` decides).
+    """
 
     contest: str
     cvr: tuple[str, ...]
     board: tuple[str, ...]
     comment: str = ""
+    vote_for: int = 1
+    ranked: bool = False
+
+    @property
+    def board_overvote(self) -> bool:
+        """The audit board entered more choices than the contest allows."""
+        return is_overvote(self.board, self.vote_for, ranked=self.ranked)
+
+    @property
+    def kind(self) -> str:
+        """`SAME`, `DIFFERS`, `VOTER_OVERVOTE`, `BOARD_OVERVOTE` or `RANKED`, by CORLA's rule (`corla_board_reading`)."""
+        if self.ranked:
+            return RANKED if tuple(self.cvr) != tuple(self.board) else SAME
+        if self.board_overvote:
+            return BOARD_OVERVOTE if self.cvr else VOTER_OVERVOTE
+        return DIFFERS if choices_differ(self.cvr, self.board) else SAME
 
     @property
     def differs(self) -> bool:
-        return choices_differ(self.cvr, self.board)
+        """Whether CORLA's reading differs from the CVR: a difference by CORLA's rule, or an overvote where the CVR has a choice."""
+        return self.kind in (DIFFERS, BOARD_OVERVOTE)
+
+    @property
+    def voter_overvote(self) -> bool:
+        return self.kind == VOTER_OVERVOTE
 
 
 @dataclass
@@ -583,8 +738,17 @@ class ComparisonFile:
     counties: dict[str, dict[str, list[CardRow]]] = field(default_factory=dict)
 
 
-def read_comparison_file(data: bytes, classification: Classification, *, ref: str, round_number: int | None) -> ComparisonFile:
-    """A comparison file's audited rows by county and card; rows without an audit board entry left out."""
+def read_comparison_file(
+    data: bytes, classification: Classification, *, ref: str, round_number: int | None, vote_for: Mapping[str, int] | None = None
+) -> ComparisonFile:
+    """A comparison file's audited rows by county and card; rows without an audit board entry left out.
+
+    ``vote_for`` gives each contest's Vote For by CORLA's exact name (`contest_vote_for`); a
+    contest it does not have is taken as Vote For 1, so for it a board reading of two or more
+    choices counts as an overvote (unless the contest is taken as ranked-choice: a CVR side
+    with more choices than Vote For makes it so, see the module documentation).
+    """
+    vote_for = vote_for or {}
     found = ComparisonFile(round_number, ref)
     shared: dict[str, str] = {}
 
@@ -598,16 +762,50 @@ def read_comparison_file(data: bytes, classification: Classification, *, ref: st
             choices[cell] = tuple(keep(c) for c in parse_choices(cell))
         return choices[cell]
 
-    rows: list[ComparisonRow] = read_comparison(data, classification)
+    rows: list[ComparisonRow] = [r for r in read_comparison(data, classification) if r.audited and r.imprinted_id]
+    # A contest is ranked-choice if its name or a choice says so, or if some CVR side has more choices than
+    # its Vote For: a Dominion CVR records a plurality overvote as no vote, so only a ranking shows several.
+    ranked: set[str] = set()
     for row in rows:
-        if not row.audited or not row.imprinted_id:
-            continue
+        contest, cvr, board = keep(row.contest.strip()), parsed(row.cvr_choice), parsed(row.audit_board)
+        if contest not in ranked and (is_ranked(contest, cvr, board) or len(set(cvr)) > vote_for.get(contest, 1)):
+            ranked.add(contest)
+    for row in rows:
         county = canonical_county(row.county) or row.county.strip()
         cards = found.counties.setdefault(keep(county), {})
+        contest = keep(row.contest.strip())
         cards.setdefault(row.imprinted_id.strip(), []).append(
-            CardRow(keep(row.contest.strip()), parsed(row.cvr_choice), parsed(row.audit_board), row.comment.strip())
+            CardRow(contest, parsed(row.cvr_choice), parsed(row.audit_board), row.comment.strip(), vote_for.get(contest, 1), contest in ranked)
         )
     return found
+
+
+def contest_vote_for(datamap: DataMap, workspace: Workspace) -> dict[str, int]:
+    """Each contest's Vote For (``winners_allowed``) by CORLA's exact name, from every row of every fetched contest list.
+
+    Targeted and opportunistic contests alike; a later list overrides an earlier one. The
+    contest-to-county file has no Vote For, so a contest in no contest list is not here
+    (taken as Vote For 1 by `read_comparison_file`).
+    """
+    entries = sorted((e for e in datamap.used("contests_list") if _fetched(e, datamap)), key=lambda e: (e.seq or 0, e.ref))
+
+    def build() -> dict[str, int]:
+        found: dict[str, int] = {}
+        for entry in entries:
+            data = _bytes(workspace, entry.sha256)
+            if data is None:
+                continue
+            classification = _classification(entry)
+            header, rows = table_rows(data, classification)
+            name_col = role_column(classification, "contest") or "contest_name"
+            allowed_col = column(header, "winners_allowed") or "winners_allowed"
+            for row in rows:
+                allowed = _int(row.get(allowed_col))
+                if allowed and allowed > 0:
+                    found[row.get(name_col, "").strip()] = allowed
+        return found
+
+    return _cached(("vote_for", tuple((e.ref, e.sha256) for e in entries)), build)
 
 
 def comparison_files(datamap: DataMap, workspace: Workspace) -> tuple[ComparisonFile, ...]:
@@ -616,6 +814,8 @@ def comparison_files(datamap: DataMap, workspace: Workspace) -> tuple[Comparison
     by_round: dict[int | None, MapEntry] = {}
     for entry in entries:
         by_round[round_of(entry.ref)] = entry
+    vote_for = contest_vote_for(datamap, workspace) if by_round else {}
+    vote_for_key = tuple(sorted(vote_for.items()))
     found = []
     for number in sorted(by_round, key=lambda n: (n is None, n or 0)):
         entry = by_round[number]
@@ -624,9 +824,9 @@ def comparison_files(datamap: DataMap, workspace: Workspace) -> tuple[Comparison
             data = _bytes(workspace, entry.sha256)
             if data is None:
                 return None
-            return read_comparison_file(data, _classification(entry), ref=_short(entry.ref), round_number=number)
+            return read_comparison_file(data, _classification(entry), ref=_short(entry.ref), round_number=number, vote_for=vote_for)
 
-        read = _cached(("comparison", entry.ref, entry.sha256), build)
+        read = _cached(("comparison", entry.ref, entry.sha256, vote_for_key), build)
         if read is not None:
             found.append(read)
     return tuple(found)
@@ -705,6 +905,8 @@ class DifferingRow:
     board_choice: str
     targeted: str
     comment: str = ""
+    #: Why the row differs when its choices alone don't say (`BOARD_OVERVOTE_NOTE`), else "".
+    note: str = ""
 
 
 @dataclass
@@ -722,6 +924,15 @@ class CountyCards:
     #: Audited cards not in the county's redacted CVR (redacted to protect voters' privacy): their IDs
     #: only, so the dashboard can say they were audited but not checked here; nothing of their contents.
     redacted: list[str] = field(default_factory=list)
+    #: Cards with an overvote read by the audit board where the CVR has no vote (`VOTER_OVERVOTE`): no
+    #: discrepancy, so not among ``differing_cards``; their rows in ``overvote_rows``, under the same privacy rule as ``rows``.
+    voter_overvote_cards: int = 0
+    overvote_rows: list[DifferingRow] = field(default_factory=list)
+    overvote_withheld: int = 0
+    #: Cards with a ranked-choice contest whose sides differ as CORLA reports them (`RANKED`): not interpreted here.
+    ranked_cards: int = 0
+    ranked_rows: list[DifferingRow] = field(default_factory=list)
+    ranked_withheld: int = 0
 
 
 @dataclass
@@ -731,6 +942,11 @@ class RoundComparison:
     cards: int
     differing_cards: int
     counties: list[CountyCards] = field(default_factory=list)
+    #: Cards with a voter's overvote read by the audit board (no discrepancy), and with a differing ranked-choice contest.
+    voter_overvote_cards: int = 0
+    ranked_cards: int = 0
+    overvote_note: str = VOTER_OVERVOTE_NOTE
+    ranked_note: str = RANKED_NOTE
 
     @property
     def label(self) -> str:
@@ -892,13 +1108,49 @@ def continuing(listing: ContestList, previous: ContestList | None) -> list[Conti
     return found
 
 
-def _targeted_text(contest: str, county: str, lists: Sequence[ContestList]) -> str:
+#: Said of a row where the audit board entered more choices than the contest allows and the CVR has a choice.
+BOARD_OVERVOTE_NOTE = "audit board entered more choices than the contest allows (an overvote), so CORLA treats its reading as no vote"
+
+
+def own_samples(reports: Sequence[ResultsReport], round_number: int | None) -> dict[str, frozenset[tuple[str, str]]] | None:
+    """Each targeted contest's own sample (`ResultsReport.draws`, every report's together), for a comparison file of ``round_number``.
+
+    None when no results report with contest sheets has been fetched, or (for a file whose URL
+    names a round) none of that round or later: a card drawn in that round would not be in them.
+    """
+    usable = [r for r in reports if r.draws]
+    if not usable or (round_number is not None and max(r.round for r in usable) < round_number):
+        return None
+    found: dict[str, set[tuple[str, str]]] = {}
+    for report in usable:
+        for contest, draws in report.draws.items():
+            found.setdefault(contest, set()).update(draws)
+    return {contest: frozenset(draws) for contest, draws in found.items()}
+
+
+def _targeted_text(
+    contest: str, county: str, lists: Sequence[ContestList], card: str = "",
+    samples: Mapping[str, frozenset[tuple[str, str]]] | None = None,
+) -> str:  # fmt: skip
+    """Whether a row's contest is targeted, and whether the card is in that contest's own sample.
+
+    "targeted" only for a card the contest's sheet in a results report lists among its draws
+    (`own_samples`); "targeted contest, card drawn for another contest" for one it does not
+    list; plain "targeted contest" when no such sheet is held, claiming nothing about the
+    sample. A discrepancy counts toward a contest only on a card of its own sample.
+    """
     if not lists:
         return ""
     for listing in reversed(lists):
         found = listing.contest(contest)
         if found is not None and found.covers(county):
-            return "targeted (statewide)" if found.statewide else "targeted"
+            scope = " (statewide)" if found.statewide else ""
+            drawn = samples.get(contest) if samples is not None else None
+            if drawn is None:
+                return f"targeted contest{scope}"
+            if (county, card_key(card)) in drawn:
+                return f"targeted{scope}"
+            return f"targeted contest{scope}, card drawn for another contest"
     return "not targeted"
 
 
@@ -906,43 +1158,62 @@ def compare_counties(
     files: Sequence[ComparisonFile],
     lists: Sequence[ContestList],
     shown_cards: Mapping[str, frozenset[str] | None],
+    reports: Sequence[ResultsReport] = (),
 ) -> list[RoundComparison]:
-    """Each comparison file's counts per county, with the differing rows of the counties in ``shown_cards``.
+    """Each comparison file's counts per county, with the listed rows of the counties in ``shown_cards``.
 
     ``shown_cards`` maps each county taking part in observation to the cards its redacted CVR shows
     (`redacted_card_ids`), or None if no redacted CVR that passed the check can be read.
+    ``reports`` are the results reports, for whether a card is in a targeted contest's own sample.
+
+    Each row is compared by CORLA's rule (`CardRow.kind`): a card counts "with a difference"
+    for a `DIFFERS` or `BOARD_OVERVOTE` row; a `VOTER_OVERVOTE` row (the audit board read an
+    overvote where the CVR has no vote) is counted and listed apart, as no discrepancy; so is
+    a `RANKED` row (ranks not interpreted here).
     """
     out = []
     listed_before: set[tuple[str, str, str]] = set()
     for f in files:
         result = RoundComparison(f.round, f.ref, 0, 0)
+        samples = own_samples(reports, f.round)
         for county in sorted(f.counties, key=county_key):
             cards = f.counties[county]
-            differing = {card: [r for r in rows if r.differs] for card, rows in cards.items()}
-            differing = {card: rows for card, rows in differing.items() if rows}
-            entry = CountyCards(county, len(cards), len(differing))
+            differing = _rows_of(cards, lambda r: r.differs)
+            overvotes = _rows_of(cards, lambda r: r.voter_overvote)
+            ranked = _rows_of(cards, lambda r: r.kind == RANKED)
+            entry = CountyCards(county, len(cards), len(differing), voter_overvote_cards=len(overvotes), ranked_cards=len(ranked))
             result.cards += entry.cards
             result.differing_cards += entry.differing_cards
+            result.voter_overvote_cards += entry.voter_overvote_cards
+            result.ranked_cards += entry.ranked_cards
             if county in shown_cards:
                 entry.listed = True
                 visible = shown_cards[county]
-                if visible is None and differing:
-                    entry.withheld = len(differing)
-                    entry.note = "no card is listed: no redacted CVR of the county that passed the redaction check is held here, or it could not be read"
-                for card in sorted(differing, key=_card_order):
-                    if visible is None:
-                        break
-                    if card_key(card) not in visible:
-                        entry.withheld += 1
-                        continue
-                    for row in differing[card]:
-                        key = (county, card, row.contest)
-                        if key in listed_before:
+
+                def listed(rows_by_card: dict[str, list[CardRow]]) -> tuple[list[DifferingRow], int]:
+                    rows: list[DifferingRow] = []
+                    withheld = 0
+                    for card in sorted(rows_by_card, key=_card_order):
+                        if visible is None or card_key(card) not in visible:
+                            withheld += 1
                             continue
-                        listed_before.add(key)
-                        entry.rows.append(
-                            DifferingRow(card, row.contest, choices_text(row.cvr), choices_text(row.board), _targeted_text(row.contest, county, lists), row.comment)
-                        )
+                        for row in rows_by_card[card]:
+                            key = (county, card, row.contest)
+                            if key in listed_before:
+                                continue
+                            listed_before.add(key)
+                            note = BOARD_OVERVOTE_NOTE if row.kind == BOARD_OVERVOTE else ""
+                            rows.append(
+                                DifferingRow(card, row.contest, choices_text(row.cvr), choices_text(row.board),
+                                             _targeted_text(row.contest, county, lists, card, samples), row.comment, note)
+                            )  # fmt: skip
+                    return rows, withheld
+
+                entry.rows, entry.withheld = listed(differing)
+                entry.overvote_rows, entry.overvote_withheld = listed(overvotes)
+                entry.ranked_rows, entry.ranked_withheld = listed(ranked)
+                if visible is None and differing:
+                    entry.note = "no card is listed: no redacted CVR of the county that passed the redaction check is held here, or it could not be read"
                 if visible is not None:
                     entry.redacted = sorted((card for card in cards if card_key(card) not in visible), key=_card_order)
                 if differing and not entry.rows and not entry.withheld:
@@ -955,6 +1226,12 @@ def compare_counties(
             result.counties.append(entry)
         out.append(result)
     return out
+
+
+def _rows_of(cards: Mapping[str, list[CardRow]], keep: Callable[[CardRow], bool]) -> dict[str, list[CardRow]]:
+    """Each card's rows that ``keep`` keeps, for the cards with any."""
+    found = {card: [r for r in rows if keep(r)] for card, rows in cards.items()}
+    return {card: rows for card, rows in found.items() if rows}
 
 
 def _card_order(card: str) -> tuple[Any, ...]:
@@ -997,7 +1274,7 @@ def _round_results(datamap: DataMap, workspace: Workspace, redacted_cvrs: Mappin
     shown: dict[str, frozenset[str] | None] = {}
     for county, sha in redacted_cvrs.items():
         shown[county] = redacted_card_ids(workspace, sha) if sha else None
-    results.comparisons = compare_counties(files, lists, shown)
+    results.comparisons = compare_counties(files, lists, shown, reports)
     return results
 
 

@@ -16,6 +16,7 @@ from synthetic import election_files
 from corla_observer import round_results as rr
 from corla_observer.corla_compare import (
     AGREE,
+    AGREE_OVERVOTE,
     BOTH_DIFFER,
     CORLA_ONLY,
     NOT_IN_CORLA,
@@ -23,6 +24,7 @@ from corla_observer.corla_compare import (
     NOT_OBSERVED,
     OBSERVER_ONLY,
     corla_comparison,
+    says_overvote,
 )
 from corla_observer.datamap import build_map
 from corla_observer.events import EventLog
@@ -123,3 +125,45 @@ def test_the_coordinator_page_and_not_the_public_dashboard(workspace: Path, make
     assert "harris blank" in page and "contests the note may refer to" in page and "Not observed: 1 card" in page
     assert "something else" not in page  # Ann's note on a card not in the redacted CVR
     assert 'href="/coord/corla"' in client.get("/coord/stats").text
+
+
+OVERVOTES = comparison([
+    ("Weld", "United States Senator", "101-1-8", "", '"Ann","Bob"'),  # a voter's overvote, as the board read it
+    ("Weld", "United States Senator", "101-1-9", "", '"Ann","Bob"'),
+    ("Weld", "United States Senator", "101-1-10", '"Ann"', '"Ann","Bob"'),  # the CVR has a choice: CORLA differs
+    ("Weld", "United States Senator", "101-1-11", "", '"Ann","Bob"'),
+    ("Weld", "United States Senator", "101-1-12", "", '"Ann","Bob"'),
+])  # fmt: skip
+
+
+def test_an_overvote_the_observer_and_the_board_both_read(tmp_path: Path) -> None:
+    assert says_overvote("overvote: Ann + Bob", 1) and says_overvote("Ann + Bob", 1) and says_overvote("Ann, Bob, Cy", 2)
+    assert not says_overvote("Ann", 1) and not says_overvote("Ann + Bob", 2)
+    rr.clear_cache()
+    store = Workspace.open(tmp_path / "ws")
+    with EventLog.open(store.root) as log:
+        fetch(store, log, election_files() | FILES | {"files/round1/contestComparison.csv": OVERVOTES})
+        receive_cvr(store, log, "Weld", tmp_path)
+        senate = "United States Senator (Vote For=1)"
+        per_contest(log, "observer:ann", 1, "101-1-8", senate, "no vote", "overvote: Ann + Bob")
+        two_tap(log, "observer:ann", 2, "101-1-9", note="Senate overvote")
+        per_contest(log, "observer:ann", 3, "101-1-10", senate, "Ann", "Ann + Bob")
+        per_contest(log, "observer:ann", 4, "101-1-11", senate, "no vote", "Ann")
+        two_tap(log, "observer:ann", 5, "101-1-12")
+        snap = build_snapshot(log, store, ["Weld"])
+        events = list(log.iter_events())
+        datamap = build_map(log, store)
+    boards = [(b.county, b.board, b.observers) for b in snap.boards if not b.targeted]
+    (board,) = corla_comparison(datamap, store, events, boards, redacted_cvrs(snap)).boards
+    (ann,) = board.observers
+    by_card = {c.imprinted_id: c for c in ann.cards}
+    # Both read an overvote where the CVR has no vote: CORLA counts no discrepancy, and the observer agrees.
+    assert by_card["101-1-8"].category == by_card["101-1-9"].category == AGREE_OVERVOTE
+    assert [(r.cvr_choice, r.board_choice, r.differs) for r in by_card["101-1-8"].corla] == [("no vote", "Ann and Bob (two choices)", False)]
+    # The CVR has a choice: CORLA treats the board's overvote as no vote, a difference.
+    both = by_card["101-1-10"]
+    assert both.category == BOTH_DIFFER and both.corla[0].differs and "an overvote" in both.corla[0].note
+    # The observer heard one choice where the board read an overvote: the observer's difference only.
+    assert by_card["101-1-11"].category == OBSERVER_ONLY
+    # A match where the board read a voter's overvote: CORLA's reading matches the CVR.
+    assert "101-1-12" not in by_card and ann.counts[AGREE] == 1

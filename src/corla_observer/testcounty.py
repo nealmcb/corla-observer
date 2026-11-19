@@ -31,7 +31,11 @@ smaller than 10.
 seed always gives the same files. In each contest a card has no vote with
 probability `NO_VOTE_RATE`, an overvote (one choice more than Vote For)
 with probability `OVERVOTE_RATE`, and otherwise Vote For choices (sometimes
-fewer, in a multi-seat contest), the major candidates more likely. Besides:
+fewer, in a multi-seat contest), the major candidates more likely. A card's
+marks (`Card.marks`) are what is on the paper; the CVR writes an overvote
+as Dominion does, every choice of the contest 0, so it shows no vote there
+(the audit board, reading the paper, would enter the marked choices).
+Besides:
 
 - `REDACTED_ROWS` cards of styles B and C have every vote cell blank, as a county's redaction
   leaves a row (the extract shows the whole ballot as redacted);
@@ -42,7 +46,7 @@ fewer, in a multi-seat contest), the major candidates more likely. Besides:
 **Pull list.** `PULL_LIST_SIZE` ballots for Audit Board 1, a third of them
 on the 60-contest style A, in CORLA's pull order (storage location, scanner,
 batch, record), with the county, imprinted ID, board and storage location;
-among them at least one card with an overvote, one with ``*`` in a contest
+among them at least one card with an overvote (no vote in the CVR), one with ``*`` in a contest
 and one fully redacted card.
 
 **Self-contained.** A test county needs nothing from a real election: its
@@ -356,6 +360,8 @@ def cvr_bytes(county: TestCounty) -> bytes:
                 row.append("")
             elif contest.name in card.redacted_contests:
                 row.append("*")
+            elif len(marks) > contest.vote_for:
+                row.append("0")  # an overvote, as Dominion records it: no vote
             else:
                 row.append("1" if i in marks else "0")
         rows.append(row)

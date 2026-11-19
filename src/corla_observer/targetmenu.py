@@ -1962,10 +1962,13 @@ def _read_comparisons(
 ) -> tuple[dict[tuple[str, str], list[Comparison]], str | None]:
     """CORLA's CVR-to-audit-board comparison for the county, per card and contest (the last row of each), and the file's name; None when not posted.
 
-    An overvote (more choices than the contest's seats) is no vote.
+    An overvote (more choices than the contest's seats) is no vote: the audit board's, as CORLA
+    compares it (`corla_observer.round_results.corla_board_reading`), and the CVR's, which a
+    Dominion CVR never shows (it records an overvote as no vote).
     """
     from corla_observer.classify import Classification, canonical_county
     from corla_observer.datamap import role_column, table_rows
+    from corla_observer.round_results import corla_board_reading
 
     entries = sorted(datamap.used("cvr_comparison"), key=lambda e: e.seq or 0)
     if not entries:
@@ -1995,7 +1998,7 @@ def _read_comparisons(
             limit = seats.get(key, 1)
             cvr, read = _choices(row.get(cvr_col, "")), _choices(row.get(read_col, ""))
             found[(id_key(row.get(id_col, "")), key)] = [
-                (cvr if len(cvr) <= limit else (), read if len(read) <= limit else ())
+                (cvr if len(cvr) <= limit else (), corla_board_reading(read, limit))
             ]
     return found, ", ".join(dict.fromkeys(names)) or None
 

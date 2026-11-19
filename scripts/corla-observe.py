@@ -1003,6 +1003,8 @@ def run(observer: Observer, read: Callable[[str], str], write: Callable[[str], N
             else:
                 write("At a ballot: Enter at the first reading, Enter again when it matches, or type what you heard\n"
                       "(a mismatch, with that note, recorded once you confirm it).\n"
+                      "An overvote read by the board (more choices than the contest allows): type overvote and the names,\n"
+                      "such as 'Senate overvote: Ann Lee + Bob Ray'. The CVR shows it as NO VOTE; CORLA counts no discrepancy.\n"
                       "Commands: /? or /h (this help, with the status), /e N (go to ballot N), /c (copy this ballot,\n"
                       "with __ to mark, to the clipboard and copy.txt; /c all: every ballot), /check (check the log now),\n"
                       "/ref (show this ballot again), /report, /ack, /s (status), /save (record.json is saved after every entry anyway),\n"

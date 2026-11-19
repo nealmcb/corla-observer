@@ -55,6 +55,10 @@ the ones the page shows, shortened by the server for a screen.
   characters, control characters removed). The client asks to confirm it: Enter signs an `entry`
   with `match` false, anything else goes back to the ballot with nothing recorded. So a stray key
   can't record a mismatch.
+- **An overvote**: when the board reads more choices in a contest than it allows, type the contest,
+  "overvote" and the names heard, such as `Senate overvote: Ann Lee + Bob Ray`. The CVR shows a
+  voter's overvote as NO VOTE, and CORLA counts no discrepancy for it (the coordinators' comparison
+  with CORLA's results takes such a note as agreeing). The client's `/?` help says so too.
 
 Commands start with `/`, which needs no shift key (`:` also works). So a note can't start with
 either.

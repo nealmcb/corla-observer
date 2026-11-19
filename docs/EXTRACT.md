@@ -77,7 +77,8 @@ Each ballot is found in the redacted CVR by imprinted ID, or else by tabulator, 
 
 - **One choice:** the choice's name. Choice names are the CVR's second header row, without Excel's `="..."` wrapping.
 - **Several choices, up to the contest's `Vote For`:** the names joined by ` + `.
-- **More choices than `Vote For`:** `overvote: ` followed by the names joined by ` + `.
+- **More choices than `Vote For`:** `overvote: ` followed by the names joined by ` + `. Real Dominion CVRs never show this: they record a voter's overvote as every choice 0, so the extract shows `no vote` there, and the audit board, reading the paper, enters the marked choices (CORLA then counts the board's overvote as no vote: no discrepancy). The branch is kept as a guard for a CVR that marks an overvote.
+- **A ranked-choice contest** (its header ends "(Number of positions=1, Number of ranks=N)"): the marked choices (each with its rank, such as `Ann(1)`) joined by ` + `, never an overvote. Ranks are not interpreted.
 - **No choice marked:** `no vote`.
 - **Every cell blank or a redaction marker** (`*`, `X`, `Redacted` and so on): `redacted`.
 

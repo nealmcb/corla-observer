@@ -15,7 +15,7 @@ from corla_observer.extract import build_extract, latest_extract_events
 from corla_observer.intake import detect, take
 from corla_observer.practice import LinkStore
 from corla_observer.redaction import check_redaction
-from corla_observer.testcounty import COUNTY, CVR_NAME, LONGEST, MANIFEST_NAME, PULL_LIST_NAME, REDACTED_CONTEST, generate, make
+from corla_observer.testcounty import COUNTY, CVR_NAME, LONGEST, MANIFEST_NAME, PULL_LIST_NAME, REDACTED_CONTEST, _vote_for, generate, make
 from corla_observer.timestamp import collect_evidence
 from corla_observer.workspace import Workspace
 from test_extract import ACTOR, ws  # noqa: F401 - the fixture
@@ -68,7 +68,11 @@ def test_uploaded_with_the_county_chosen_and_kept_out_of_the_map(ws: Workspace, 
         assert max(len(b["votes"]) for b in ballots) == 60
         assert sum(1 for b in ballots if b["status"] == "redacted") == 1
         values = [v for b in ballots for _, v in b["votes"]]
-        assert any(v.startswith("overvote: ") for v in values) and "no vote" in values
+        assert not any(v.startswith("overvote: ") for v in values) and "no vote" in values  # an overvote is no vote in the CVR
+        overvoted = next(c for c in make().pulled if any(len(m) > _vote_for(n) for n, m in c.marks.items()))
+        overvoted_contests = {n for n, m in overvoted.marks.items() if len(m) > _vote_for(n)}
+        shown = dict(next(b for b in ballots if b["imprinted_id"] == overvoted.imprinted_id)["votes"])
+        assert overvoted_contests and all(shown[n] == "no vote" for n in overvoted_contests), shown
         assert [REDACTED_CONTEST, "redacted"] in [v for b in ballots for v in b["votes"]]
         assert all(b["location"] for b in ballots)
 
