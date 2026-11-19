@@ -18,6 +18,7 @@ from fastapi.testclient import TestClient
 from synthetic import Ballot, ballots, election_files, make_cvr, make_xlsx
 
 from corla_observer import round_results as rr
+from corla_observer.classify import classify_bytes
 from corla_observer.county_status import audit_rounds, corla_uploads, county_statuses, stage
 from corla_observer.datamap import build_map
 from corla_observer.events import EventLog
@@ -45,8 +46,10 @@ HEADER = (
 )
 
 
-def contest_row(name: str, reason: str, status: str, audited: int, one_over: int = 0, estimated: int = 10, one_under: int = 0) -> str:
-    return f'{name},{reason},{status},1,100,90,"""A""",20,0.03,{audited},0,{one_over},{audited - one_over},{one_under},0,0,1.03905,{one_over},{estimated},{estimated}'
+def contest_row(
+    name: str, reason: str, status: str, audited: int, one_over: int = 0, estimated: int = 10, one_under: int = 0, vote_for: int = 1
+) -> str:
+    return f'{name},{reason},{status},{vote_for},100,90,"""A""",20,0.03,{audited},0,{one_over},{audited - one_over},{one_under},0,0,1.03905,{one_over},{estimated},{estimated}'
 
 
 ROUND1 = "\r\n".join([
@@ -64,6 +67,7 @@ ROUND2 = "\r\n".join([
     contest_row("Morgan - Proposition 137 (STATUTORY)", "county_wide_contest", "risk_limit_achieved", 16, estimated=15),
     contest_row("Jackson County Assessor", "county_wide_contest", "in_progress", 33, one_over=1, estimated=40),
     contest_row("Town of Nowhere Question 1", "opportunistic_benefits", "ended", 3),
+    contest_row("Weld School Board Directors", "opportunistic_benefits", "ended", 3, vote_for=2),
 ]).encode() + b"\r\n"  # fmt: skip
 BY_COUNTY = (
     b"county_id,county_name,contest_name,contest_id\r\n"
@@ -86,8 +90,11 @@ def comparison(rows: Sequence[tuple[str, str, str, str, str]]) -> bytes:
 COMPARISON = comparison([
     ("Weld", "United States Senator", "101-1-3", '"John Hickenlooper"', '"John Hickenlooper","Ryan Apelbaum"'),
     ("Weld", "Weld County Council - At-Large", "101-1-3", '"Ann"', '"Ann"'),
-    ("Weld", "United States Senator", "101-1-4", '"B","A"', '"A","B"'),  # the same choices in another order: no difference
+    ("Weld", "Weld School Board Directors", "101-1-4", '"B","A"', '"A","B"'),  # the same choices in another order: no difference
     ("Weld", "United States Senator", "101-1-99", '"Yes"', '"No"'),  # not in Weld's redacted CVR: never listed
+    ("Weld", "United States Senator", "101-1-5", "", '"A","B"'),  # a voter's overvote, entered as marked: no discrepancy
+    ("Weld", "Weld School Board Directors", "101-1-6", "", '"A","B"'),  # two choices in a Vote For 2 contest: a difference
+    ("Weld", "Town of Weld Mayor", "101-1-7", '"Ann(1)","Bob(2)"', '"Bob(1)","Ann(2)"'),  # ranked-choice: listed apart
     ("Morgan", "Colorado Court of Appeals Judge - Harris", "103-78-8", "", '"Yes"'),
     ("Morgan", "Morgan - Proposition 137 (STATUTORY)", "103-78-8", '"Yes/For"', '"Yes/For"'),
     ("Jackson", "Jackson County Assessor", "102-8-9", '"Cheryl Corkle"', ""),
@@ -247,11 +254,19 @@ def test_comparison_counts_and_the_privacy_rule(ws: Workspace, log: EventLog, tm
     assert round1.label == "Round 1" and round1.ref == "RLA/2026/general/files/round1/contestComparison.csv"
     counties = {c.county: c for c in round1.counties}
     weld, morgan, jackson = counties["Weld"], counties["Morgan"], counties["Jackson"]
-    # Three cards; 101-1-4's choices differ only in order.
-    assert (weld.cards, weld.differing_cards) == (3, 2)
-    (row,) = weld.rows
-    assert (row.imprinted_id, row.contest, row.targeted) == ("101-1-3", "United States Senator", "targeted (statewide)")
+    # Six cards; 101-1-4's choices differ only in order; 101-1-5's overvote is no discrepancy; 101-1-7 is ranked-choice.
+    assert (weld.cards, weld.differing_cards, weld.voter_overvote_cards, weld.ranked_cards) == (6, 3, 1, 1)
+    assert (round1.differing_cards, round1.voter_overvote_cards, round1.ranked_cards) == (5, 1, 1)
+    row, two = weld.rows
+    # No results report with the contest's draws: "targeted contest", nothing said about its sample.
+    assert (row.imprinted_id, row.contest, row.targeted) == ("101-1-3", "United States Senator", "targeted contest (statewide)")
     assert (row.cvr_choice, row.board_choice) == ("John Hickenlooper", "John Hickenlooper and Ryan Apelbaum (two choices)")
+    assert row.note == rr.BOARD_OVERVOTE_NOTE
+    assert (two.imprinted_id, two.cvr_choice, two.board_choice, two.note, two.targeted) == ("101-1-6", "no vote", "A and B (two choices)", "", "not targeted")
+    (overvote,) = weld.overvote_rows
+    assert (overvote.imprinted_id, overvote.cvr_choice, overvote.board_choice) == ("101-1-5", "no vote", "A and B (two choices)")
+    (ranked,) = weld.ranked_rows
+    assert (ranked.imprinted_id, ranked.contest) == ("101-1-7", "Town of Weld Mayor")
     # 101-1-99 is not in Weld's redacted CVR: counted, never listed.
     assert weld.withheld == 1 and "protect voters' privacy" in weld.note
     # It is named, by ID only, as audited but not in the redacted CVR.
@@ -260,6 +275,71 @@ def test_comparison_counts_and_the_privacy_rule(ws: Workspace, log: EventLog, tm
     assert morgan.listed and morgan.rows == [] and morgan.withheld == 1 and "no redacted CVR" in morgan.note
     # Jackson does not take part in observation: counts only.
     assert (jackson.cards, jackson.differing_cards, jackson.listed, jackson.rows) == (1, 1, False, [])
+
+
+def test_corla_counts_an_overvote_the_board_reads_as_no_vote() -> None:
+    def kind(cvr: tuple[str, ...], board: tuple[str, ...], vote_for: int = 1, contest: str = "Mayor") -> str:
+        ranked = rr.is_ranked(contest, cvr, board)
+        return rr.CardRow(contest, cvr, board, vote_for=vote_for, ranked=ranked).kind
+
+    assert rr.corla_board_reading(("A", "B"), 1) == () and rr.corla_board_reading(("A", "B"), 2) == ("A", "B")
+    # CVR no vote, board overvote: no discrepancy. CVR vote, board overvote including it: a difference.
+    assert kind((), ("A", "B")) == rr.VOTER_OVERVOTE and not rr.CardRow("Mayor", (), ("A", "B")).differs
+    assert kind(("A",), ("A", "B")) == rr.BOARD_OVERVOTE and rr.CardRow("Mayor", ("A",), ("A", "B")).differs
+    # Vote For 2: two choices are a vote, three an overvote.
+    assert kind((), ("A", "B"), 2) == rr.DIFFERS and kind(("A", "B"), ("B", "A"), 2) == rr.SAME
+    assert kind((), ("A", "B", "C"), 2) == rr.VOTER_OVERVOTE and kind(("A", "B"), ("A", "B", "C"), 2) == rr.BOARD_OVERVOTE
+    assert kind(("A",), ("B",)) == rr.DIFFERS and kind((), ()) == rr.SAME
+    # Ranked-choice: never an overvote; compared in order; listed apart, not as a difference.
+    assert rr.is_ranked("Mayor (Number of positions=1, Number of ranks=5)") and rr.is_ranked("Mayor", ("Ann(1)",))
+    assert not rr.is_ranked("Proposition 137 (STATUTORY)", ("Yes/For",))
+    assert kind(("Ann(1)", "Bob(2)"), ("Ann(1)", "Bob(2)")) == rr.SAME
+    assert kind(("Ann(1)", "Bob(2)"), ("Bob(1)", "Ann(2)")) == rr.RANKED
+    assert not rr.CardRow("Mayor", ("Ann(1)",), ("Ann(1)", "Bob(2)"), ranked=True).differs
+
+
+def test_a_contest_with_several_choices_in_the_cvr_is_taken_as_ranked() -> None:
+    """A Dominion CVR records a plurality overvote as no vote: a CVR side with more choices than Vote For is a ranking."""
+    data = comparison([
+        ("Boulder", "City of Boulder Mayoral Candidates", "101-1-1", '"Ann","Bob"', '"Ann","Bob"'),
+        ("Boulder", "City of Boulder Mayoral Candidates", "101-1-2", '"Ann"', '"Ann","Bob"'),
+        ("Boulder", "Boulder County Treasurer", "101-1-2", '"Cy"', '"Cy","Di"'),
+    ])  # fmt: skip
+    found = rr.read_comparison_file(data, classify_bytes(data), ref="r", round_number=1, vote_for={})
+    rows = {(card, r.contest): r for card, rs in found.counties["Boulder"].items() for r in rs}
+    assert rows[("101-1-1", "City of Boulder Mayoral Candidates")].kind == rr.SAME
+    assert rows[("101-1-2", "City of Boulder Mayoral Candidates")].kind == rr.RANKED  # not an overvote
+    assert rows[("101-1-2", "Boulder County Treasurer")].kind == rr.BOARD_OVERVOTE  # Vote For 1 when not known
+
+
+def report_with_draws(senate_sheet: str, cards: Sequence[tuple[str, str]]) -> bytes:
+    """A results report whose "United States Senator" sheet lists ``cards`` (county, imprinted ID) as its draws."""
+    return make_xlsx({
+        "Contests to Sheets": [["Contests to Sheets", "No Data"], ["Contest Name", "Sheet Name"], ["United States Senator", senate_sheet]],
+        "Summary": [["Summary", "No Data"], SUMMARY_HEADER, summary_row("United States Senator", "Yes", "1.0", 25)],
+        senate_sheet.replace("/", " "): [["title", "No Data"], ["county", "imprinted id", "round"], *[[c, i, "1"] for c, i in cards], ["End of worksheet"]],
+    })  # fmt: skip
+
+
+def test_targeted_only_on_a_card_of_the_contests_own_sample(ws: Workspace, log: EventLog, tmp_path: Path) -> None:
+    def senate_row(report: bytes) -> str:
+        rr.clear_cache()
+        fetch(ws, log, election_files() | FILES | {"files/round1/resultsReport.xlsx": report})
+        weld_cvr = receive_cvr(ws, log, "Weld", tmp_path)
+        (round1,) = round_results(build_map(log, ws), ws, {"Weld": weld_cvr}).comparisons
+        weld = next(c for c in round1.counties if c.county == "Weld")
+        return next(r.targeted for r in weld.rows if r.imprinted_id == "101-1-3")
+
+    assert senate_row(report_with_draws("United States Senar", [("Weld", "101-1-3")])) == "targeted (statewide)"
+    # Drawn only for another contest: the same card ID in another county is another card.
+    other = [("Weld", "101-1-4"), ("Adams", "101-1-3")]
+    assert senate_row(report_with_draws("United States Senar", other)) == "targeted contest (statewide), card drawn for another contest"
+    # The map may name a sheet with a character Excel forbids; the sheet has a space for it.
+    assert senate_row(report_with_draws("United/States Senator", [("Weld", "101-1-3")])) == "targeted (statewide)"
+    report = rr.read_results_report(report_with_draws("S", [("Weld", "01-1-3")]), ref="r", round_number=1)
+    assert report is not None and report.draws == {"United States Senator": frozenset({("Weld", "1-1-3")})}
+    # A report of an earlier round than the comparison file says nothing of a later round's draws.
+    assert rr.own_samples([report], 2) is None and rr.own_samples([report], 1) == report.draws
 
 
 def test_redacted_rows_are_not_cards_the_cvr_shows(ws: Workspace) -> None:
@@ -284,6 +364,10 @@ def test_the_public_dashboard_shows_the_results(workspace: Path, make_client: Fa
     assert "Jackson County Assessor" in page and "John Hickenlooper and Ryan Apelbaum (two choices)" in page
     # A card not in the redacted CVR is named by ID in the note on such cards, and nowhere else.
     assert "101-1-4" not in page and page.count("101-1-99") == 1
+    assert "Overvotes read by the board where the CVR has no vote (a voter&#39;s overvote, entered as marked; CORLA counts no discrepancy):" in page
+    assert "<code>101-1-5</code>, United States Senator (targeted contest (statewide)): CVR no vote; audit board A and B (two choices)" in page
+    assert f"audit board John Hickenlooper and Ryan Apelbaum (two choices): {rr.BOARD_OVERVOTE_NOTE}" in page
+    assert "Ranked-choice contest: compared as CORLA reports it, ranks not interpreted here:" in page
     assert "not in the county's redacted CVR, which leaves out ballots to protect voters' privacy, so not checked here and not shown: <code>101-1-99</code>" in page
     data = client.get("/dashboard.json").json()["round_results"]
     assert data["continuing"][0]["name"] == "Jackson County Assessor"

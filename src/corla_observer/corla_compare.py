@@ -8,6 +8,12 @@ file, which includes the earlier rounds' cards):
 
 - **agree**: the observer recorded the card as matching the CVR, and CORLA's
   audit board reading matches the CVR in every contest;
+- **agree: both read an overvote where the CVR has no vote**: the observer's
+  only entries say overvote (a contest-by-contest entry heard with "overvote"
+  or more choices than the contest allows, on a contest where the audit board
+  read an overvote and the CVR has no vote; or a two-tap note containing
+  "overvote", on a card with such a contest), and CORLA's reading matches the
+  CVR in every contest;
 - **CORLA only**: CORLA's reading differs from the CVR in some contest on a
   card the observer recorded as matching;
 - **possible difference noted by the observer**: the observer entered
@@ -38,7 +44,12 @@ the contests where the board's reading differs from the CVR, and for a
 difference only the observer recorded, CORLA's rows for the contests the
 observer named (contest by contest) or, for a two-tap note, the contests
 whose distinctive words the note uses (said as such: the note may refer to
-them). Choices are compared and rendered as in `corla_observer.round_results`.
+them). Choices are compared and rendered as in `corla_observer.round_results`,
+with CORLA's rule for overvotes (`corla_observer.round_results.CardRow.kind`):
+an overvote the audit board read counts as no vote, so where the CVR has no
+vote it is no difference, and where the CVR has a choice it is one. An
+observer's overvote entry that agrees with such a reading is not a possible
+difference: it agrees (the CVR shows a voter's overvote as no vote).
 
 Standard library only.
 """
@@ -53,11 +64,24 @@ from corla_observer.contests import BallotComparison, compare_board
 from corla_observer.datamap import DataMap, contest_key
 from corla_observer.events import Event
 from corla_observer.pulllists import RLA, events_for, extract_lists, find_list, load
-from corla_observer.round_results import CardRow, ComparisonFile, card_key, choices_text, comparison_files, redacted_card_ids
+from corla_observer.round_results import (
+    BOARD_OVERVOTE,
+    BOARD_OVERVOTE_NOTE,
+    RANKED,
+    RANKED_NOTE,
+    VOTER_OVERVOTE,
+    CardRow,
+    ComparisonFile,
+    card_key,
+    choices_text,
+    comparison_files,
+    redacted_card_ids,
+)
 from corla_observer.sampling import county_key
 from corla_observer.workspace import ObjectNotFoundError, Workspace
 
 AGREE = "agree"
+AGREE_OVERVOTE = "agree_overvote"
 CORLA_ONLY = "corla_only"
 OBSERVER_ONLY = "observer_only"
 BOTH_DIFFER = "both_differ"
@@ -69,6 +93,7 @@ NOT_IN_CVR = "not_in_cvr"
 #: Each category and how it is named, in the order shown.
 CATEGORIES = {
     AGREE: "agree",
+    AGREE_OVERVOTE: "agree: both read an overvote where the CVR has no vote",
     CORLA_ONLY: "CORLA only",
     OBSERVER_ONLY: "possible difference noted by the observer",
     BOTH_DIFFER: "CORLA differs; the observer noted a possible difference",
@@ -93,6 +118,8 @@ class CorlaRow:
     cvr_choice: str
     board_choice: str
     differs: bool
+    #: How CORLA's rule reads the row when its choices alone don't say: an overvote, a ranked-choice contest; else "".
+    note: str = ""
 
 
 @dataclass
@@ -147,8 +174,41 @@ def _words(text: str) -> set[str]:
     return {w for w in re.findall(r"[a-z0-9][a-z0-9'-]*", text.lower()) if len(w) >= 4 and w not in _COMMON_WORDS}
 
 
+#: What `CorlaRow.note` says, by `CardRow.kind`.
+_ROW_NOTES = {
+    BOARD_OVERVOTE: BOARD_OVERVOTE_NOTE,
+    VOTER_OVERVOTE: "an overvote where the CVR has no vote: CORLA counts no discrepancy",
+    RANKED: RANKED_NOTE,
+}
+
+
 def _render(rows: Iterable[CardRow]) -> list[CorlaRow]:
-    return [CorlaRow(r.contest, choices_text(r.cvr), choices_text(r.board), r.differs) for r in rows]
+    return [CorlaRow(r.contest, choices_text(r.cvr), choices_text(r.board), r.differs, _ROW_NOTES.get(r.kind, "")) for r in rows]
+
+
+def says_overvote(heard: str, vote_for: int) -> bool:
+    """Whether an observer's entry says overvote: it contains "overvote", or names more choices than ``vote_for`` (joined by "+", "," or ";")."""
+    text = " ".join(heard.split()).casefold()
+    if "overvote" in text:
+        return True
+    parts = [p for p in re.split(r"\s*[+,;]\s*", text) if p]
+    return len(parts) > max(vote_for, 1)
+
+
+def _overvotes_agree(comparison: BallotComparison, actor: str, rows: Sequence[CardRow]) -> bool:
+    """Whether every entry the observer made on the card says overvote where the audit board read one and the CVR has no vote."""
+    voter = {contest_key(r.contest): r for r in rows if r.voter_overvote}
+    if not voter:
+        return False
+    findings = [f for f in comparison.contests if f.observer == actor]
+    notes = [note for who, note in comparison.ballot_notes if who == actor]
+    if not findings and not notes:
+        return False
+    for f in findings:
+        row = voter.get(contest_key(f.contest))
+        if row is None or not says_overvote(f.heard, row.vote_for):
+            return False
+    return all("overvote" in note.casefold() for note in notes)
 
 
 def _observer_side(comparison: BallotComparison, actor: str) -> tuple[str, list[str], list[str]]:
@@ -221,6 +281,10 @@ def compare_observer(
             elif state == "match":
                 finding.category = CORLA_ONLY if corla_differs else AGREE
                 finding.corla = _render(corla_differs)
+            elif _overvotes_agree(comparison, actor, rows):
+                # The observer's only entries are the overvote the audit board read where the CVR has no vote.
+                finding.category = CORLA_ONLY if corla_differs else AGREE_OVERVOTE
+                finding.corla = _render(corla_differs or [r for r in rows if r.voter_overvote])
             elif corla_differs:
                 finding.category = BOTH_DIFFER
                 finding.corla = _render(corla_differs)

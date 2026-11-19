@@ -16,7 +16,10 @@ the committed inputs.
   audit boards, and flagged as predicted;
 - the county's redacted CVR, for each ballot's expected votes
   (`expected_votes`): a choice, several choices joined by `` + ``, an
-  overvote (``overvote: A + B``), ``no vote``, or ``redacted`` per contest,
+  overvote (``overvote: A + B``; a guard only: a Dominion CVR records an
+  overvote as no vote, so a real one shows ``no vote``), ``no vote``, or
+  ``redacted`` per contest (a ranked-choice contest's marks joined by `` + ``,
+  never called an overvote; its ranks are not interpreted),
   and the whole ballot shown as redacted when its row has no votes left, or
   as not in the CVR;
 - the data map's chosen manifest for the county (storage locations) and the
@@ -97,6 +100,7 @@ from corla_observer.events import EventLog, JSONValue, canonical_json, check_act
 from corla_observer.predict import latest_prediction, published_selections
 from corla_observer.printnames import PrintNames, base_contest, split_value
 from corla_observer.pullorder import possible_boards, pull_order
+from corla_observer.round_results import RANKED_CONTEST_RE
 from corla_observer.uploads import status as upload_status
 from corla_observer.workspace import Workspace
 
@@ -229,8 +233,11 @@ def expected_votes(path: Path | str, wanted: Iterable[str]) -> tuple[dict[str, E
 
     Ballots are matched by imprinted ID, or by tabulator, batch and record
     when the imprinted ID column doesn't match. More choices marked than a
-    contest's ``Vote For`` is an overvote. Returns ``(ballots by imprinted
-    ID as given, choices by contest label)``.
+    contest's ``Vote For`` is an overvote, except in a ranked-choice contest
+    ("(Number of positions=1, Number of ranks=N)" in its header), whose marks
+    are joined by " + " as they are. Dominion CVRs record an overvote as no
+    vote (every choice 0), so the overvote branch is a guard for other CVRs.
+    Returns ``(ballots by imprinted ID as given, choices by contest label)``.
     """
     reader = CvrReader(path)
     h = reader.header
@@ -244,6 +251,7 @@ def expected_votes(path: Path | str, wanted: Iterable[str]) -> tuple[dict[str, E
                 break
         choice_row = head[h.header_row - 2] if h.header_row >= 2 else []
         labels = [contest_label(c) for c in h.contests]
+        ranked = [bool(RANKED_CONTEST_RE.search(c)) for c in h.contests]
         columns: list[list[tuple[int, str]]] = [[] for _ in h.contests]
         for offset, contest in enumerate(h.column_contest):
             index = h.vote_start + offset
@@ -278,7 +286,7 @@ def expected_votes(path: Path | str, wanted: Iterable[str]) -> tuple[dict[str, E
                 marked = [choice for (_, choice), cell in zip(cols, cells, strict=True) if cell.isdigit() and int(cell) > 0]
                 if not marked:
                     value = "no vote"
-                elif len(marked) > labels[i][1]:
+                elif len(marked) > labels[i][1] and not ranked[i]:
                     value = "overvote: " + " + ".join(marked)
                 else:
                     value = " + ".join(marked)
