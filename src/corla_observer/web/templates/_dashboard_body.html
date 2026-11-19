@@ -15,6 +15,46 @@
     </ol>
   </section>
   {% endif %}
+  {% set rr = snap.round_results %}
+  {% if not rr.empty %}
+  <section id="round-results" aria-labelledby="round-results-title">
+    <h2 id="round-results-title">CORLA's results, round by round</h2>
+    <p class="meta">From the files CORLA posts on the Audit Center, as fetched here; each number names its file. A round's contest list shows the audit as the round begins.</p>
+    {% if rr.standings %}
+    <h3>Where the audit stands</h3>
+    <ul>{% for s in rr.standings %}<li>{{ s.text }}</li>{% endfor %}</ul>
+    {% endif %}
+    {% if rr.continuing %}
+    <h3>What continues, and why</h3>
+    <p class="meta">{{ rr.overstatement_note }}</p>
+    <div class="grid">
+      {% for c in rr.continuing %}
+      <article class="card">
+        <h4>{{ c.name }} <span class="meta">({{ c.counties }})</span></h4>
+        <dl>
+          <dt>Audited</dt><dd>{{ c.audited_text }}</dd>
+          <dt>Discrepancies</dt><dd>{% for d in c.discrepancies %}{{ d }}{% if not loop.last %}<br>{% endif %}{% endfor %}</dd>
+          <dt>Cards needed</dt><dd>{{ c.estimate_text }}</dd>
+        </dl>
+      </article>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% for cmp in rr.comparisons %}
+    <h3>What CORLA's comparison shows: {{ cmp.label }}</h3>
+    <p class="meta">{{ cmp.ref }}: {{ cmp.cards }} cards audited, {{ cmp.differing_cards }} with a contest where the audit board's reading differs from the CVR (the same choices in another order are no difference). Each round's file includes the earlier rounds' cards. Differing rows are listed for counties taking part in observation, only for cards in the county's redacted CVR.</p>
+    <div class="table-wrap"><table class="stats">
+      <thead><tr><th>County</th><th>Cards audited</th><th>With a difference</th><th>Differing rows</th></tr></thead>
+      <tbody>
+      {% for c in cmp.counties %}
+        <tr><td>{{ c.county }}</td><td>{{ c.cards }}</td><td>{{ c.differing_cards }}</td>
+          <td>{% if c.listed %}{% for r in c.rows %}<code>{{ r.imprinted_id }}</code>, {{ r.contest }}{% if r.targeted %} ({{ r.targeted }}){% endif %}: CVR {{ r.cvr_choice }}; audit board {{ r.board_choice }}{% if r.comment %} <span class="meta">(comment: {{ r.comment }})</span>{% endif %}{% if not loop.last %}<br>{% endif %}{% endfor %}{% if c.note %}{% if c.rows %}<br>{% endif %}<span class="meta">{{ c.note }}</span>{% endif %}{% if not c.rows and not c.note and c.differing_cards == 0 %}<span class="muted">none</span>{% endif %}{% else %}<span class="muted">not listed (county not taking part in observation)</span>{% endif %}</td></tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% endfor %}
+  </section>
+  {% endif %}
   <section class="summary">
     <div class="card stat">
       <h2>Election</h2>

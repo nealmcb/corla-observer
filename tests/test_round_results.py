@@ -1,0 +1,286 @@
+"""Fast tests for corla_observer.round_results and the stage it gives each county: CORLA's results, round by round.
+
+Small synthetic contest lists, a contest-to-county file and a comparison file,
+shaped as the 2026 general's (``round1/contest.csv``, ``round2/contest.csv``,
+``round1/contestComparison.csv``, ``contestsByCounty.csv``), are fetched into
+a temporary workspace as in tests/test_county_status.py.
+"""
+
+from __future__ import annotations
+
+import csv
+import io
+from collections.abc import Iterator, Sequence
+from pathlib import Path
+
+import pytest
+from fastapi.testclient import TestClient
+from synthetic import Ballot, ballots, election_files, make_cvr
+
+from corla_observer import round_results as rr
+from corla_observer.county_status import audit_rounds, corla_uploads, county_statuses, stage
+from corla_observer.datamap import build_map
+from corla_observer.events import EventLog
+from corla_observer.progress import audit_progress
+from corla_observer.round_results import (
+    choices_differ,
+    choices_text,
+    contest_counties,
+    parse_choices,
+    redacted_card_ids,
+    round_results,
+)
+from corla_observer.uploads import receive, status
+from corla_observer.web.views import build_snapshot
+from corla_observer.workspace import Workspace
+from test_county_status import UPLOAD_STATUS, fetch
+from test_web import Factory, make_client, workspace  # noqa: F401 (fixtures)
+
+ACTOR = "coordinator:c1"
+HEADER = (
+    "contest_name,audit_reason,random_audit_status,winners_allowed,ballot_card_count,contest_ballot_card_count,winners,"
+    "min_margin,risk_limit,audited_sample_count,two_vote_over_count,one_vote_over_count,zero_discrepancy_count,"
+    "one_vote_under_count,two_vote_under_count,disagreement_count,gamma,overstatements,optimistic_samples_to_audit,"
+    "estimated_samples_to_audit"
+)
+
+
+def contest_row(name: str, reason: str, status: str, audited: int, one_over: int = 0, estimated: int = 10, one_under: int = 0) -> str:
+    return f'{name},{reason},{status},1,100,90,"""A""",20,0.03,{audited},0,{one_over},{audited - one_over},{one_under},0,0,1.03905,{one_over},{estimated},{estimated}'
+
+
+ROUND1 = "\r\n".join([
+    HEADER,
+    contest_row("United States Senator", "state_wide_contest", "in_progress", 0, estimated=20),
+    contest_row("Weld County Council - At-Large", "county_wide_contest", "in_progress", 0, estimated=12),
+    contest_row("Morgan - Proposition 137 (STATUTORY)", "county_wide_contest", "in_progress", 0, estimated=15),
+    contest_row("Jackson County Assessor", "county_wide_contest", "in_progress", 0, estimated=32),
+    contest_row("Town of Nowhere Question 1", "opportunistic_benefits", "in_progress", 0),
+]).encode() + b"\r\n"  # fmt: skip
+ROUND2 = "\r\n".join([
+    HEADER,
+    contest_row("United States Senator", "state_wide_contest", "risk_limit_achieved", 25, estimated=20),
+    contest_row("Weld County Council - At-Large", "county_wide_contest", "risk_limit_achieved", 14, estimated=12),
+    contest_row("Morgan - Proposition 137 (STATUTORY)", "county_wide_contest", "risk_limit_achieved", 16, estimated=15),
+    contest_row("Jackson County Assessor", "county_wide_contest", "in_progress", 33, one_over=1, estimated=40),
+    contest_row("Town of Nowhere Question 1", "opportunistic_benefits", "ended", 3),
+]).encode() + b"\r\n"  # fmt: skip
+BY_COUNTY = (
+    b"county_id,county_name,contest_name,contest_id\r\n"
+    + b"".join(f"{i},{c},United States Senator,1\r\n".encode() for i, c in ((1, "Adams"), (30, "Jackson"), (45, "Morgan"), (62, "Weld")))
+    + b"62,Weld,Weld County Council - At-Large,2\r\n45,Morgan,Morgan - Proposition 137 (STATUTORY),3\r\n30,Jackson,Jackson County Assessor,4\r\n"
+)
+
+
+def comparison(rows: Sequence[tuple[str, str, str, str, str]]) -> bytes:
+    """A contestComparison.csv of (county, contest, imprinted ID, CVR choice, board choice) rows."""
+    out = io.StringIO()
+    writer = csv.writer(out, lineterminator="\r\n")
+    writer.writerow(["county_name", "contest_name", "imprinted_id", "ballot_type", "choice_per_voting_computer", "audit_board_selection",
+                     "consensus", "record_type", "audit_board_comment", "timestamp", "cvr_id", "audit_reason"])  # fmt: skip
+    for n, (county, contest, card, cvr, board) in enumerate(rows, start=1):
+        writer.writerow([county, contest, card, "1", cvr, board, "YES", "uploaded", "", "2026-11-17 10:14:45.755636", n, ""])
+    return out.getvalue().encode()
+
+
+COMPARISON = comparison([
+    ("Weld", "United States Senator", "101-1-3", '"John Hickenlooper"', '"John Hickenlooper","Ryan Apelbaum"'),
+    ("Weld", "Weld County Council - At-Large", "101-1-3", '"Ann"', '"Ann"'),
+    ("Weld", "United States Senator", "101-1-4", '"B","A"', '"A","B"'),  # the same choices in another order: no difference
+    ("Weld", "United States Senator", "101-1-99", '"Yes"', '"No"'),  # not in Weld's redacted CVR: never listed
+    ("Morgan", "Colorado Court of Appeals Judge - Harris", "103-78-8", "", '"Yes"'),
+    ("Morgan", "Morgan - Proposition 137 (STATUTORY)", "103-78-8", '"Yes/For"', '"Yes/For"'),
+    ("Jackson", "Jackson County Assessor", "102-8-9", '"Cheryl Corkle"', ""),
+])  # fmt: skip
+
+FILES = {
+    "files/round1/contest.csv": ROUND1,
+    "files/round2/contest.csv": ROUND2,
+    "files/round2/contestSelection.csv": b"min_margin,contest_name,contest_cvr_ids\r\n20,United States Senator,[1]\r\n",
+    "files/round1/contestComparison.csv": COMPARISON,
+    "files/contestsByCounty.csv": BY_COUNTY,
+}
+#: Weld's redacted CVR: cards 101-1-1 to 101-1-21 (tabulator 101, batch 1), as tests/synthetic.make_cvr numbers them.
+WELD_CVR = make_cvr(ballots(10, "Mayor", "Council") + ballots(11, "Mayor", precinct="102"))
+
+
+@pytest.fixture
+def ws(tmp_path: Path) -> Workspace:
+    rr.clear_cache()
+    return Workspace.open(tmp_path / "ws")
+
+
+@pytest.fixture
+def log(ws: Workspace) -> Iterator[EventLog]:
+    with EventLog.open(ws.root) as log:
+        yield log
+
+
+def receive_cvr(ws: Workspace, log: EventLog, county: str, tmp_path: Path, data: bytes = WELD_CVR) -> str:
+    source = tmp_path / f"{county}.csv"
+    source.write_bytes(data)
+    result = receive(ws, log, county, "redacted_cvr", source, "cvr.csv", ACTOR)
+    assert result.accepted
+    return str(result.sha256)
+
+
+# ---------------------------------------------------------------------------
+# Choices and contests' counties
+
+
+def test_choices_are_parsed_rendered_and_compared_as_sets() -> None:
+    assert parse_choices('"Yes/For"') == ("Yes/For",)
+    assert parse_choices('"John Hickenlooper","Ryan Apelbaum"') == ("John Hickenlooper", "Ryan Apelbaum")
+    assert parse_choices("") == () and parse_choices('["A", "B"]') == ("A", "B")
+    assert parse_choices('"Smith, Jr.","Doe"') == ("Smith, Jr.", "Doe")
+    assert choices_text(()) == "no vote" and choices_text(("Yes/For",)) == "Yes/For"
+    assert choices_text(("John Hickenlooper", "Ryan Apelbaum")) == "John Hickenlooper and Ryan Apelbaum (two choices)"
+    assert choices_text(("A", "B", "C")) == "A, B and C (three choices)"
+    assert not choices_differ(("A", "B"), ("B", "A")) and choices_differ((), ("Yes",)) and choices_differ(("A",), ("A", "B"))
+
+
+def test_contest_counties_from_prefix_file_and_name() -> None:
+    listed = {"Weld County Council - At-Large": ["Weld"], "City of Holyoke Ballot Measure 2B": ["Phillips"],
+              "State Senator - District 9": ["El Paso", "Teller"], "Cheyenne - Colorado Court of Appeals Judge - Harris": ["Kit Carson"],
+              "United States Senator": ["Adams", "Weld"]}  # fmt: skip
+    assert contest_counties("Morgan - Proposition 137 (STATUTORY)", "county_wide_contest", {})[:2] == (("Morgan",), False)
+    # A prefix the contest-to-county file contradicts keeps the prefix's county, and says so.
+    counties, _, note = contest_counties("Cheyenne - Colorado Court of Appeals Judge - Harris", "county_wide_contest", listed)
+    assert counties == ("Cheyenne",) and "lists Kit Carson" in note
+    assert contest_counties("Attorney General - REP (Weld)", "county_wide_contest", {})[0] == ("Weld",)
+    assert contest_counties("City of Holyoke Ballot Measure 2B", "county_wide_contest", listed)[0] == ("Phillips",)
+    # "Weld County Council" is not a county before " - ": the file, else the name's "<County> County", decides.
+    assert contest_counties("Weld County Council - At-Large", "county_wide_contest", listed)[0] == ("Weld",)
+    assert contest_counties("Weld County Council - At-Large", "county_wide_contest", {})[0] == ("Weld",)
+    assert contest_counties("CLEAR CREEK COUNTY BALLOT ISSUE 1A", "county_wide_contest", {})[0] == ("Clear Creek",)
+    # Ambiguous: the file lists several counties; all of them, and said so.
+    counties, statewide, note = contest_counties("State Senator - District 9", "county_wide_contest", listed)
+    assert counties == ("El Paso", "Teller") and not statewide and "2 counties" in note
+    assert contest_counties("Town Question 3", "county_wide_contest", {})[0] == ()
+    # Statewide: the file's counties, else every county in CORLA's audit (not San Juan).
+    assert contest_counties("United States Senator", "state_wide_contest", listed)[:2] == (("Adams", "Weld"), True)
+    everywhere = contest_counties("Secretary of State", "state_wide_contest", {})[0]
+    assert len(everywhere) == 63 and "San Juan" not in everywhere
+
+
+# ---------------------------------------------------------------------------
+# The stage
+
+
+def test_only_counties_with_a_contest_in_progress_are_in_round_two(ws: Workspace, log: EventLog) -> None:
+    fetch(ws, log, election_files(files_uploadStatus_csv=UPLOAD_STATUS) | FILES)
+    datamap = build_map(log, ws)
+    rounds = audit_rounds(datamap, ws)
+    # The statewide round-2 files would have put every county in round 2.
+    assert rounds.election_round == 2 and [x.round for x in rounds.contest_lists] == [1, 2]
+    jackson = stage("Jackson", rounds, seed_source="s", round_start=None)
+    assert jackson.label == "Round 2" and jackson.round == 2 and not jackson.finished
+    assert "Jackson County Assessor" in jackson.source and "round2/contest.csv" in jackson.source
+    weld = stage("Weld", rounds, seed_source="s", round_start=None)
+    assert weld.label == "Round 1 finished: its targeted contests met the risk limit" and weld.round == 1 and weld.finished
+    # Covered only by the statewide contest, which met the risk limit.
+    assert stage("Adams", rounds, seed_source="s", round_start=None).label == "Round 1 finished: its targeted contest met the risk limit"
+
+    statuses = county_statuses(status(log), corla_uploads(datamap, ws), rounds, seed_source="s")
+    assert statuses["Jackson"].round == 2 and statuses["Weld"].finished and statuses["Weld"].summary.startswith("Round 1 finished")
+    steps = audit_progress(contests_posted=True, corla=corla_uploads(datamap, ws), seed=True, selections=True, statuses=statuses)
+    assert steps[-1].detail == "Round 2: 1 county (Jackson); 3 counties finished in round 1; 59 not yet in a round" and not steps[-1].done
+    # When every county in CORLA's audit is covered by a contest list (as in the 2026 general):
+    covered = {c: s for c, s in statuses.items() if c in ("Adams", "Jackson", "Morgan", "Weld")}
+    steps = audit_progress(contests_posted=True, corla=corla_uploads(datamap, ws), seed=True, selections=True, statuses=covered)
+    assert steps[-1].detail == "Round 2: 1 county (Jackson); the other counties finished in round 1"
+    finished = {c: s for c, s in covered.items() if c != "Jackson"}
+    steps = audit_progress(contests_posted=True, corla=corla_uploads(datamap, ws), seed=True, selections=True, statuses=finished)
+    assert steps[-1].detail == "every county finished in round 1" and steps[-1].state == "done"
+
+
+def test_without_contest_lists_the_round_files_decide_as_before(ws: Workspace, log: EventLog) -> None:
+    files = {k: v for k, v in FILES.items() if "contest.csv" not in k}
+    fetch(ws, log, election_files() | files)
+    rounds = audit_rounds(build_map(log, ws), ws)
+    assert rounds.contest_lists == () and rounds.election_round == 2
+    assert stage("Weld", rounds, seed_source="s", round_start=None).label == "Round 2"
+
+
+def test_round_one_list_alone_puts_every_covered_county_in_round_one(ws: Workspace, log: EventLog) -> None:
+    fetch(ws, log, election_files() | {"files/round1/contest.csv": ROUND1, "files/contestsByCounty.csv": BY_COUNTY})
+    rounds = audit_rounds(build_map(log, ws), ws)
+    assert stage("Weld", rounds, seed_source="s", round_start=None).label == "Round 1"
+    # The statewide contest covers the counties the file lists for it; Denver is not among them, so its stage comes from the seed.
+    assert stage("Denver", rounds, seed_source="s", round_start=None).label == "drawing done (seed entered)"
+
+
+# ---------------------------------------------------------------------------
+# The explanations and CORLA's comparison
+
+
+def test_standings_continuing_contests_and_estimates(ws: Workspace, log: EventLog) -> None:
+    fetch(ws, log, election_files() | FILES)
+    results = round_results(build_map(log, ws), ws, {})
+    first, second = (s.text for s in results.standings)
+    assert first == "Round 1 (RLA/2026/general/files/round1/contest.csv): 4 targeted contests to audit (1 statewide, 3 county-wide), no card audited yet."
+    assert second == (
+        "After round 1 (RLA/2026/general/files/round2/contest.csv): 3 of 4 targeted contests met the risk limit; "
+        "1 continues in round 2: Jackson County Assessor (Jackson)."
+    )
+    (jackson,) = results.continuing
+    assert jackson.counties == "Jackson" and jackson.audited_text.startswith("33 cards audited so far (audited_sample_count in RLA/")
+    assert jackson.discrepancies == [
+        "one card where the audit board's reading took one vote from the reported winner's margin (a one-vote overstatement)"
+    ]
+    assert jackson.estimate_text == (
+        "CORLA's estimate of the cards it needs (estimated_samples_to_audit) rose from 32, in round 1's contest list "
+        "(RLA/2026/general/files/round1/contest.csv), to 40, in round 2's (RLA/2026/general/files/round2/contest.csv)."
+    )
+    assert "does not increase the cards needed" in results.overstatement_note
+    understated = rr.ContestStatus("X", "county_wide_contest", "in_progress", ("Weld",), False, "", audited=9, one_under=2)
+    assert rr.discrepancy_lines(understated) == [
+        "two cards where the audit board's reading added one vote to the reported winner's margin (one-vote understatements)"
+    ]
+
+
+def test_comparison_counts_and_the_privacy_rule(ws: Workspace, log: EventLog, tmp_path: Path) -> None:
+    fetch(ws, log, election_files() | FILES)
+    weld_cvr = receive_cvr(ws, log, "Weld", tmp_path)
+    results = round_results(build_map(log, ws), ws, {"Weld": weld_cvr, "Morgan": None})
+    (round1,) = results.comparisons
+    assert round1.label == "Round 1" and round1.ref == "RLA/2026/general/files/round1/contestComparison.csv"
+    counties = {c.county: c for c in round1.counties}
+    weld, morgan, jackson = counties["Weld"], counties["Morgan"], counties["Jackson"]
+    # Three cards; 101-1-4's choices differ only in order.
+    assert (weld.cards, weld.differing_cards) == (3, 2)
+    (row,) = weld.rows
+    assert (row.imprinted_id, row.contest, row.targeted) == ("101-1-3", "United States Senator", "targeted (statewide)")
+    assert (row.cvr_choice, row.board_choice) == ("John Hickenlooper", "John Hickenlooper and Ryan Apelbaum (two choices)")
+    # 101-1-99 is not in Weld's redacted CVR: counted, never listed.
+    assert weld.withheld == 1 and "protect voters' privacy" in weld.note
+    # Morgan takes part but has no redacted CVR that passed: nothing listed.
+    assert morgan.listed and morgan.rows == [] and morgan.withheld == 1 and "no redacted CVR" in morgan.note
+    # Jackson does not take part in observation: counts only.
+    assert (jackson.cards, jackson.differing_cards, jackson.listed, jackson.rows) == (1, 1, False, [])
+
+
+def test_redacted_rows_are_not_cards_the_cvr_shows(ws: Workspace) -> None:
+    rows = [*ballots(3, "Mayor"), Ballot(("Mayor",), marker="REDACTED"), Ballot(("Mayor",), blank=True)]
+    stored = ws.put_bytes(make_cvr(rows))
+    assert redacted_card_ids(ws, stored.sha256) == frozenset({"101-1-1", "101-1-2", "101-1-3"})
+    junk = ws.put_bytes(b"not a cvr\r\n")
+    assert redacted_card_ids(ws, junk.sha256) is None
+
+
+def test_the_public_dashboard_shows_the_results(workspace: Path, make_client: Factory, tmp_path: Path) -> None:  # noqa: F811
+    rr.clear_cache()
+    store = Workspace.open(workspace)
+    with EventLog.open(store.root) as log:
+        fetch(store, log, election_files() | FILES)
+        receive_cvr(store, log, "Weld", tmp_path)
+        snap = build_snapshot(log, store, ["Weld"])
+    assert [s.round for s in snap.round_results.standings] == [1, 2]
+    client: TestClient = make_client(counties=("Weld",))
+    page = client.get("/").text
+    assert "CORLA's results, round by round" in page and "What continues, and why" in page
+    assert "Jackson County Assessor" in page and "John Hickenlooper and Ryan Apelbaum (two choices)" in page
+    assert "101-1-99" not in page and "101-1-4" not in page
+    data = client.get("/dashboard.json").json()["round_results"]
+    assert data["continuing"][0]["name"] == "Jackson County Assessor"
+    assert client.get("/dashboard.json").json()["progress"][-1]["detail"].startswith("Round 2: 1 county (Jackson)")

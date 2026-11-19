@@ -16,7 +16,17 @@ coordinator provided its redacted CVR and it passed the redaction check,
 our copy of its manifest, its pull list, and the number of audit boards (a
 count recorded as a placeholder is shown as not yet known).
 
-**The audit's stage** (`audit_rounds`, `stage`): the current round, from
+**The audit's stage** (`audit_rounds`, `stage`): once CORLA's contest
+lists are fetched (`corla_observer.round_results.contest_lists`; a round's
+list describes the audit when the round begins), a county is in round N only
+if a targeted contest covering it (one of its own, or a statewide one) is
+``in_progress`` in round N's list, N being the latest round with a list;
+otherwise its last round is finished (``finished``): the latest earlier round
+whose list had such a contest in progress, said with what became of its
+targeted contests ("Round 1 finished: its targeted contests met the risk
+limit"). A county's own files for a later round still put it in that round.
+Without contest lists, or for a county none of whose targeted contests they
+list, the round comes, as before, from
 the audit center files in the data map that name a round, by their
 directory (``round_1/``, ``round2/``) or their name
 (``ContestMarginAndContestCVR-IDs-Round1.csv``), but never a manifest or a
@@ -24,7 +34,9 @@ page (the 2020 general posted its manifests under ``round_1/`` before the
 roll), with CORLA's selections
 counting as round 1: the highest round with a file for the county, or else
 the highest round of the election (the audit center has published some
-rounds' files for all counties together). Without such files, the first
+rounds' files for all counties together; not used once contest lists are
+fetched, since those files are published for every county whether or not
+it takes part in the round). Without such files, the first
 round's recorded start, or the county's pull list, means round 1; otherwise
 the seed's entry means the drawing is done, and without it the audit is
 before the drawing. Observation
@@ -50,6 +62,7 @@ from corla_observer.datamap import DataMap, MapEntry, Sourced, column, role_colu
 from corla_observer.events import Event
 from corla_observer.localtime import colorado_wall_time
 from corla_observer.practice import BoardProgress
+from corla_observer.round_results import RISK_LIMIT_ACHIEVED, ContestList, contest_lists
 from corla_observer.sampling import county_key
 from corla_observer.uploads import CountyStatus
 from corla_observer.workspace import ObjectNotFoundError, Workspace
@@ -170,15 +183,17 @@ NOT_ROUND_EVIDENCE = frozenset({"county_manifest", "html_page"})
 
 @dataclass(frozen=True)
 class Rounds:
-    """The highest round with audit center files, for the election and per county, with a file for each."""
+    """The highest round with audit center files, for the election and per county, with a file for each; and CORLA's contest lists."""
 
     election_round: int | None = None
     election_ref: str | None = None
     by_county: Mapping[str, tuple[int, str]] = field(default_factory=dict)
+    #: CORLA's contest lists, one per round in round order (`corla_observer.round_results.contest_lists`).
+    contest_lists: tuple[ContestList, ...] = ()
 
 
-def audit_rounds(datamap: DataMap) -> Rounds:
-    """The rounds shown by the data map's fetched audit center files in round directories."""
+def audit_rounds(datamap: DataMap, workspace: Workspace | None = None) -> Rounds:
+    """The rounds shown by the data map's fetched audit center files in round directories, with the contest lists if ``workspace`` is given."""
     best: tuple[int, str] | None = None
     by_county: dict[str, tuple[int, str]] = {}
     for entry in datamap.entries:
@@ -198,7 +213,10 @@ def audit_rounds(datamap: DataMap) -> Rounds:
             if entry.county not in by_county or item > by_county[entry.county]:
                 by_county[entry.county] = item
     return Rounds(
-        election_round=best[0] if best else None, election_ref=best[1] if best else None, by_county=by_county
+        election_round=best[0] if best else None,
+        election_ref=best[1] if best else None,
+        by_county=by_county,
+        contest_lists=contest_lists(datamap, workspace) if workspace is not None else (),
     )
 
 
@@ -213,16 +231,55 @@ class Stage:
     label: str
     source: str
     round: int | None = None
+    #: The county's last round is finished: no targeted contest covering it is in progress in the latest contest list.
+    finished: bool = False
+
+
+def _names(names: Sequence[str], most: int = 3) -> str:
+    shown = list(names[:most])
+    return ", ".join(shown) + (f" and {len(names) - most} more" if len(names) > most else "")
+
+
+def contest_list_stage(county: str, lists: Sequence[ContestList]) -> Stage | None:
+    """A county's stage from CORLA's contest lists, or None if none lists a targeted contest covering it."""
+    if not lists:
+        return None
+    latest = lists[-1]
+    mine = [c for c in latest.contests if c.covers(county)]
+    if not mine:
+        return None
+    number, ref = latest.round, latest.ref
+    going = [c.name for c in mine if c.in_progress]
+    if going:
+        return Stage(f"Round {number}", f"in progress in CORLA's round {number} contest list ({ref}): {_names(going)}", number)
+    if all(c.status == RISK_LIMIT_ACHIEVED for c in mine):
+        outcome = "its targeted contests met the risk limit" if len(mine) > 1 else "its targeted contest met the risk limit"
+    else:
+        outcome = "its targeted contests: " + "; ".join(f"{c.name}, {c.status_text}" for c in mine)
+    took_part = [x.round for x in lists[:-1] if any(c.covers(county) and c.in_progress for c in x.contests)]
+    last = max(took_part) if took_part else number - 1
+    source = f"CORLA's round {number} contest list ({ref}): no targeted contest of the county in progress"
+    if last < 1:
+        return Stage(f"No targeted contest in progress: {outcome}", source, None, True)
+    return Stage(f"Round {last} finished: {outcome}", source, last, True)
 
 
 def stage(
     county: str, rounds: Rounds, *, seed_source: str | None, round_start: Sourced | None, pull_list: bool = False
 ) -> Stage:
     """A county's stage (see the module documentation)."""
-    if county in rounds.by_county:
-        number, ref = rounds.by_county[county]
+    lists = rounds.contest_lists
+    own = rounds.by_county.get(county)
+    if own is not None and (not lists or own[0] > lists[-1].round):
+        number, ref = own
         return Stage(f"Round {number}", f"CORLA's round {number} files for the county ({ref})", number)
-    if rounds.election_round is not None:
+    from_lists = contest_list_stage(county, lists)
+    if from_lists is not None:
+        return from_lists
+    if own is not None:
+        number, ref = own
+        return Stage(f"Round {number}", f"CORLA's round {number} files for the county ({ref})", number)
+    if rounds.election_round is not None and not lists:
         number = rounds.election_round
         return Stage(f"Round {number}", f"CORLA's round {number} files ({rounds.election_ref})", number)
     if round_start is not None:
@@ -300,6 +357,8 @@ class CountyAuditStatus:
     participating: bool
     in_corla: bool
     note: str | None = None
+    #: The county's last round is finished (`Stage.finished`).
+    finished: bool = False
 
 
 def _corla_phrase(manifest: CorlaUpload | None, cvr: CorlaUpload | None) -> str:
@@ -393,6 +452,7 @@ def county_status(
         participating=cvr is not None or links > 0 or observers > 0,
         in_corla=in_corla,
         note=NOT_IN_CORLA.get(county),
+        finished=bool(where and where.finished),
     )
 
 

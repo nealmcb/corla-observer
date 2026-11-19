@@ -35,6 +35,14 @@ Routes (under the app's path prefix):
 ``GET /coord/map``
     The data map as ``map show`` prints it, its problems, and the
     ``map show --for-ai`` text with a copy button.
+``GET /coord/corla``
+    Each RLA audit board's observers against CORLA's CVR-to-audit-board
+    comparison, card by card (`corla_observer.corla_compare`): counts per
+    observer of cards where both agree, CORLA only or the observer only
+    found a difference, both did, cards not observed, and cards not in the
+    redacted CVR (whose votes and notes are never shown), then each card
+    that is not an agreement with its contests, CVR choice, CORLA's board
+    choice and the observer's entry. Never on the public dashboard.
 ``GET /coord/flags``
     The change flags, which only coordinators see: the open ones, most
     severe first, each with its findings expandable and a form to mark it
@@ -746,6 +754,28 @@ async def coord_stats(request: Request) -> Response:
 
     compared = await run_in_threadpool(comparisons)
     return state.render(request, "coord_stats.html", snap=snapshot, compared=compared, **_common(state, session))
+
+
+@router.get("/coord/corla")
+async def coord_corla(request: Request) -> Response:
+    """Observers' findings against CORLA's comparison, card by card (`corla_observer.corla_compare`): coordinators only."""
+    state = get_state(request)
+    session = current_session(request)
+    if session is None:
+        return _login_redirect(state, request)
+    snapshot = await run_in_threadpool(state.cache.get)
+
+    def build() -> Any:
+        from corla_observer.corla_compare import CorlaComparisonReport, corla_comparison
+        from corla_observer.web.views import redacted_cvrs
+
+        if snapshot.datamap is None:
+            return CorlaComparisonReport()
+        boards = [(b.county, b.board, b.observers) for b in snapshot.boards if not b.targeted and not b.lookup and b.observers]
+        return corla_comparison(snapshot.datamap, state.workspace, list(state.log.iter_events()), boards, redacted_cvrs(snapshot))
+
+    report = await run_in_threadpool(build)
+    return state.render(request, "coord_corla.html", snap=snapshot, report=report, **_common(state, session))
 
 
 @router.get("/coord/flags")

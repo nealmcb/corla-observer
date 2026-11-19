@@ -13,9 +13,12 @@ Each stage is named by the event that completes it, so that only a ``done`` mark
    (`corla_observer.county_status.corla_uploads`); done when every one has.
 3. **Seed entered**: the random seed is in the data map.
 4. **Selections posted**: CORLA's selections (the ballots drawn) are in the data map.
-5. **Audit rounds**: each county's round (`corla_observer.county_status.stage`), shown as a
-   floor and a high marker: the round every county has reached and the furthest any has. This
-   stage is never marked done: the audit center's files do not say when a county finished.
+5. **Audit rounds**: each county's round (`corla_observer.county_status.stage`). Once CORLA's
+   contest lists say which counties have a targeted contest still in progress, the counties in
+   each round are named and the rest counted as finished ("Round 2: 2 counties (Jackson,
+   Montezuma); the other counties finished in round 1"), and the stage is done when every county
+   has finished. Before that, a floor and a high marker: the round every county has reached and
+   the furthest any has, never marked done.
 
 Each stage is ``done``, ``current`` (the first not done) or ``later``; a stage not done whose
 milestone is still ahead says when it is due, and where no calendar is known (a workspace without
@@ -58,6 +61,40 @@ def _sentence(text: str, due: str) -> str:
     return f"{text}; {due}" if due else text
 
 
+def _county_names(names: list[str], most: int = 6) -> str:
+    shown = ", ".join(names[:most])
+    return shown + (f" and {len(names) - most} more" if len(names) > most else "")
+
+
+def _rounds_named(in_corla: list[CountyAuditStatus]) -> str:
+    """The counties in each round, by name, and those finished, by the round they finished in."""
+    active: dict[int, list[str]] = {}
+    done: dict[int, int] = {}
+    waiting = 0
+    for s in in_corla:
+        if s.finished:
+            done[s.round or 0] = done.get(s.round or 0, 0) + 1
+        elif s.round:
+            active.setdefault(s.round, []).append(s.county)
+        else:
+            waiting += 1
+    parts = [
+        f"Round {r}: {len(names)} {'county' if len(names) == 1 else 'counties'} ({_county_names(names)})"
+        for r, names in sorted(active.items(), reverse=True)
+    ]
+    rounds = sorted(r for r in done if r)
+    count = sum(done.values())
+    who = f"{count} {'county' if count == 1 else 'counties'}" if waiting else "the other counties" if active else "every county"
+    if len(rounds) == 1 and rounds[0] in done and sum(done.values()) == done[rounds[0]]:
+        parts.append(f"{who} finished in round {rounds[0]}")
+    else:
+        each = [f"{n} in round {r}" if r else f"{n} with no targeted contest in progress" for r, n in sorted(done.items())]
+        parts.append(f"{who} finished: " + ", ".join(each))
+    if waiting:
+        parts.append(f"{waiting} not yet in a round")
+    return "; ".join(parts)
+
+
 def audit_progress(
     *, contests_posted: bool, corla: CorlaUploads, seed: bool, selections: bool, statuses: Mapping[str, CountyAuditStatus],
     upcoming: Mapping[str, str] | None = None, calendar_known: bool = True,
@@ -76,7 +113,10 @@ def audit_progress(
         files = f"{imported} of {len(in_corla)} counties have their ballot manifest and CVR imported"
     rounds = [s.round or 0 for s in in_corla]
     low, high = (min(rounds), max(rounds)) if rounds else (0, 0)
-    if high == 0:
+    finished = [s for s in in_corla if s.finished]
+    if finished:
+        round_text = _rounds_named(in_corla)
+    elif high == 0:
         round_text = "no county has started a round"
     elif low == high:
         round_text = f"every county in round {high}"
@@ -90,7 +130,7 @@ def audit_progress(
                      _sentence("the random seed is not yet entered", due("roll", "at the roll,"))),
         ProgressStep("Selections posted", selections, "CORLA's selections (the ballots drawn) are posted" if selections else
                      _sentence("CORLA's selections (the ballots drawn) are not yet posted", due("roll", "expected after the roll,"))),
-        ProgressStep("Audit rounds", False, round_text),
+        ProgressStep("Audit rounds", bool(in_corla) and len(finished) == len(in_corla), round_text),
     ]  # fmt: skip
     first = True
     for step in steps:

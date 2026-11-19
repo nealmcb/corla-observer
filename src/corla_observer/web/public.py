@@ -9,7 +9,13 @@ Routes (under the app's path prefix):
     one line (`corla_observer.county_status`) and in detail (CORLA's
     imports of its manifest and CVR, its files here, a redacted CVR with
     its redaction verdict and counts only, audit boards, observation
-    progress), the data map's problems, and recent fetch activity. Not the change flags, many of which
+    progress), what CORLA's posted results say round by round
+    (`corla_observer.round_results`: where the audit stands, the targeted
+    contests that continue and why, and per county the cards audited and
+    those where the audit board's reading differs from the CVR, with the
+    differing rows listed for counties taking part in observation, only for
+    cards their redacted CVR shows), the data map's problems, and recent
+    fetch activity. Not the change flags, many of which
     are addressed before the public would see them: they, and the data map
     problems and fetch alerts that report the same findings, are on the
     coordinator pages only (``/coord/flags``).
@@ -141,6 +147,8 @@ def public_dict(snapshot: Snapshot) -> dict[str, Any]:
         "recent_fetches": snapshot.public_fetches,
         "manifests_in_map": snapshot.manifests_in_map,
         "contests": snapshot.contests,
+        # What CORLA's posted results say, round by round (corla_observer.round_results).
+        "round_results": snapshot.round_results.to_dict(),
         "errors": snapshot.errors,
     }
 
