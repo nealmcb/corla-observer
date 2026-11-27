@@ -13,7 +13,8 @@ version with the one before it:
   contests included).
 
 For each change it prints when Clarity generated the newer file (MST), the county, how many contests
-changed, the total votes added or removed, and the largest change in one contest (with its name).
+changed, the total votes added or removed, the change in ballots cast (also as a share of the
+county's ballots cast, where the state's file gives them), and the largest change in one contest.
 `--from VERSION` compares that one version with the newest instead of walking every step.
 
     .venv/bin/python scripts/results_changes.py [--dir DIR] [--scope state|COUNTY] [--from VERSION]
@@ -78,7 +79,8 @@ def compare(old: dict[str, dict[str, int]], new: dict[str, dict[str, int]]) -> l
         if not deltas and not cast:
             continue
         big = max(deltas, key=lambda k: abs(deltas[k])) if deltas else ""
-        rows.append((county, len(deltas), sum(deltas.values()), big, deltas.get(big, 0), cast))
+        rows.append((county, len(deltas), sum(deltas.values()), big, deltas.get(big, 0), cast,
+                     b.get("(ballots cast)", 0)))
     return rows
 
 
@@ -104,9 +106,10 @@ def main(argv: list[str]) -> int:
             current = votes_by_county(results, scope)
             if prev is not None:
                 rows = [r for r in compare(prev[1], current) if not args.county or r[0] in args.county]
-                for county, n, net, big, bigd, cast in rows:
+                for county, n, net, big, bigd, cast, total in rows:
+                    share = f" ({100 * cast / total:+.3f}% of {total:,})" if total else ""
                     print(f"  {prev[0]} -> {version} ({when(results)}) {county}: {n} contests changed, "
-                          f"net {net:+d} votes, ballots cast {cast:+d}; largest {bigd:+d} in {big}")
+                          f"net {net:+d} votes, ballots cast {cast:+d}{share}; largest {bigd:+d} in {big}")
             prev = (version, current)
     return 0
 
